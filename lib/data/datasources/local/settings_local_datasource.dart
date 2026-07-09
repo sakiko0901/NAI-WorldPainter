@@ -5,6 +5,9 @@ import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 
 class SettingsLocalDatasource {
   final SharedPreferences _prefs;
@@ -43,6 +46,10 @@ class SettingsLocalDatasource {
   // Default Noise Schedule
   String getDefaultNoiseSchedule() => _prefs.getString(AppConstants.keyDefaultNoiseSchedule) ?? ApiConstants.defaultNoiseSchedule;
   Future<void> setDefaultNoiseSchedule(String s) async => _prefs.setString(AppConstants.keyDefaultNoiseSchedule, s);
+
+  // Default Style Words（每次生图自动拼到 prompt 前面）
+  String getDefaultStyleWords() => _prefs.getString(AppConstants.keyDefaultStyleWords) ?? '';
+  Future<void> setDefaultStyleWords(String v) async => _prefs.setString(AppConstants.keyDefaultStyleWords, v);
 
   // Prompt Draft
   String getPromptDraft() => _prefs.getString(AppConstants.keyPromptDraft) ?? '';
@@ -115,75 +122,101 @@ class SettingsLocalDatasource {
     }
   }
 
-  // LLM 多配置位
-  int getLlmActiveProfile() => _prefs.getInt(AppConstants.keyLlmActiveProfile) ?? 0;
-  Future<void> setLlmActiveProfile(int index) async => _prefs.setInt(AppConstants.keyLlmActiveProfile, index);
-
-  int getLlmExtractProfile() => _prefs.getInt(AppConstants.keyLlmExtractProfile) ?? 0;
-  Future<void> setLlmExtractProfile(int index) async => _prefs.setInt(AppConstants.keyLlmExtractProfile, index);
-
-  int getLlmComposeProfile() => _prefs.getInt(AppConstants.keyLlmComposeProfile) ?? 0;
-  Future<void> setLlmComposeProfile(int index) async => _prefs.setInt(AppConstants.keyLlmComposeProfile, index);
-
+  // LLM 上下文条数
   int getLlmContextLimit() => _prefs.getInt(AppConstants.keyLlmContextLimit) ?? AppConstants.defaultLlmContextLimit;
   Future<void> setLlmContextLimit(int value) async => _prefs.setInt(AppConstants.keyLlmContextLimit, value);
 
-  String? getLlmProfileApiKey(int i) => _prefs.getString(AppConstants.keyLlmProfileApiKey(i));
-  Future<void> setLlmProfileApiKey(int i, String value) async =>
-      _prefs.setString(AppConstants.keyLlmProfileApiKey(i), value);
+  // LLM 供应商列表（JSON 字符串，存 List<LlmProvider>）
+  List<LlmProvider> getLlmProviders() =>
+      LlmProvider.listFromJsonString(_prefs.getString(AppConstants.keyLlmProviders));
+  Future<void> setLlmProviders(List<LlmProvider> providers) async =>
+      _prefs.setString(AppConstants.keyLlmProviders, LlmProvider.listToJsonString(providers));
 
-  String getLlmProfileBaseUrl(int i) => _prefs.getString(AppConstants.keyLlmProfileBaseUrl(i)) ?? '';
-  Future<void> setLlmProfileBaseUrl(int i, String value) async =>
-      _prefs.setString(AppConstants.keyLlmProfileBaseUrl(i), value);
+  // LLM 角色绑定（main/vision 各存 LlmRoleBinding JSON）
+  LlmRoleBinding getLlmRoleBindingMain() =>
+      LlmRoleBinding.fromJsonString(_prefs.getString(AppConstants.keyLlmRoleBindingMain));
+  Future<void> setLlmRoleBindingMain(LlmRoleBinding b) async =>
+      _prefs.setString(AppConstants.keyLlmRoleBindingMain, b.toJsonString());
 
-  String getLlmProfileModel(int i) => _prefs.getString(AppConstants.keyLlmProfileModel(i)) ?? '';
-  Future<void> setLlmProfileModel(int i, String value) async =>
-      _prefs.setString(AppConstants.keyLlmProfileModel(i), value);
+  LlmRoleBinding getLlmRoleBindingVision() =>
+      LlmRoleBinding.fromJsonString(_prefs.getString(AppConstants.keyLlmRoleBindingVision));
+  Future<void> setLlmRoleBindingVision(LlmRoleBinding b) async =>
+      _prefs.setString(AppConstants.keyLlmRoleBindingVision, b.toJsonString());
 
-  // 多模型列表（JSON-encoded List<String>）
-  List<String> getLlmProfileModels(int i) {
-    final raw = _prefs.getString(AppConstants.keyLlmProfileModels(i));
-    if (raw == null || raw.isEmpty) {
-      // 自动迁移：旧单模型有值时，包装成单元素列表
-      final single = getLlmProfileModel(i);
-      return single.isEmpty ? const [] : [single];
+  /// 旧数据迁移：把旧 3 角色 9 key 配置 + 旧单配置迁成 LlmProvider + LlmRoleBinding。
+  /// 幂等，用 llm_provider_migrated_v3 标记位防重复。
+  /// 优先迁 2 角色（main/vision），若 2 角色全空则把旧单配置 keyLlmApiKey 迁为 main。
+  /// 旧 embedding 角色数据已被弃用，迁移时忽略（不再写入 embedding binding）。
+  bool migrateLegacyLlm3RoleToProvider() {
+    if (_prefs.getBool('llm_provider_migrated_v3') ?? false) return false;
+
+    final providers = <LlmProvider>[];
+    LlmRoleBinding? mainBinding;
+    LlmRoleBinding? visionBinding;
+
+    // 旧 3 角色 9 key（注意：3 角色常量已删除，但 SP 中可能仍有旧值，用字符串直接读）
+    // embedding 角色已删除，迁移时跳过其旧 key
+    const legacyKeys = <(String, String, String, LlmProfileRole)>[
+      ('llm_main_api_key', 'llm_main_base_url', 'llm_main_model', LlmProfileRole.main),
+      ('llm_vision_api_key', 'llm_vision_base_url', 'llm_vision_model', LlmProfileRole.vision),
+    ];
+
+    for (final (apiKeyKey, baseUrlKey, modelKey, role) in legacyKeys) {
+      final apiKey = _prefs.getString(apiKeyKey);
+      final baseUrl = _prefs.getString(baseUrlKey) ?? '';
+      final model = _prefs.getString(modelKey) ?? '';
+      if (apiKey == null || apiKey.isEmpty || baseUrl.isEmpty || model.isEmpty) continue;
+
+      final provider = LlmProvider.create(
+        name: '导入的${role.label}供应商',
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        models: [model],
+      );
+      providers.add(provider);
+      final binding = LlmRoleBinding(providerId: provider.id, model: model);
+      switch (role) {
+        case LlmProfileRole.main:
+          mainBinding = binding;
+          break;
+        case LlmProfileRole.vision:
+          visionBinding = binding;
+          break;
+        case LlmProfileRole.aux:
+          break;
+      }
     }
-    try {
-      final list = jsonDecode(raw) as List;
-      return list.map((e) => e as String).toList();
-    } catch (_) {
-      return const [];
+
+    // 2) 若 2 角色全空，尝试旧单配置 keyLlmApiKey 迁为 main
+    if (providers.isEmpty) {
+      final apiKey = _prefs.getString(AppConstants.keyLlmApiKey);
+      final baseUrl = _prefs.getString(AppConstants.keyLlmBaseUrl) ?? '';
+      final model = _prefs.getString(AppConstants.keyLlmModel) ?? '';
+      if (apiKey != null && apiKey.isNotEmpty && baseUrl.isNotEmpty && model.isNotEmpty) {
+        final provider = LlmProvider.create(
+          name: '导入的主模型供应商',
+          apiKey: apiKey,
+          baseUrl: baseUrl,
+          models: [model],
+        );
+        providers.add(provider);
+        mainBinding = LlmRoleBinding(providerId: provider.id, model: model);
+      }
     }
+
+    if (providers.isNotEmpty) {
+      _prefs.setString(AppConstants.keyLlmProviders, LlmProvider.listToJsonString(providers));
+      if (mainBinding != null) {
+        _prefs.setString(AppConstants.keyLlmRoleBindingMain, mainBinding.toJsonString());
+      }
+      if (visionBinding != null) {
+        _prefs.setString(AppConstants.keyLlmRoleBindingVision, visionBinding.toJsonString());
+      }
+    }
+
+    _prefs.setBool('llm_provider_migrated_v3', true);
+    return true;
   }
-
-  Future<void> setLlmProfileModels(int i, List<String> value) async =>
-      _prefs.setString(AppConstants.keyLlmProfileModels(i), jsonEncode(value));
-
-  // 抽取/编排具体选中的模型名
-  String? getLlmExtractProfileModel() =>
-      _prefs.getString(AppConstants.keyLlmExtractProfileModel);
-  Future<void> setLlmExtractProfileModel(String? value) async {
-    if (value == null) {
-      await _prefs.remove(AppConstants.keyLlmExtractProfileModel);
-    } else {
-      await _prefs.setString(AppConstants.keyLlmExtractProfileModel, value);
-    }
-  }
-
-  String? getLlmComposeProfileModel() =>
-      _prefs.getString(AppConstants.keyLlmComposeProfileModel);
-  Future<void> setLlmComposeProfileModel(String? value) async {
-    if (value == null) {
-      await _prefs.remove(AppConstants.keyLlmComposeProfileModel);
-    } else {
-      await _prefs.setString(AppConstants.keyLlmComposeProfileModel, value);
-    }
-  }
-
-  String getLlmProfileName(int i) =>
-      _prefs.getString(AppConstants.keyLlmProfileName(i)) ?? '配置 ${i + 1}';
-  Future<void> setLlmProfileName(int i, String value) async =>
-      _prefs.setString(AppConstants.keyLlmProfileName(i), value);
 
   // 知识库
   String? getNsfwBookPath() => _prefs.getString(AppConstants.keyNsfwBookPath);

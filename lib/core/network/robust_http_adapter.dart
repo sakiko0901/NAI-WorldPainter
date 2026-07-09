@@ -7,21 +7,7 @@ import 'package:flutter/foundation.dart';
 
 /// 创建一个配置了 DoH DNS + IPv4 优先 + 宽松 TLS + 全量日志的 Dio 实例
 Dio createRobustDio() {
-  final adapter = IOHttpClientAdapter(
-    createHttpClient: () {
-      final client = HttpClient();
-      client.idleTimeout = const Duration(minutes: 15);
-      client.connectionFactory = _createDohConnection;
-      client.connectionTimeout = const Duration(seconds: 15);
-      client.badCertificateCallback = (X509Certificate cert, String host, int port) {
-        debugPrint('[网络日志] badCertificate: host=$host port=$port');
-        return true;
-      };
-      return client;
-    },
-  );
-
-  final dio = Dio()..httpClientAdapter = adapter;
+  final dio = Dio()..httpClientAdapter = createRobustAdapter();
 
   dio.interceptors.add(InterceptorsWrapper(
     onRequest: (options, handler) {
@@ -42,6 +28,24 @@ Dio createRobustDio() {
   ));
 
   return dio;
+}
+
+/// 仅创建 robust HttpClientAdapter (DoH + IPv4 优先 + 宽松 TLS)
+/// 用于运行时替换 dio.httpClientAdapter,不重建整个 Dio 实例
+HttpClientAdapter createRobustAdapter() {
+  return IOHttpClientAdapter(
+    createHttpClient: () {
+      final client = HttpClient();
+      client.idleTimeout = const Duration(minutes: 15);
+      client.connectionFactory = _createDohConnection;
+      client.connectionTimeout = const Duration(seconds: 15);
+      client.badCertificateCallback = (X509Certificate cert, String host, int port) {
+        debugPrint('[网络日志] badCertificate: host=$host port=$port');
+        return true;
+      };
+      return client;
+    },
+  );
 }
 
 /// 用 DoH 解析域名，然后 IPv4 优先连接

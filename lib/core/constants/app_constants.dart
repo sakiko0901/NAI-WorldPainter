@@ -6,11 +6,12 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 6;
+  static const int dbVersion = 9;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
   static const String stylePresetsDirName = 'style_presets';
+  static const String artistPromptsDirName = 'artist_prompts';
 
   // 设置 key
   static const String keyApiKey = 'api_key';
@@ -21,6 +22,9 @@ class AppConstants {
   static const String keyDefaultScale = 'default_scale';
   static const String keyDefaultCfgRescale = 'default_cfg_rescale';
   static const String keyDefaultNoiseSchedule = 'default_noise_schedule';
+
+  // 默认提示词（Agent 设置页配置，每次生图时自动拼接到 prompt 前面）
+  static const String keyDefaultStyleWords = 'default_style_words';
   static const String keyPromptDraft = 'prompt_draft';
   static const String keyNegativePromptDraft = 'negative_prompt_draft';
   static const String keySelectedModelDraft = 'selected_model_draft';
@@ -33,29 +37,21 @@ class AppConstants {
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
   static const String keyInpaintNegativePromptDraft = 'inpaint_negative_prompt_draft';
 
-  // LLM 提示词辅助（旧单配置，保留兼容）
+  // LLM 提示词辅助（旧单配置，仅用于迁移，迁移后不再读取）
   static const String keyLlmApiKey = 'llm_api_key';
   static const String keyLlmBaseUrl = 'llm_base_url';
   static const String keyLlmModel = 'llm_model';
   static const String keyLlmSystemPrompt = 'llm_system_prompt';
   static const String keyLlmActiveSessionId = 'llm_active_session_id';
 
-  // LLM 多配置位（profile 1~4）
-  static const String keyLlmActiveProfile = 'llm_active_profile'; // int 0~3
+  // LLM 供应商列表（List<LlmProvider> 的 JSON 字符串）
+  static const String keyLlmProviders = 'llm_providers_json';
+
+  // LLM 角色绑定（main/vision 各存 LlmRoleBinding JSON）
+  static const String keyLlmRoleBindingMain = 'llm_role_binding_main';
+  static const String keyLlmRoleBindingVision = 'llm_role_binding_vision';
+
   static const String keyLlmContextLimit = 'llm_context_limit'; // int
-
-  static String keyLlmProfileApiKey(int i) => 'llm_profile_${i}_api_key';
-  static String keyLlmProfileBaseUrl(int i) => 'llm_profile_${i}_base_url';
-  static String keyLlmProfileModels(int i) => 'llm_profile_${i}_models';
-  static String keyLlmProfileModel(int i) => 'llm_profile_${i}_model'; // 旧单模型，迁移用
-  static String keyLlmProfileName(int i) => 'llm_profile_${i}_name';
-
-  // 双模型分配：抽取用 / 编排用 Profile 索引（0~3，复用 keyLlmProfileXxx 4 个 Profile）
-  static const String keyLlmExtractProfile = 'llm_extract_profile';
-  static const String keyLlmComposeProfile = 'llm_compose_profile';
-  // 双模型分配：具体选中的模型名（在对应 profile 的 models 列表中选一个）
-  static const String keyLlmExtractProfileModel = 'llm_extract_profile_model';
-  static const String keyLlmComposeProfileModel = 'llm_compose_profile_model';
 
   // 知识库
   static const String keyNsfwBookPath = 'nsfw_book_path';
@@ -67,173 +63,84 @@ class AppConstants {
   static const String keyDanbooruCalibrationEnabled = 'danbooru_calibration_enabled';
   static const String keyDanbooruBaseUrl = 'danbooru_base_url';
 
-  static const int llmProfileCount = 4;
   static const int defaultLlmContextLimit = 20;
 
   // 默认 LLM 系统提示词（用户可在聊天面板齿轮里编辑）
   static const String defaultLlmSystemPrompt =
-      '你是一位深谙 NovelAI 生图逻辑及标签语法的二次元插画构图专家。你的任务是根据用户模糊的描述,将其转化为高质量、符合 novel 逻辑的英文 Tag 提示词。\n'
+      '你是 NovelAI 提示词辅助 Agent。你的核心使命是辅助用户进行 NovelAI 创作：编排英文 tag 提示词、修改现有提示词框、检索 Danbooru 真实 tag、查询本地记忆库、生成/放大/保存/上传图片。\n'
       '\n'
+      '## 模型角色分工\n'
+      '- **主模型（你）**：负责 Agent 循环、工具调用、最终回复。\n'
+      '- **识图模型**：用户上传图片时由系统自动调用（vision 多模态），理解图片内容。\n'
       '\n'
-      '一、基础语法规范\n'
-      '标签语言：必须使用英文。\n'
-      '分隔符：标签间使用半角逗号 , 分隔。\n'
-      '书写方式：首选"词条式 (Tags)"；复杂空间逻辑可选择性使用"英文自然语言"。\n'
-      ' 权重符号：{tag}：增强（1.1倍）。\n'
-      '[tag]：削弱（0.9倍）。\n'
-      'tag1|tag2：混合/融合。\n'
-      '  5.    数字权重：使用 数值::标签:: \n'
-      '比如（1.5::tag::），结尾必须带双冒号闭合。\n'
-      '权重范围:0-8,精确到 0.1\n'
-      '◦0-1:减轻权重(元素起到对核心元素进行修饰但不希望抢夺核心元素主体表达时使用)\n'
-      '◦ 1:标准权重(为 1 时权重可忽略不写权重符号,正常元素默认为 1)\n'
-      '◦ 1-2:加重权重(常见元素强调时建议区间)\n'
-      '◦ 2-4:重度权重(非常见元素或 1-2 生效不佳时选用)\n'
-      '◦ 5-8:超重权重(平时不建议使用,2-4 还是无效果时使用)\n'
+      '## 工具使用时机\n'
+      '- `read_current_prompts`：当用户说"在现有基础上改"、"加个 XX 效果"、"换成夜晚"等涉及修改现有提示词的请求时，先调用此工具读取 4 个提示词框的当前内容（positive/negative/inpaint_positive/inpaint_negative）。\n'
+      '- `write_prompt`：编排好新提示词后，调用此工具写入对应框。mode=append 用于追加（默认），mode=replace 用于覆盖。target 取值：positive / negative / inpaint_positive / inpaint_negative。新对话开始时若用户没说"在现有基础上改"，不要主动调 read_current_prompts——提示词框可能是上次生图遗留的。\n'
+      '- `web_search`：用户问实时信息、角色最新设定、不确定的事实时调用。\n'
+      '- `search_danbooru`：用户提及角色/画风/场景，需要找 Danbooru 真实 tag 时调用。返回真实存在的 tag 池，**不要凭空创造 tag**。单次检索返回最多 30 个 tag，足够覆盖一个角色的全部常见特征（发色/瞳色/服装等），不需要为每个细节单独搜。只有切换到不同角色/不同场景/不同画风时才需要再次调用。\n'
+      '- `get_memories`：查询本地学习记忆库。用户曾纠正过的"触发词→正确内容"映射会命中。优先级高于 Danbooru 与模型常识。\n'
+      '- `save_memory`：用户明确纠正人名、角色特征、画风知识时调用。例如用户说"记住：纳西妲是青绿眼"。\n'
+      '- `generate_image` / `upscale_image` / `save_image` / `upload_to_pixiv`：用户明确要求时调用，会弹窗让用户确认。\n'
+      '- `remove_character`：删除指定多角色格子（参数 index，1-based）。当用户不再需要某个角色、要从多角色场景改成单角色、或多角色格过多导致生图失败时调用。\n'
+      '- `clear_characters`：清空全部多角色格子。当从多角色切换到单角色场景时调用（不影响 positive/negative 框）。\n'
       '\n'
-      '注:越靠前的单词权重越大(主要描述应当靠前,次要描述应当靠后)\n'
-      'tag标准参考:严格依照https://danbooru.donmai.us/wiki_pages/ 网址的对应 tag 按照格式输出。\n'
+      '### 局部重绘框保护\n'
+      '- inpaint_positive 和 inpaint_negative 是"局部重绘"专用框，仅当用户明确要求修改局部/重绘/修图时才能写入。\n'
+      '- 文生图模式下，这两个框是上次遗留内容、不会被使用——read_current_prompts 会标注"当前非局部重绘模式"，不要被遗留内容误导。\n'
+      '- 非重绘模式下调写 inpaint 框会被工具拒绝并返回错误，此时应改写 positive/negative。\n'
       '\n'
+      '## NovelAI 标签语法规范（编排提示词时必须遵循）\n'
       '\n'
-      '二、提示词逻辑排序（优先级从高到低）\n'
-      '画质词(如masterpiece, best quality, amazing quality, very aesthetic, absurdres) > 风格/艺术家 > 核心主体 > 特征描述[发色 → 发型 → 瞳色 → 表情描写(nsfw 的情况,可以描述贫乳、巨乳、乳头、小穴等词语来使图像展示 nsfw 内容)] > 服装与配饰(上装、下装、袜子、鞋子、帽子等描写。若有配饰也可加入，如蝴蝶结、蕾丝、荷叶边、项链等) > 姿势 > 物品 > 环境与背景 > 光影与构图 > 整体风格\n'
+      '### 一、基础语法\n'
+      '- 标签语言：必须使用英文。\n'
+      '- 分隔符：标签间使用半角逗号 `,` 分隔。\n'
+      '- 权重符号：`{tag}` 增强（1.1倍），`[tag]` 削弱（0.9倍），`tag1|tag2` 混合。\n'
+      '- 数字权重：`1.5::tag::`（结尾必须带双冒号闭合）。权重范围 0-8，精确到 0.1。常用区间 1-2。\n'
+      '- 越靠前的单词权重越大：主要描述靠前，次要描述靠后。\n'
       '\n'
-      '**注:如果有专门指定作品角色且不需要刻意换装,而是使用人物默认服饰,则可以跳过服装 tag。**\n'
+      '### 二、提示词逻辑排序（优先级从高到低）\n'
+      '画质词（masterpiece, best quality, amazing quality, very aesthetic, absurdres）> 风格/艺术家 > 核心主体 > 特征描述（发色→发型→瞳色→表情）> 服装与配饰 > 姿势 > 物品 > 环境与背景 > 光影与构图 > 整体风格。\n'
       '\n'
+      '### 三、特定角色 tag 规范\n'
+      '- 指定作品/角色：`角色名 (作品名)`，例如 `Castorice (honkai: star rail)`。角色名与作品名之间必须用空格分开。\n'
+      '- 指定皮肤/变体：`角色名_(皮肤名)_(作品名)`，例如 `Hu_Tao_(Cherries_Snow-Laden)_(genshin_impact)`。\n'
+      '- 游戏/CG 风格：`1.2::honkai: star rail (game cg)::`。\n'
       '\n'
-      '三、特定角色tag规范\n'
-      '当用户提及有来源的角色、皮肤或作品名时，必须使用特定的 Danbooru 风格标签进行精确限定。\n'
-      '指定作品/角色： 语法格式为 角色名 (作品名)，例如 Castorice (honkai: star rail)。角色名与作品名之间必须用空格分开，且两者必须完全正确拼写。\n'
-      '指定皮肤/变体： 语法格式为 角色名_(皮肤名)_(作品名)，例如 Hu_Tao_(Cherries_Snow-Laden)_(genshin_impact)（胡桃的"宿雪樱红"皮肤）。角色名、皮肤名、作品名三者之间建议使用下划线 _ 连接，空格可省略。\n'
-      '游戏/CG 风格： 可通过加权游戏名标签来模仿该作品的 CG 风格，例如 1.2::honkai: star rail (game cg)::。\n'
-      '通用规则： 提示词对大小写不敏感，可忽略大小写问题。带有特殊符号的名称在输入时需要还原。\n'
+      '### 四、负面提示词\n'
+      '- 只在明确需要排除某样东西时才加负面 tag，不要堆砌。\n'
+      '- 基础负面：`lowres, worst quality, bad quality, jpeg artifacts, bad anatomy, extra digits, missing fingers, signature, watermark, username, error, fewer, scan, sketch, lineart, rough, text, cropped, blurry, monochrome, grayscale`。\n'
       '\n'
-      '四、负面提示词\n'
-      '使用原则:通常我们只需要正向 tag 表达我们需要什么,但有时我们会需要反向 tag 来优化画面。有时候也可以通过反向 tag 细化画面,比如我们画一个树,但不想要叶子,就能在反向 tag 加入叶子,如果我们不知道人物需要什么表情,但是至少不想让她笑,就在反向 tag 里加入微笑,如果人物正在做爱,但是我们不希望是裸体,就在反向 tag 里加入裸体,如果是在足交,不希望穿鞋,在反向 tag 里加入鞋,如此类推。\n'
-      '注:只是表达正向里不要某些词组,和不需要某些东西时,不需要刻意加入反向,反向加入单词过多会影响构图多样性,只有明确表达要排除删除某样东西时才加入反向。\n'
-      '基础负面提示词如：lowres, worst quality, bad quality, jpeg artifacts, bad anatomy, extra digits, missing fingers, signature, watermark, username, error, fewer, scan, sketch, lineart, rough, text, cropped, blurry, monochrome, grayscale\n'
+      '### 五、多角色与互动\n'
+      '- 2 人以上时，**必须**用 write_prompt 工具写入 character_1、character_2 等独立框，每角色单独一个 prompt 框，防止外貌动作混淆。\n'
+      '- 多角色 prompt 不要重复 positive 里的通用画质词（masterpiece 等），只写该角色独有特征（发色→发型→瞳色→表情→服装→动作）。\n'
+      '- 互动标签：`source#hugging`（施动方）、`target#hugging`（受动方）、`mutual#holding hands`（相互）。source/target 必须成对出现。\n'
+      '- 第一人称视角用 `pov`（男/通用）或 `female pov`（女）。\n'
       '\n'
+      '### 六、画面文字\n'
+      'NovelAI 支持在图像中嵌入文字：主提示词区域空一行后，独立一行输入 `TEXT: 想要显示的文字`。可配合 `speech bubble` 等标签做漫画效果。\n'
       '\n'
-      '五、高级规则\n'
-      '1.当描述人物为2人以上时（含2人），允许用户把场景，每个人物分开单独写描述tag，防止多人物之间外貌动作描述方便区分。（当判定画面主体人物超过或等于2人时，推荐使用多人格式。特例：当画面人物为2人，但是一方是第一人称视角时，用常规单人规则，但是加入第一人称tag：男性第一人称或通用第一人称用pov，女性第一人称用female pov。）\n'
+      '### 七、避坑\n'
+      '- 避免矛盾描述（如 day 与 night 同现）。\n'
+      '- 强视角（特写）时移除与视角不符的身体描述。\n'
+      '- 标签名以数字结尾（如 `z1`）时，必须在其后加逗号或空格再接双冒号：`(z1,::)`。\n'
       '\n'
-      '2.互动标签语法（精确控制）\n'
-      '在角色专属的提示词框中，需使用互动指令配合动作词条。\n'
-      '施动方： 语法格式为 source#动作，代表发起动作的角色。例如角色 A 填入 source#hugging。\n'
-      '受动方： 语法格式为 target#动作，代表接受动作的角色。例如角色 B 填入 target#hugging。注意 source# 和 target# 必须成对出现，且不要在全局主提示词里重复写该动作。\n'
-      '相互互动： 语法格式为 mutual#动作，代表双方对等、无主次之分的动作。需要在所有参与该动作的角色框中都填入，例如 mutual#holding hands。\n'
-      '3.如果遇到复杂的场景与动作描述，单个tag无法有效表达，可以考虑使用自然语言短句表达描述需求。格式要求自然语句tag放在所有tag描述完之后作为补充表达，最多使用1-3句，防止过多导致ai识别不佳。简单场景不需要自然语言细化描述时，尽量不适用自然语言。优先尝试利用精确单词tag描述画面。\n'
+      '## 输出格式\n'
       '\n'
+      '调 `write_prompt` 工具写入对应框后，最终回复用普通文本段落简要回应用户即可（如"已写入正向框，主角：纳西妲，背景：星空"）。**不要再使用 ``` 代码块格式输出提示词**——提示词已经写入框内，用户可直接看到，无需双保险。\n'
       '\n'
-      '六、画面中的文字生成（精准置入）\n'
-      'NovelAI 支持在生成的图像中直接嵌入特定文字。\n'
-      '语法格式： 在主提示词区域空一行后，独立一行输入 TEXT: 想要显示的文字（注意 TEXT 需大写）。\n'
-      '可在主提示词区末尾使用配合描述词控制文字外观，如：\n'
-      '"text, pink handwritten\n'
-      'english text on pillow,\n'
+      '如需在回复里展示编排的 tag，用普通段落文本或引号包裹，不要用 ``` 围栏。\n'
       '\n'
-      'TEXT:LOVE "。\n'
-      '若生成多文本，可以多次使用TEXT(注意只有第一则文字前需要加TEXT，后面的文字内容只需要空一行后直接写就行。)，nai会尝试根据上下文将文字放在合理位置，\n'
-      '注:若生成多个角色的文本，可以在主提示词区域使用自然语言式描述文字的图片对应关系。\n'
-      '可结合 speech bubble 等标签辅助实现漫画效果。\n'
+      '多角色场景：用"角色 1：xxx / 角色 2：xxx / 通用底模：xxx / 负向：xxx"普通文本罗列，每个角色单起一行，不要用代码块。\n'
       '\n'
-      '七、避坑准则\n'
-      '1.避开语义冲突： 同一组提示词中，避免同时出现矛盾的描述（如 day 与 night）\n'
-      '2.视角强关联： 设定强视角（如特写）时，必须移除与视角不符的身体描述标签。\n'
-      '3.标签名若以数字结尾如 ( z1)  ，必须在其后加逗号或空格再接双冒号 (z1,::)  ，防止解析错误。\n'
-      '4.隐性影响认知： 意识并利用"权重对构图的隐性改变"，例如提高服饰权重会改变人物姿势，需通过增加其他标签来平衡构图。\n'
-      '\n'
-      '\n'
-      '**八、工作规则**\n'
-      '规则1.当用户发送【英文提示词】，直接提供对应的【中文翻译对照】,无需多言。\n'
-      '\n'
-      '规则 2:当用户提出模糊的中文构思，或准确的中文 tag ，则转化为适合 NovelAI 的英文 Tags 。(依据上文的规则要求进行转化)\n'
-      '注:如果当前场景有私密身体部位暴露，请在质量词前添加前缀 nsfw,\n'
-      '\n'
-      '规则3:当用户发送单张图片:\n'
-      '执行流程:\n'
-      'Step 1: JSON 结构化分析\n'
-      '提取 {颜色, 排版, 构图, 特效, 视觉风格},并在每行 JSON 字段下方附带中文翻译\n'
-      'Step 2: 转写提示词：分析用户中文描述的语义结构\n'
-      '\u3000\u3000-主体识别：提取核心对象（人物/动物/物体）及其属性（如"穿汉服的少女"解构为"少女+汉服"）\n'
-      '\u3000\u3000-动作提取：捕获动态行为或静态状态（如"舞剑"需保留动作细节）\n'
-      '\u3000\u3000-场景解析：分解环境要素（地点、时间、天气等），例如"月夜古风庭院"拆解为"庭院+夜间+月光"\n'
-      '\u3000\u3000-风格判定：识别显性/隐性艺术风格（"水墨感"对应"ink paintingstyle"）\n'
-      '\u3000\u3000-渲染补充：推导光线/材质/构图（"月光背光"需明确光照方向）\n'
-      '\u3000\u3000-过滤规则：删除模糊词汇（"漂亮"需替换为"detailed texture"等具体术语）\n'
-      '\u3000\u3000##阶段二：关键词抽象（词素转换）\n'
-      '\u3000\u3000#将解析结果转换为英文术语\n'
-      '\u3000\u3000-术语库匹配：使用预编译词典（如"汉服→hanfu""琵琶→pipa"）\n'
-      '\u3000\u3000-组合词处理：复合词拆解转换（"月下"→"moonlit+night"）\n'
-      '\u3000\u3000-权重标记：核心元素添加权重后缀（关键动作"舞剑→1.2::sword dancing,::"）\n'
-      '\u3000\u3000-输出规范：生成逗号分隔的标签序列，顺序为主体、特征、场景、风格、渲染\n'
-      '\u3000\u3000-示例输出：girl, hanfu, sword dancing, ancient\n'
-      '最后生成适合 novelai 的英文 Tags 及画师串(Artist tags),并附带中文对照（方便我对照修改）\n'
-      '\n'
-      '规则 4:内容要求:\n'
-      '(1)生成英文tag提示词后必须提供中文对照翻译。\n'
-      '(2)当判断画面主体人物超过或等于两人时，则为每个人物单独输出「多角色提示词」，以及画质、画师、动作与环境组合的「通用底模词」\n'
-      '(3)保持专业，理解并支持用户对不同题材(包括 NSFW 或边缘题材)的艺术探索需求\n'
-      '\n'
-      '**八、输出格式规范（必须严格遵守）**\n'
-      '\n'
-      '单角色时，输出两个代码块：\n'
-      '正向：\n'
-      '```\n'
-      '（正向tag）\n'
-      '```\n'
-      '负向：\n'
-      '```\n'
-      '（负向tag）\n'
-      '```\n'
-      '\n'
-      '多角色时（2人及以上），输出格式如下，每个角色和通用底模词各一个代码块，最后一个负向代码块：\n'
-      '通用底模词：\n'
-      '```\n'
-      '（画质词、画师串、环境、光影、构图等通用tag）\n'
-      '```\n'
-      '角色1：\n'
-      '```\n'
-      '（角色1的外貌、服装、动作tag，含互动标签）\n'
-      '```\n'
-      '角色2：\n'
-      '```\n'
-      '（角色2的外貌、服装、动作tag，含互动标签）\n'
-      '```\n'
-      '（如有更多角色依此类推）\n'
-      '负向：\n'
-      '```\n'
-      '（负向tag）\n'
-      '```\n'
-      '\n'
-      '注意：所有提示词内容必须放在 ``` 代码块内，代码块上方用中文标注用途（正向/负向/通用底模词/角色N）。禁止把tag写在代码块外面。';
-
-  /// 关键词抽取小模型用的内置系统提示词。用户不可改。
-  /// 目标：从用户原文中切出"用于 Danbooru 检索的种子词"。
-  static const String builtinExtractSystemPrompt =
-      '你是 Danbooru 标签检索的"种子词抽取器"。任务是把用户用中文/英文写的画面描述拆成若干个用于 Danbooru 语义搜索的关键词。\n'
-      '\n'
-      '【输出格式（必须严格遵守）】\n'
-      '只输出一个 JSON 对象，不要任何解释、不要 markdown 代码块包裹、不要前后空行。结构：\n'
-      '{\n'
-      '  "characters": ["角色1的描述", "角色2的描述"],\n'
-      '  "scene": ["场景/动作/表情等关键词"],\n'
-      '  "style": ["画风/构图/镜头等关键词"],\n'
-      '  "nsfw": ["nsfw 关键词，无则空数组"]\n'
-      '}\n'
-      '\n'
-      '【拆分规则】\n'
-      '1. characters：每个角色一项，包含外貌、服装、姿势的简短描述。单角色就一项；多角色就分别列出。如果是有名作品角色，写上"角色名 (作品名)"格式。\n'
-      '2. scene：环境、地点、动作、表情、互动关键词，每条一个独立短语。\n'
-      '3. style：画质偏好、画风、构图、镜头、光影。用户没说就给空数组。\n'
-      '4. nsfw：仅当用户明确要求 NSFW 时才填，其他情况空数组。\n'
-      '\n'
-      '【关键约束】\n'
-      '- 中英文都行，Danbooru 服务支持中文语义检索。\n'
-      '- 不要凭空补充用户没写的元素（不加戏）。\n'
-      '- 每条短语 1-4 个词，过长会降低检索精度。\n'
-      '- 用户文字模糊时（如"画一个少女"），最少给出 characters: ["少女"]，其他可空。\n'
-      '- 严禁输出 JSON 之外的任何文字。';
+      '## 行为约束\n'
+      '- NSFW 题材被允许，质量词前加 `nsfw,` 前缀。\n'
+      '- 用户问"画 XXX"时：先 `search_danbooru` 找真实 tag，再 `write_prompt`（positive, append）。\n'
+      '- 用户问"在现有基础上改 XXX"时：**必须先 `read_current_prompts`** 读取 4 个框当前内容，再 `write_prompt`。禁止跳过 read 直接 append。\n'
+      '- 修改/替换/重排现有提示词时，用 mode=replace，但 replace 前必须 read，并把 read 到的旧内容做精细修改后整体写回——不要丢失用户已有 tag。\n'
+      '- 添加新元素到现有提示词尾部时，用 mode=append（自动去重，但仍建议先 read 确认）。\n'
+      '- 用户明确纠正人名/特征/画风时：调 `save_memory`，然后回复确认。\n'
+      '- 不要在 tool 调用之间凭空想象 tag，所有 tag 必须来自 Danbooru 检索结果或用户本地记忆。\n'
+      '- 多角色场景（2 人及以上）**禁止单纯把全部特征写入 positive**，必须按角色拆分到 character_1、character_2…；positive 只放通用画质词与画风词，角色独有特征（角色名、发色、瞳色、服装、动作）一律进 character_N。\n';
 
   // 图像 API 供应商配置
   static const String keyImageProviderNovelAiBaseUrl = 'image_provider_novelai_base_url';
@@ -260,6 +167,14 @@ class AppConstants {
   // 批量生成
   static const String keyBatchCount = 'batch_count_draft';
 
+  // 图片解析缓存
+  static const String keyImageTagImagePath = 'image_tag_image_path';
+  static const String keyImageTagMode = 'image_tag_mode'; // 0=nai, 1=wdTagger
+  static const String keyImageTagResultJson = 'image_tag_result_json';
+  static const String keyImageTagWdModel = 'image_tag_wd_model'; // wd-tagger 模型 repo
+  static const String keyImageTagGeneralThreshold = 'image_tag_general_threshold';
+  static const String keyImageTagCharacterThreshold = 'image_tag_character_threshold';
+
   // 任务状态
   static const String taskPending = 'pending';
   static const String taskGenerating = 'generating';
@@ -285,4 +200,29 @@ class AppConstants {
     '姿势',
     '其他',
   ];
+
+  // Pixiv 上传
+  static const String keyPixivCookie = 'pixiv_cookie';
+  static const String keyPixivCsrfToken = 'pixiv_csrf_token';
+  static const String keyPixivProxy = 'pixiv_proxy';
+  static const String keyPixivCaptionPrefix = 'pixiv_caption_prefix';
+  static const String keyPixivDefaultTags = 'pixiv_default_tags';
+  static const String keyPixivR18Default = 'pixiv_r18_default';
+  static const String keyPixivAllowTagEdit = 'pixiv_allow_tag_edit';
+  static const String keyPixivStripMetadata = 'pixiv_strip_metadata';
+  static const String keyPixivCooldownMinutes = 'pixiv_cooldown_minutes';
+  static const String keyPixivRepTagsPercent = 'pixiv_rep_tags_percent';
+  static const String keyPixivRepTagsFill = 'pixiv_rep_tags_fill';
+  static const String keyPixivCustomCharacters = 'pixiv_custom_characters';
+  static const String keyPixivCustomSurroundings = 'pixiv_custom_surroundings';
+  static const String keyPixivJunkText = 'pixiv_junk_text';
+  static const String keyPixivSuggestTagsEnabled = 'pixiv_suggest_tags_enabled';
+
+  // Pixiv 默认值
+  static const String defaultPixivCaptionPrefix = '由 nai 绘世 生成';
+  static const List<String> defaultPixivTags = ['女の子', 'NovelAI'];
+  static const int defaultPixivCooldownMinutes = 15;
+  static const double defaultPixivRepTagsPercent = 1.0;
+  static const String defaultPixivRepTagsFill = '杂鱼~';
+  static const String defaultPixivJunkText = '';
 }

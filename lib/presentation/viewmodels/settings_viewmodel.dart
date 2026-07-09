@@ -17,6 +17,7 @@ class SettingsViewModel extends ChangeNotifier {
   double _defaultScale = 5.0;
   double _defaultCfgRescale = 0.0;
   String _defaultNoiseSchedule = 'native';
+  String _defaultStyleWords = '';
   bool _isTesting = false;
   bool? _connectionResult;
   String? errorMessage;
@@ -57,6 +58,7 @@ class SettingsViewModel extends ChangeNotifier {
   double get defaultScale => _defaultScale;
   double get defaultCfgRescale => _defaultCfgRescale;
   String get defaultNoiseSchedule => _defaultNoiseSchedule;
+  String get defaultStyleWords => _defaultStyleWords;
   bool get isTesting => _isTesting;
   bool? get connectionResult => _connectionResult;
 
@@ -97,6 +99,7 @@ class SettingsViewModel extends ChangeNotifier {
     _defaultScale = await _manageSettings.getDefaultScale();
     _defaultCfgRescale = await _manageSettings.getDefaultCfgRescale();
     _defaultNoiseSchedule = await _manageSettings.getDefaultNoiseSchedule();
+    _defaultStyleWords = await _manageSettings.getDefaultStyleWords();
 
     // 加载图像供应商配置
     _novelAiBaseUrl = await _manageSettings.getImageProviderNovelAiBaseUrl();
@@ -252,6 +255,13 @@ class SettingsViewModel extends ChangeNotifier {
   Future<void> setDefaultNoiseSchedule(String s) async {
     await _manageSettings.setDefaultNoiseSchedule(s);
     _defaultNoiseSchedule = s;
+    notifyListeners();
+  }
+
+  /// 设置默认画风词
+  Future<void> setDefaultStyleWords(String v) async {
+    await _manageSettings.setDefaultStyleWords(v);
+    _defaultStyleWords = v;
     notifyListeners();
   }
 

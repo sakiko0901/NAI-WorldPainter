@@ -1,5 +1,8 @@
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 
 class ManageSettingsUseCase {
@@ -31,6 +34,9 @@ class ManageSettingsUseCase {
 
   Future<String> getDefaultNoiseSchedule() => _repo.getDefaultNoiseSchedule();
   Future<void> setDefaultNoiseSchedule(String s) => _repo.setDefaultNoiseSchedule(s);
+
+  Future<String> getDefaultStyleWords() => _repo.getDefaultStyleWords();
+  Future<void> setDefaultStyleWords(String v) => _repo.setDefaultStyleWords(v);
 
   Future<String> getPromptDraft() => _repo.getPromptDraft();
   Future<void> setPromptDraft(String value) => _repo.setPromptDraft(value);
@@ -80,38 +86,22 @@ class ManageSettingsUseCase {
   Future<String?> getLlmActiveSessionId() => _repo.getLlmActiveSessionId();
   Future<void> setLlmActiveSessionId(String? value) => _repo.setLlmActiveSessionId(value);
 
-  Future<int> getLlmActiveProfile() => _repo.getLlmActiveProfile();
-  Future<void> setLlmActiveProfile(int index) => _repo.setLlmActiveProfile(index);
-
-  Future<int> getLlmExtractProfile() => _repo.getLlmExtractProfile();
-  Future<void> setLlmExtractProfile(int index) => _repo.setLlmExtractProfile(index);
-
-  Future<int> getLlmComposeProfile() => _repo.getLlmComposeProfile();
-  Future<void> setLlmComposeProfile(int index) => _repo.setLlmComposeProfile(index);
-
   Future<int> getLlmContextLimit() => _repo.getLlmContextLimit();
   Future<void> setLlmContextLimit(int value) => _repo.setLlmContextLimit(value);
 
-  Future<String?> getLlmProfileApiKey(int i) => _repo.getLlmProfileApiKey(i);
-  Future<void> setLlmProfileApiKey(int i, String value) => _repo.setLlmProfileApiKey(i, value);
+  // 供应商列表
+  Future<List<LlmProvider>> getLlmProviders() => _repo.getLlmProviders();
+  Future<void> saveLlmProviders(List<LlmProvider> providers) =>
+      _repo.saveLlmProviders(providers);
 
-  Future<String> getLlmProfileBaseUrl(int i) => _repo.getLlmProfileBaseUrl(i);
-  Future<void> setLlmProfileBaseUrl(int i, String value) => _repo.setLlmProfileBaseUrl(i, value);
+  // 3 角色绑定
+  Future<LlmRoleBinding> getLlmRoleBinding(LlmProfileRole role) =>
+      _repo.getLlmRoleBinding(role);
+  Future<void> setLlmRoleBinding(LlmProfileRole role, LlmRoleBinding binding) =>
+      _repo.setLlmRoleBinding(role, binding);
 
-  Future<String> getLlmProfileModel(int i) => _repo.getLlmProfileModel(i);
-  Future<void> setLlmProfileModel(int i, String value) => _repo.setLlmProfileModel(i, value);
-
-  Future<List<String>> getLlmProfileModels(int i) => _repo.getLlmProfileModels(i);
-  Future<void> setLlmProfileModels(int i, List<String> value) => _repo.setLlmProfileModels(i, value);
-
-  Future<String?> getLlmExtractProfileModel() => _repo.getLlmExtractProfileModel();
-  Future<void> setLlmExtractProfileModel(String? value) => _repo.setLlmExtractProfileModel(value);
-
-  Future<String?> getLlmComposeProfileModel() => _repo.getLlmComposeProfileModel();
-  Future<void> setLlmComposeProfileModel(String? value) => _repo.setLlmComposeProfileModel(value);
-
-  Future<String> getLlmProfileName(int i) => _repo.getLlmProfileName(i);
-  Future<void> setLlmProfileName(int i, String value) => _repo.setLlmProfileName(i, value);
+  bool migrateLegacyLlm3RoleToProvider() =>
+      _repo.migrateLegacyLlm3RoleToProvider();
 
   Future<bool> testConnection() => _repo.testConnection();
 

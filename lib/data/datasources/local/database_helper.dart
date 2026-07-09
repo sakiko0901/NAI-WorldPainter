@@ -115,6 +115,8 @@ class DatabaseHelper {
         session_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
+        image_path TEXT,
+        tool_calls TEXT,
         created_at INTEGER NOT NULL,
         FOREIGN KEY (session_id) REFERENCES llm_sessions(id) ON DELETE CASCADE
       )
@@ -131,12 +133,21 @@ class DatabaseHelper {
         content TEXT NOT NULL,
         type TEXT NOT NULL,
         source TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'user',
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        last_hit_at INTEGER,
+        weight REAL NOT NULL DEFAULT 1.0,
+        superseded_by INTEGER,
+        embedding BLOB,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_trigger ON prompt_memories(trigger)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_updated ON prompt_memories(updated_at)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
+    await _createPromptMemoriesFts(db);
 
     await db.execute('''
       CREATE TABLE IF NOT EXISTS style_presets (
@@ -149,6 +160,39 @@ class DatabaseHelper {
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_style_presets_updated ON style_presets(updated_at)');
+  }
+
+  /// FTS5 外部内容表 + 触发器同步。trigger/content 入索引，支持 BM25 检索。
+  /// 注意：FTS5 在某些 Android 旧版本 SQLite 中未编译，创建会抛错；
+  /// 因此本方法失败时不抛异常，仅打印警告，让 DB 初始化继续完成。
+  /// 检索层（PromptMemoryRepositoryImpl）需自行判断 FTS 是否可用。
+  Future<void> _createPromptMemoriesFts(Database db) async {
+    try {
+      await db.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS prompt_memories_fts USING fts5(
+          "trigger", content, content='prompt_memories', content_rowid='id'
+        )
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS prompt_memories_ai AFTER INSERT ON prompt_memories BEGIN
+          INSERT INTO prompt_memories_fts(rowid, "trigger", content) VALUES (new.id, new."trigger", new.content);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS prompt_memories_ad AFTER DELETE ON prompt_memories BEGIN
+          INSERT INTO prompt_memories_fts(prompt_memories_fts, rowid, "trigger", content) VALUES('delete', old.id, old."trigger", old.content);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS prompt_memories_au AFTER UPDATE ON prompt_memories BEGIN
+          INSERT INTO prompt_memories_fts(prompt_memories_fts, rowid, "trigger", content) VALUES('delete', old.id, old."trigger", old.content);
+          INSERT INTO prompt_memories_fts(rowid, "trigger", content) VALUES (new.id, new."trigger", new.content);
+        END
+      ''');
+    } catch (e) {
+      // FTS5 不可用时忽略，检索层会降级
+      print('[DB] FTS5 创建失败（将降级为 LIKE 检索）: $e');
+    }
   }
 
   Future<void> _createArtistPromptTables(Database db) async {
@@ -198,6 +242,31 @@ class DatabaseHelper {
     }
     if (oldVersion < 6) {
       await _createArtistPromptTables(db);
+    }
+    if (oldVersion < 7) {
+      await db.execute('ALTER TABLE llm_messages ADD COLUMN image_path TEXT');
+    }
+    if (oldVersion < 8) {
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN scope TEXT NOT NULL DEFAULT \'user\'');
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0');
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN last_hit_at INTEGER');
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN weight REAL NOT NULL DEFAULT 1.0');
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN superseded_by INTEGER');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
+      await _createPromptMemoriesFts(db);
+      // 老数据重建索引（FTS 创建成功才执行）
+      try {
+        await db.execute(
+          'INSERT INTO prompt_memories_fts(rowid, "trigger", content) '
+          'SELECT id, "trigger", content FROM prompt_memories',
+        );
+      } catch (_) {}
+    }
+    if (oldVersion < 9) {
+      // Agent 化：llm_messages 加 tool_calls 列保存工具调用历史；prompt_memories 加 embedding 列（向量记忆预留）
+      await db.execute('ALTER TABLE llm_messages ADD COLUMN tool_calls TEXT');
+      await db.execute('ALTER TABLE prompt_memories ADD COLUMN embedding BLOB');
     }
   }
 }

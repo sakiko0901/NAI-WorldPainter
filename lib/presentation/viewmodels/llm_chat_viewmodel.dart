@@ -1,83 +1,105 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/data/nsfw_book.dart';
-import 'package:nai_huishi/domain/entities/danbooru_tag.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/agents/agent_loop.dart';
+import 'package:nai_huishi/domain/agents/agent_tool.dart';
+import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
+import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
-import 'package:nai_huishi/domain/entities/prompt_memory.dart';
-import 'package:nai_huishi/domain/usecases/extract_keywords.dart';
+import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 import 'package:nai_huishi/domain/usecases/manage_settings.dart';
-import 'package:nai_huishi/domain/usecases/search_danbooru_tags.dart';
-
-class LlmProfile {
-  final String name;
-  final String apiKey;
-  final String baseUrl;
-  final List<String> models;
-
-  const LlmProfile({
-    required this.name,
-    required this.apiKey,
-    required this.baseUrl,
-    required this.models,
-  });
-
-  /// 兼容旧的单 model 接口
-  String get model => models.isNotEmpty ? models.first : '';
-
-  bool get isConfigured =>
-      apiKey.trim().isNotEmpty && baseUrl.trim().isNotEmpty && models.isNotEmpty;
-
-  LlmProfile copyWith({String? name, String? apiKey, String? baseUrl, List<String>? models}) {
-    return LlmProfile(
-      name: name ?? this.name,
-      apiKey: apiKey ?? this.apiKey,
-      baseUrl: baseUrl ?? this.baseUrl,
-      models: models ?? this.models,
-    );
-  }
-}
+import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
+import 'package:path_provider/path_provider.dart';
 
 class LlmChatViewModel extends ChangeNotifier {
   final ManageLlmChatUseCase _manageChat;
   final ManageSettingsUseCase _manageSettings;
-  final ExtractKeywordsUseCase _extract;
-  final SearchDanbooruTagsUseCase _searchTags;
   final ManagePromptMemoriesUseCase _memories;
+  final AgentLoop Function() _agentLoopFactory;
+  final GenerationViewModel _genVm;
+  final AnalyzeImageTagsUseCase _analyzeImageTags;
 
   LlmChatViewModel({
     required ManageLlmChatUseCase manageChat,
     required ManageSettingsUseCase manageSettings,
-    required ExtractKeywordsUseCase extract,
-    required SearchDanbooruTagsUseCase searchTags,
     required ManagePromptMemoriesUseCase memories,
+    required AgentLoop Function() agentLoopFactory,
+    required GenerationViewModel genVm,
+    required AnalyzeImageTagsUseCase analyzeImageTags,
   })  : _manageChat = manageChat,
         _manageSettings = manageSettings,
-        _extract = extract,
-        _searchTags = searchTags,
-        _memories = memories;
+        _memories = memories,
+        _agentLoopFactory = agentLoopFactory,
+        _genVm = genVm,
+        _analyzeImageTags = analyzeImageTags;
 
-  // 配置（旧单配置，保留兼容）
-  String _llmApiKey = '';
-  String _llmBaseUrl = '';
-  String _llmModel = '';
+  // ── LLM 供应商 + 2 角色绑定 ──
+  List<LlmProvider> _providers = [];
+  LlmRoleBinding _mainBinding = const LlmRoleBinding();
+  LlmRoleBinding _visionBinding = const LlmRoleBinding();
   String _systemPrompt = AppConstants.defaultLlmSystemPrompt;
-
-  // 多配置位
-  List<LlmProfile> _profiles = List.generate(
-    AppConstants.llmProfileCount,
-    (i) => LlmProfile(name: '配置 ${i + 1}', apiKey: '', baseUrl: '', models: const []),
-  );
-  int _activeProfileIndex = 0;
   int _contextLimit = AppConstants.defaultLlmContextLimit;
+  bool _webSearchEnabled = false;
+  String _defaultStyleWords = '';
 
-  // 双模型分配（抽取 / 编排）：profile 索引 + 该 profile 内选中的模型名
-  int _extractProfileIndex = 0;
-  String _extractProfileModel = '';
-  int _composeProfileIndex = 0;
-  String _composeProfileModel = '';
+  List<LlmProvider> get providers => List.unmodifiable(_providers);
+  LlmRoleBinding get mainBinding => _mainBinding;
+  LlmRoleBinding get visionBinding => _visionBinding;
+
+  /// 当前 main 角色 configuration（从 _providers + _mainBinding 解析）
+  LlmRoleConfig get mainConfig => _resolveConfig(_mainBinding);
+
+  /// 当前 vision 角色 configuration（从 _providers + _visionBinding 解析）
+  LlmRoleConfig get visionConfig => _resolveConfig(_visionBinding);
+
+  LlmRoleConfig _resolveConfig(LlmRoleBinding binding) {
+    if (binding.providerId == null || binding.model.isEmpty) {
+      return const LlmRoleConfig();
+    }
+    final provider = _providers
+        .cast<LlmProvider?>()
+        .firstWhere((p) => p?.id == binding.providerId, orElse: () => null);
+    if (provider == null) return const LlmRoleConfig();
+    if (!provider.models.contains(binding.model)) {
+      return const LlmRoleConfig();
+    }
+    return LlmRoleConfig(
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      model: binding.model,
+    );
+  }
+
+  LlmRoleBinding getBinding(LlmProfileRole role) {
+    switch (role) {
+      case LlmProfileRole.main:
+        return _mainBinding;
+      case LlmProfileRole.vision:
+        return _visionBinding;
+      case LlmProfileRole.aux:
+        return const LlmRoleBinding();
+    }
+  }
+
+  String get systemPrompt => _systemPrompt;
+  int get contextLimit => _contextLimit;
+  bool get webSearchEnabled => _webSearchEnabled;
+  String get defaultStyleWords => _defaultStyleWords;
+
+  /// 知识库
+  final NsfwBook _nsfwBook = NsfwBook();
+  NsfwBook get nsfwBook => _nsfwBook;
 
   // 会话
   List<LlmSession> _sessions = [];
@@ -90,26 +112,10 @@ class LlmChatViewModel extends ChangeNotifier {
   String? _errorMessage;
   bool _initialized = false;
 
-  // 知识库
-  final NsfwBook _nsfwBook = NsfwBook();
-
-  // Danbooru 三段式流程开关（复用旧的 keyDanbooruCalibrationEnabled）
-  bool _danbooruSearchEnabled = true;
-
-  // Getters（旧接口，指向当前激活 profile）
-  String get llmApiKey => _activeProfile.apiKey.isNotEmpty ? _activeProfile.apiKey : _llmApiKey;
-  String get llmBaseUrl => _activeProfile.baseUrl.isNotEmpty ? _activeProfile.baseUrl : _llmBaseUrl;
-  String get llmModel => _activeProfile.model.isNotEmpty ? _activeProfile.model : _llmModel;
-  String get systemPrompt => _systemPrompt;
-
-  LlmProfile get _activeProfile => _profiles[_activeProfileIndex];
-  List<LlmProfile> get profiles => List.unmodifiable(_profiles);
-  int get activeProfileIndex => _activeProfileIndex;
-  int get extractProfileIndex => _extractProfileIndex;
-  String get extractProfileModel => _extractProfileModel;
-  int get composeProfileIndex => _composeProfileIndex;
-  String get composeProfileModel => _composeProfileModel;
-  int get contextLimit => _contextLimit;
+  // ── 副作用工具确认回调（UI 设置）──
+  /// 当 AgentLoop 需要执行副作用工具时调用此回调，UI 弹窗让用户确认。
+  /// 返回 true 表示用户同意，false 表示拒绝。
+  Future<bool> Function(AgentToolConfirmRequest request)? onRequireConfirmation;
 
   List<LlmSession> get sessions => List.unmodifiable(_sessions);
   String? get activeSessionId => _activeSessionId;
@@ -124,17 +130,9 @@ class LlmChatViewModel extends ChangeNotifier {
   bool get isSending => _isSending;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
-  bool get isConfigured => _activeProfile.isConfigured ||
-      (_llmApiKey.trim().isNotEmpty && _llmBaseUrl.trim().isNotEmpty && _llmModel.trim().isNotEmpty);
+  bool get isConfigured => mainConfig.isConfigured;
 
-  NsfwBook get nsfwBook => _nsfwBook;
-
-  bool get danbooruSearchEnabled => _danbooruSearchEnabled;
-  Future<void> toggleDanbooruSearch() async {
-    _danbooruSearchEnabled = !_danbooruSearchEnabled;
-    notifyListeners();
-    await _manageSettings.setDanbooruCalibrationEnabled(_danbooruSearchEnabled);
-  }
+  GenerationViewModel get genVm => _genVm;
 
   /// 初次进入面板时调用；幂等
   Future<void> ensureInitialized() async {
@@ -143,17 +141,7 @@ class LlmChatViewModel extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    _llmApiKey = await _manageSettings.getLlmApiKey() ?? '';
-    _llmBaseUrl = await _manageSettings.getLlmBaseUrl();
-    _llmModel = await _manageSettings.getLlmModel();
-    _systemPrompt = await _manageSettings.getLlmSystemPrompt();
-    _activeProfileIndex = await _manageSettings.getLlmActiveProfile();
-    _extractProfileIndex = await _manageSettings.getLlmExtractProfile();
-    _extractProfileModel = await _manageSettings.getLlmExtractProfileModel() ?? '';
-    _composeProfileIndex = await _manageSettings.getLlmComposeProfile();
-    _composeProfileModel = await _manageSettings.getLlmComposeProfileModel() ?? '';
-    _contextLimit = await _manageSettings.getLlmContextLimit();
-    _danbooruSearchEnabled = await _manageSettings.getDanbooruCalibrationEnabled();
+    await _loadLlmConfigs();
 
     // 加载知识库：先用打包进 APK 的默认 asset，再让用户外部路径覆盖
     await _nsfwBook.loadFromAsset();
@@ -161,17 +149,6 @@ class LlmChatViewModel extends ChangeNotifier {
     if (bookPath != null && bookPath.isNotEmpty) {
       await _nsfwBook.load(bookPath);
     }
-
-    final profiles = <LlmProfile>[];
-    for (int i = 0; i < AppConstants.llmProfileCount; i++) {
-      profiles.add(LlmProfile(
-        name: await _manageSettings.getLlmProfileName(i),
-        apiKey: await _manageSettings.getLlmProfileApiKey(i) ?? '',
-        baseUrl: await _manageSettings.getLlmProfileBaseUrl(i),
-        models: await _manageSettings.getLlmProfileModels(i),
-      ));
-    }
-    _profiles = profiles;
 
     _sessions = await _manageChat.listSessions();
     final lastActive = await _manageSettings.getLlmActiveSessionId();
@@ -195,21 +172,71 @@ class LlmChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setLlmApiKey(String value) async {
-    await _manageSettings.setLlmApiKey(value);
-    _llmApiKey = value;
+  Future<void> _loadLlmConfigs() async {
+    _providers = await _manageSettings.getLlmProviders();
+    _mainBinding = await _manageSettings.getLlmRoleBinding(LlmProfileRole.main);
+    _visionBinding =
+        await _manageSettings.getLlmRoleBinding(LlmProfileRole.vision);
+    _systemPrompt = await _manageSettings.getLlmSystemPrompt();
+    _contextLimit = await _manageSettings.getLlmContextLimit();
+    _webSearchEnabled = await _manageSettings.getWebSearchEnabled();
+    _defaultStyleWords = await _manageSettings.getDefaultStyleWords();
+    // 启动后校验：binding 引用的 providerId/model 不存在则清空
+    _sanitizeBindings();
+  }
+
+  /// 检查 3 个 binding 是否仍指向有效 provider+model，无效则清空。
+  void _sanitizeBindings() {
+    bool changed = false;
+    if (!_isBindingValid(_mainBinding)) {
+      if (_mainBinding != const LlmRoleBinding()) {
+        _mainBinding = const LlmRoleBinding();
+        changed = true;
+      }
+    }
+    if (!_isBindingValid(_visionBinding)) {
+      if (_visionBinding != const LlmRoleBinding()) {
+        _visionBinding = const LlmRoleBinding();
+        changed = true;
+      }
+    }
+    if (changed) {
+      // 后台持久化清空后的 binding（不阻塞 UI）
+      Future.wait([
+        _manageSettings.setLlmRoleBinding(LlmProfileRole.main, _mainBinding),
+        _manageSettings.setLlmRoleBinding(LlmProfileRole.vision, _visionBinding),
+      ]);
+    }
+  }
+
+  bool _isBindingValid(LlmRoleBinding b) {
+    if (b.providerId == null || b.model.isEmpty) return true; // 空 binding 视为有效
+    final provider = _providers
+        .cast<LlmProvider?>()
+        .firstWhere((p) => p?.id == b.providerId, orElse: () => null);
+    return provider != null && provider.models.contains(b.model);
+  }
+
+  // ── 配置 setter ──
+  Future<void> setProviders(List<LlmProvider> providers) async {
+    _providers = List<LlmProvider>.from(providers);
+    await _manageSettings.saveLlmProviders(_providers);
+    _sanitizeBindings();
     notifyListeners();
   }
 
-  Future<void> setLlmBaseUrl(String value) async {
-    await _manageSettings.setLlmBaseUrl(value);
-    _llmBaseUrl = value;
-    notifyListeners();
-  }
-
-  Future<void> setLlmModel(String value) async {
-    await _manageSettings.setLlmModel(value);
-    _llmModel = value;
+  Future<void> setRoleBinding(LlmProfileRole role, LlmRoleBinding binding) async {
+    switch (role) {
+      case LlmProfileRole.main:
+        _mainBinding = binding;
+        break;
+      case LlmProfileRole.vision:
+        _visionBinding = binding;
+        break;
+      case LlmProfileRole.aux:
+        return;
+    }
+    await _manageSettings.setLlmRoleBinding(role, binding);
     notifyListeners();
   }
 
@@ -224,8 +251,26 @@ class LlmChatViewModel extends ChangeNotifier {
     await setSystemPrompt(AppConstants.defaultLlmSystemPrompt);
   }
 
-  /// 从设置读取路径并重新加载知识库。保存设置后调用。
-  /// 始终先加载 asset 默认库，再让外部路径覆盖（路径为空则保留 asset 内容）。
+  Future<void> setContextLimit(int value) async {
+    final v = value.clamp(1, 200);
+    await _manageSettings.setLlmContextLimit(v);
+    _contextLimit = v;
+    notifyListeners();
+  }
+
+  Future<void> setWebSearchEnabled(bool value) async {
+    _webSearchEnabled = value;
+    await _manageSettings.setWebSearchEnabled(value);
+    notifyListeners();
+  }
+
+  Future<void> setDefaultStyleWords(String value) async {
+    _defaultStyleWords = value;
+    await _manageSettings.setDefaultStyleWords(value);
+    notifyListeners();
+  }
+
+  /// 从设置读取路径并重新加载知识库。
   Future<void> reloadNsfwBook() async {
     await _nsfwBook.loadFromAsset();
     final path = await _manageSettings.getNsfwBookPath();
@@ -234,58 +279,7 @@ class LlmChatViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> switchProfile(int index) async {
-    if (index < 0 || index >= AppConstants.llmProfileCount) return;
-    _activeProfileIndex = index;
-    await _manageSettings.setLlmActiveProfile(index);
-    notifyListeners();
-  }
-
-  Future<void> setExtractProfile(int index, {String? modelName}) async {
-    if (index < 0 || index >= AppConstants.llmProfileCount) return;
-    _extractProfileIndex = index;
-    _extractProfileModel = modelName ?? _profiles[index].model;
-    await _manageSettings.setLlmExtractProfile(index);
-    await _manageSettings.setLlmExtractProfileModel(_extractProfileModel);
-    notifyListeners();
-  }
-
-  Future<void> setComposeProfile(int index, {String? modelName}) async {
-    if (index < 0 || index >= AppConstants.llmProfileCount) return;
-    _composeProfileIndex = index;
-    _composeProfileModel = modelName ?? _profiles[index].model;
-    await _manageSettings.setLlmComposeProfile(index);
-    await _manageSettings.setLlmComposeProfileModel(_composeProfileModel);
-    notifyListeners();
-  }
-
-  Future<void> saveProfile(int index, {
-    required String name,
-    required String apiKey,
-    required String baseUrl,
-    required List<String> models,
-  }) async {
-    await _manageSettings.setLlmProfileName(index, name);
-    await _manageSettings.setLlmProfileApiKey(index, apiKey);
-    await _manageSettings.setLlmProfileBaseUrl(index, baseUrl);
-    await _manageSettings.setLlmProfileModels(index, models);
-    // 旧单模型字段也保留一份（迁移兼容）
-    if (models.isNotEmpty) {
-      await _manageSettings.setLlmProfileModel(index, models.first);
-    }
-    final updated = List<LlmProfile>.from(_profiles);
-    updated[index] = LlmProfile(name: name, apiKey: apiKey, baseUrl: baseUrl, models: models);
-    _profiles = updated;
-    notifyListeners();
-  }
-
-  Future<void> setContextLimit(int value) async {
-    final v = value.clamp(1, 200);
-    await _manageSettings.setLlmContextLimit(v);
-    _contextLimit = v;
-    notifyListeners();
-  }
-
+  // ── 会话管理 ──
   Future<void> createNewSession() async {
     final created = await _manageChat.createSession();
     _sessions = [created, ..._sessions];
@@ -302,10 +296,8 @@ class LlmChatViewModel extends ChangeNotifier {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
-
     _messages = await _manageChat.listMessages(id);
     await _manageSettings.setLlmActiveSessionId(id);
-
     _isLoading = false;
     notifyListeners();
   }
@@ -345,67 +337,13 @@ class LlmChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _captureExplicitMemoryInstruction(String text) async {
-    final trimmed = text.trim();
-    final patterns = [
-      RegExp(r'^记住[:：](.+)$'),
-      RegExp(r'^纠正[:：](.+)$'),
-    ];
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(trimmed);
-      if (match == null) continue;
-      final body = match.group(1)?.trim() ?? '';
-      final parts = body.split(RegExp(r'应该是|应为|=|：|:'));
-      if (parts.length < 2) return;
-      final trigger = parts.first.trim();
-      final content = parts.sublist(1).join('应该是').trim();
-      if (trigger.isEmpty || content.isEmpty) return;
-      final now = DateTime.now();
-      await _memories.save(PromptMemory(
-        trigger: trigger,
-        content: content,
-        type: PromptMemoryType.other,
-        source: PromptMemorySource.userInstruction,
-        createdAt: now,
-        updatedAt: now,
-      ));
-      return;
-    }
+  void clearError() {
+    if (_errorMessage == null) return;
+    _errorMessage = null;
+    notifyListeners();
   }
 
-  Future<String> _buildMemoryContext(String userText) async {
-    final matched = await _memories.matchText(userText);
-    if (matched.isEmpty) return '';
-    final lines = matched.take(12).map((m) => '- ${m.trigger}：${m.content}').join('\n');
-    return '\n\n## 本地学习记忆（最高优先级）\n'
-        '以下内容来自用户纠正或手动记录。若它与 Danbooru、模型常识或检索结果冲突，必须以这里为准：\n'
-        '$lines';
-  }
-
-  String _learningInstruction() {
-    return '\n\n## 学习判断规则\n'
-        '如果用户本轮明显纠正了人名、角色特征或画风知识，请在正常回答末尾附加一行：\n'
-        '【记忆候选】触发词 => 正确内容\n'
-        '如果没有明确纠正，不要输出这行。';
-  }
-
-  Future<void> _captureLlmMemoryCandidate(String content) async {
-    final match = RegExp(r'【记忆候选】(.+?)\s*=>\s*(.+)').firstMatch(content);
-    if (match == null) return;
-    final trigger = match.group(1)?.trim() ?? '';
-    final value = match.group(2)?.trim() ?? '';
-    if (trigger.isEmpty || value.isEmpty) return;
-    final now = DateTime.now();
-    await _memories.save(PromptMemory(
-      trigger: trigger,
-      content: value,
-      type: PromptMemoryType.other,
-      source: PromptMemorySource.llmCandidate,
-      createdAt: now,
-      updatedAt: now,
-    ));
-  }
-
+  // ── 发送消息：走 AgentLoop ──
   Future<void> sendUserMessage(String text, {String? imageBase64}) async {
     final trimmed = text.trim();
     if ((trimmed.isEmpty && imageBase64 == null) || _isSending) return;
@@ -413,17 +351,16 @@ class LlmChatViewModel extends ChangeNotifier {
       await createNewSession();
     }
     if (!isConfigured) {
-      _errorMessage = '请先点击右上角齿轮，配置 API Key / Base URL / 模型名';
+      _errorMessage = '请先点击右上角齿轮，配置主模型 API Key / Base URL / 模型名';
       notifyListeners();
       return;
     }
 
     final sessionId = _activeSessionId!;
-    await _captureExplicitMemoryInstruction(trimmed);
-    final memoryContext = await _buildMemoryContext(trimmed);
     _isSending = true;
     _errorMessage = null;
 
+    // 立即显示 user 消息 + 占位 assistant 消息
     final displayContent = imageBase64 != null
         ? (trimmed.isNotEmpty ? '$trimmed\n[图片]' : '[图片]')
         : trimmed;
@@ -434,52 +371,15 @@ class LlmChatViewModel extends ChangeNotifier {
       createdAt: DateTime.now(),
       imageBase64: imageBase64,
     );
-    _messages = [..._messages, tentativeUserMessage];
-    notifyListeners();
-
-    // 决定走哪条流程：含图 / 关闭 Danbooru / 抽取或编排 profile 未配置 → 旧单次流程
-    final extractProfile = _profiles[_extractProfileIndex];
-    final composeProfile = _profiles[_composeProfileIndex];
-    // 实际使用的模型名：优先选中的具体模型，否则回退到 profile 的第一个模型
-    final extractModelName = _extractProfileModel.isNotEmpty
-        ? _extractProfileModel
-        : extractProfile.model;
-    final composeModelName = _composeProfileModel.isNotEmpty
-        ? _composeProfileModel
-        : composeProfile.model;
-    final useDanbooruPipeline = imageBase64 == null &&
-        _danbooruSearchEnabled &&
-        trimmed.isNotEmpty &&
-        extractProfile.apiKey.trim().isNotEmpty &&
-        extractProfile.baseUrl.trim().isNotEmpty &&
-        extractModelName.isNotEmpty &&
-        composeProfile.apiKey.trim().isNotEmpty &&
-        composeProfile.baseUrl.trim().isNotEmpty &&
-        composeModelName.isNotEmpty;
-
-    if (!useDanbooruPipeline) {
-      await _runLegacySingleShot(
-        sessionId: sessionId,
-        trimmed: trimmed,
-        imageBase64: imageBase64,
-        memoryContext: memoryContext,
-      );
-      _isSending = false;
-      notifyListeners();
-      return;
-    }
-
-    // === Danbooru 三段式流程 ===
     final placeholderCreatedAt = DateTime.now().add(const Duration(milliseconds: 1));
     var placeholder = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.assistant,
       content: '',
       createdAt: placeholderCreatedAt,
-      pipelineStage: 'extracting',
-      pipelineStatus: '正在抽取关键词…',
+      agentTimeline: <AgentEvent>[],
     );
-    _messages = [..._messages, placeholder];
+    _messages = [..._messages, tentativeUserMessage, placeholder];
     notifyListeners();
 
     void updatePlaceholder(LlmMessage next) {
@@ -496,245 +396,303 @@ class LlmChatViewModel extends ChangeNotifier {
       notifyListeners();
     }
 
-    void removePlaceholder() {
-      _messages = _messages
-          .where((m) => !(m.createdAt == placeholderCreatedAt &&
-              m.role == LlmMessageRole.assistant))
-          .toList();
-    }
-
     try {
-      // 阶段 1：抽取关键词（用便宜的小模型）
-      final keywords = await _extract.call(
+      // 落库 user 消息
+      await _manageChat.saveUserMessage(
+        sessionId: sessionId,
         userText: trimmed,
-        apiKey: extractProfile.apiKey,
-        baseUrl: extractProfile.baseUrl,
-        model: extractModelName,
+        imageBase64: imageBase64,
       );
 
-      // 阶段 2：调 Danbooru 检索
-      updatePlaceholder(placeholder.copyWith(
-        pipelineStage: 'searching',
-        pipelineStatus: '正在检索 Danbooru…',
-      ));
+      // 构造初始 messages：system + 上下文历史 + 当前用户消息
+      final history = await _manageChat.listMessages(sessionId);
+      // 截断历史：保留最近 _contextLimit 条；含 tool_calls 的 assistant 消息也保留（配对 tool 消息已落库为单独行，
+      // 但本设计把 tool_calls 作为 assistant 消息的 JSON 字段保存，没有独立 tool 行，所以无需成对丢弃）
+      final historyLimited = history.length > _contextLimit
+          ? history.sublist(history.length - _contextLimit)
+          : history;
 
-      final customBase = (await _manageSettings.getDanbooruBaseUrl()).trim();
-      final pool = await _searchTags.call(
-        keywords: keywords,
-        showNsfw: true,
-        customBaseUrl: customBase.isEmpty ? null : customBase,
-      );
+      // 组装 system prompt：用户自定义 system + 默认画风画师词注入段
+      final sysContent = _defaultStyleWords.trim().isEmpty
+          ? _systemPrompt
+          : '$_systemPrompt\n\n## 默认画风画师词（用户全局设置）\n用户已设定默认画风画师词：`${_defaultStyleWords.trim()}`\n\n约束：调用 write_prompt 工具时，**必须**把这段画风画师词拼到正向 prompt 的最前面（多个 tag 用逗号空格分隔）。除非用户在对话里明确说"不要默认画风"/"换一个画风"等，否则每次生成都要带上。';
 
-      // 阶段 3：编排（增强 systemPrompt 后调主力 LLM）
-      final tagCount = pool.globalTags.length +
-          pool.perCharacterTags.fold<int>(0, (a, b) => a + b.length);
-      updatePlaceholder(placeholder.copyWith(
-        pipelineStage: 'composing',
-        pipelineStatus: '正在编排提示词…（已检索 $tagCount 个 tag）',
-      ));
+      final payload = <Map<String, dynamic>>[
+        {'role': 'system', 'content': sysContent},
+      ];
 
+      // 知识库匹配
       final knowledgeEntries = _nsfwBook.match(trimmed);
-      String augmented = _systemPrompt + _learningInstruction();
-      if (memoryContext.isNotEmpty) {
-        augmented = '$augmented$memoryContext';
-      }
       if (knowledgeEntries.isNotEmpty) {
         final knowledgeText = knowledgeEntries
             .map((e) => '[来源: ${e.source} - ${e.title}]\n${e.content}')
             .join('\n\n---\n\n');
-        augmented = '$augmented\n\n'
-            '## 参考知识库（命中关键词）\n'
-            '以下内容是从知识库中匹配到的相关提示词参考：\n\n'
-            '$knowledgeText\n';
+        payload.add({
+          'role': 'system',
+          'content': '## 参考知识库（命中关键词）\n以下内容是从知识库中匹配到的相关提示词参考：\n\n$knowledgeText',
+        });
       }
-      augmented = '$augmented\n\n${_buildTagPoolPrompt(pool, keywords)}';
 
-      // 移除占位再调 sendUserMessage（它会把真消息落库）
-      removePlaceholder();
-      notifyListeners();
+      // 自动图片解析：用户发图时跑 WD-Tagger，把 tag 结果作为 system 上下文注入
+      if (imageBase64 != null) {
+        final tagContext = await _autoAnalyzeImageTags(imageBase64);
+        if (tagContext.isNotEmpty) {
+          payload.add({'role': 'system', 'content': tagContext});
+        }
+      }
 
-      final assistantMessage = await _manageChat.sendUserMessage(
-        sessionId: sessionId,
-        userText: trimmed,
-        imageBase64: imageBase64,
-        systemPrompt: augmented,
-        apiKey: composeProfile.apiKey,
-        baseUrl: composeProfile.baseUrl,
-        model: composeModelName,
-        contextLimit: _contextLimit,
+      // 历史消息
+      for (final m in historyLimited) {
+        if (m.id == null) continue;
+        // 跳过刚落库的 user 消息（最后一条），它在后面单独加入
+        payload.add({'role': m.roleString, 'content': m.content});
+      }
+
+      // 当前用户消息（含图片支持 vision）
+      if (imageBase64 != null) {
+        final parts = <Map<String, dynamic>>[];
+        if (trimmed.isNotEmpty) {
+          parts.add({'type': 'text', 'text': trimmed});
+        }
+        parts.add({
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
+        });
+        payload.add({'role': 'user', 'content': parts});
+      } else {
+        payload.add({'role': 'user', 'content': trimmed});
+      }
+
+      // 选择使用哪个模型 profile
+      // 含图：必须用 vision profile（已配置）；未配置则报错，不静默回退 main（避免走错模型浪费 token）
+      // 无图：使用 main profile
+      final mainConfig = this.mainConfig;
+      final visionConfig = this.visionConfig;
+      if (imageBase64 != null && !visionConfig.isConfigured) {
+        _isSending = false;
+        _errorMessage = '发送图片需要先配置识图模型。请到设置 → 模型配置 → 识图模型，'
+            '选择一个支持 vision 的供应商和模型（如 GPT-4o / Claude 3.5 Sonnet 等）。';
+        notifyListeners();
+        return;
+      }
+      final useConfig = (imageBase64 != null && visionConfig.isConfigured)
+          ? visionConfig
+          : mainConfig;
+
+      // 创建 AgentLoop 实例，注入本次的 onEvent + onRequireConfirmation 回调
+      final agentLoop = _agentLoopFactory();
+
+      // 实时更新 placeholder timeline
+      void onEvent(AgentEvent event) {
+        final newTimeline = List<AgentEvent>.from(placeholder.agentTimeline ?? const []);
+        // 同一 toolCallId 的事件替换最后一条
+        if (newTimeline.isNotEmpty &&
+            newTimeline.last.toolCallId == event.toolCallId) {
+          newTimeline[newTimeline.length - 1] = event;
+        } else {
+          newTimeline.add(event);
+        }
+        updatePlaceholder(placeholder.copyWith(
+          agentTimeline: newTimeline,
+        ));
+      }
+
+      Future<bool> onConfirm(AgentTool tool, Map<String, dynamic> args) async {
+        if (onRequireConfirmation == null) return true;
+        try {
+          return await onRequireConfirmation!(AgentToolConfirmRequest(
+            toolName: tool.name,
+            description: tool.description,
+            arguments: args,
+          ));
+        } catch (_) {
+          return false;
+        }
+      }
+
+      // AgentLoop 没有 setter，重新构造一个带 onEvent/onRequireConfirmation 的实例
+      final loopWithCallbacks = AgentLoop(
+        api: _agentLoopApi(),
+        registry: _agentLoopRegistry(),
+        onRequireConfirmation: onConfirm,
+        onEvent: onEvent,
       );
-      await _captureLlmMemoryCandidate(assistantMessage.content);
+
+      final result = await loopWithCallbacks.run(
+        apiKey: useConfig.apiKey,
+        baseUrl: useConfig.baseUrl,
+        model: useConfig.model,
+        initialMessages: payload,
+      );
+
+      // 落库 user + assistant（含 tool_calls JSON）
+      final timeline = result.timeline;
+      String statusText;
+      if (result.failed) {
+        statusText = 'Agent 失败：${result.error ?? "未知错误"}';
+      } else if (result.hitMaxIterations) {
+        statusText = 'Agent 达到迭代上限';
+      } else if (timeline.isEmpty) {
+        statusText = 'Agent 完成';
+      } else {
+        final toolNames = timeline.map((e) => e.toolName).toSet().join(', ');
+        statusText = 'Agent 完成，调用工具：$toolNames';
+      }
+
+      final assistantText = result.finalContent.isEmpty
+          ? (result.failed ? '（执行失败）' : '（Agent 未给出文本回复）')
+          : result.finalContent;
+
+      final toolCallsJson = timeline.isNotEmpty ? AgentEvent.toJsonList(timeline) : null;
+
+      final saved = await _manageChat.saveAgentRunResult(
+        sessionId: sessionId,
+        assistantText: assistantText,
+        toolCallsJson: toolCallsJson,
+        agentTimeline: timeline,
+      );
+
       _messages = await _manageChat.listMessages(sessionId);
-      // 给真消息打上 done 标记，气泡底部显示"已检索 N 个 tag"
+      // 给真消息打上 agent timeline
       _messages = _messages
-          .map((m) => m.id == assistantMessage.id
+          .map((m) => m.id == saved.id
               ? m.copyWith(
-                  pipelineStage: 'done',
-                  pipelineStatus: 'Danbooru 检索 $tagCount 个 tag',
+                  agentTimeline: timeline,
                 )
               : m)
           .toList();
       _sessions = await _manageChat.listSessions();
-    } catch (e) {
-      // Danbooru 流程失败 → 降级到旧单次流程
-      removePlaceholder();
-      _errorMessage = 'Danbooru 搜索失败，已降级为单次 LLM 生成';
-      notifyListeners();
-      try {
-        await _runLegacySingleShot(
-          sessionId: sessionId,
-          trimmed: trimmed,
-          imageBase64: imageBase64,
-          memoryContext: memoryContext,
-          markFallback: true,
-        );
-      } catch (e2) {
-        _errorMessage = e2.toString().replaceFirst('AppException(null): ', '');
+
+      // 如果失败，把错误信息也写到 errorMessage
+      if (result.failed) {
+        _errorMessage = statusText;
       }
+      // 触发 placeholder 清理（真消息已替换占位）
+      updatePlaceholder(placeholder.copyWith(
+        content: '',
+        agentTimeline: const [],
+      ));
+    } catch (e) {
+      updatePlaceholder(placeholder.copyWith(
+        content: 'Agent 失败：$e',
+      ));
+      _errorMessage = e.toString().replaceFirst('AppException(null): ', '');
     } finally {
       _isSending = false;
       notifyListeners();
     }
   }
 
-  /// 旧的单次 LLM 流程（含图 / 用户关掉 Danbooru / 抽取或编排 profile 未配置 / 降级时使用）
-  Future<void> _runLegacySingleShot({
-    required String sessionId,
-    required String trimmed,
-    required String? imageBase64,
-    required String memoryContext,
-    bool markFallback = false,
-  }) async {
-    try {
-      final knowledgeEntries = _nsfwBook.match(trimmed);
-      String augmented = _systemPrompt + _learningInstruction();
-      if (memoryContext.isNotEmpty) {
-        augmented = '$augmented$memoryContext';
-      }
-      if (knowledgeEntries.isNotEmpty) {
-        final knowledgeText = knowledgeEntries
-            .map((e) => '[来源: ${e.source} - ${e.title}]\n${e.content}')
-            .join('\n\n---\n\n');
-        augmented = '$augmented\n\n'
-            '## 参考知识库（命中关键词）\n'
-            '以下内容是从知识库中匹配到的相关提示词参考：\n\n'
-            '$knowledgeText\n'
-            '## 根据以上参考知识，请帮我更好地完善提示词\n';
-      }
-      // 编排 profile 未配置时退到 active profile（兼容旧用户）
-      final useProfile = _profiles[_composeProfileIndex].isConfigured
-          ? _profiles[_composeProfileIndex]
-          : _activeProfile;
-      final useModelName = (useProfile == _profiles[_composeProfileIndex] && _composeProfileModel.isNotEmpty)
-          ? _composeProfileModel
-          : useProfile.model.isNotEmpty ? useProfile.model : llmModel;
-      final assistantMessage = await _manageChat.sendUserMessage(
-        sessionId: sessionId,
-        userText: trimmed,
-        imageBase64: imageBase64,
-        systemPrompt: augmented,
-        apiKey: useProfile.apiKey.isNotEmpty ? useProfile.apiKey : llmApiKey,
-        baseUrl: useProfile.baseUrl.isNotEmpty ? useProfile.baseUrl : llmBaseUrl,
-        model: useModelName,
-        contextLimit: _contextLimit,
-      );
-      await _captureLlmMemoryCandidate(assistantMessage.content);
-      _messages = await _manageChat.listMessages(sessionId);
-      if (markFallback) {
-        _messages = _messages
-            .map((m) => m.id == assistantMessage.id
-                ? m.copyWith(
-                    pipelineStage: 'fallback',
-                    pipelineStatus: 'Danbooru 搜索失败，已降级',
-                  )
-                : m)
-            .toList();
-      }
-      _sessions = await _manageChat.listSessions();
-    } catch (e) {
-      _errorMessage = e.toString().replaceFirst('AppException(null): ', '');
-      _messages = await _manageChat.listMessages(sessionId);
-      rethrow;
-    }
+  // LlmApiService 和 ToolRegistry 通过 factory 拿到
+  // 这里用 getter 从 DI 中拿（避免循环依赖，每次都拿同一单例）
+  dynamic _agentLoopApi() {
+    // 直接从 DI 拿 LlmApiService 单例
+    return _apiServiceSingleton;
   }
 
-  /// 把 Danbooru 检索结果格式化进 system prompt，让主力 LLM 优先从中挑选。
-  String _buildTagPoolPrompt(DanbooruTagPool pool, ExtractedKeywords kw) {
-    final buf = StringBuffer();
-    buf.writeln('## Danbooru 真实 tag 池');
-    buf.writeln('以下 tag 全部来自 Danbooru 实时检索结果，是真实存在且热度可观的 tag。');
-    buf.writeln('请优先从中挑选/组合，**不要凭空创造**新的 tag；确实需要补充时，要遵循 Danbooru 命名习惯。');
-    buf.writeln();
-
-    if (pool.globalTags.isNotEmpty) {
-      buf.writeln('### 全局候选（场景/风格/通用底模）');
-      buf.writeln(_formatTagList(pool.globalTags));
-      buf.writeln();
-    }
-
-    if (kw.characters.isNotEmpty) {
-      for (int i = 0; i < kw.characters.length; i++) {
-        final tags = i < pool.perCharacterTags.length
-            ? pool.perCharacterTags[i]
-            : const <DanbooruTag>[];
-        if (tags.isEmpty) continue;
-        buf.writeln('### 角色 ${i + 1}：${kw.characters[i]}');
-        buf.writeln(_formatTagList(tags));
-        buf.writeln();
-      }
-    }
-
-    return buf.toString();
+  ToolRegistry _agentLoopRegistry() {
+    return _toolRegistrySingleton!;
   }
 
-  String _formatTagList(List<DanbooruTag> tags) {
-    final lines = <String>[];
-    for (final t in tags) {
-      final name = t.tag.replaceAll('_', ' '); // 转 NovelAI 风格
-      final cn = t.cnName.isNotEmpty ? '（${t.cnName}）' : '';
-      final cat = t.category.isNotEmpty ? ' [${t.category}]' : '';
-      lines.add('- $name$cn$cat');
-    }
-    return lines.join('\n');
-  }
+  // 用 static 注入：避免在 ViewModel 里 import Dio/LlmApiService 形成强依赖
+  // injection.dart 在 registerFactory LlmChatViewModel 时会设置这两个静态字段
+  // 注意：不能用 late final，否则 factory 第二次创建实例时会抛 LateInitializationError
+  static dynamic _apiServiceSingleton;
+  static ToolRegistry? _toolRegistrySingleton;
+  static set apiServiceSingleton(dynamic s) => _apiServiceSingleton = s;
+  static set toolRegistrySingleton(ToolRegistry r) => _toolRegistrySingleton = r;
 
-  void clearError() {
-    if (_errorMessage == null) return;
-    _errorMessage = null;
-    notifyListeners();
-  }
-
-  /// 重试：从指定用户消息处重新发送（删除该消息及之后的，重新发送原文）
+  /// 重试：从指定用户消息处重新发送
   Future<void> retryFromIndex(int messageIndex) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
     if (msg.role != LlmMessageRole.user || msg.id == null) return;
     final text = msg.content.replaceAll(RegExp(r'\n\[图片\]$'), '').trim();
     if (text.isEmpty || _isSending) return;
-
-    // 删除该消息及之后的所有消息
     await _manageChat.deleteMessagesFrom(msg.id!, _activeSessionId!);
     _messages = await _manageChat.listMessages(_activeSessionId!);
     notifyListeners();
-
-    // 重新发送
     await sendUserMessage(text);
   }
 
-  /// 编辑并重发：修改用户消息内容后重新发送
+  /// 编辑并重发
   Future<void> editAndResend(int messageIndex, String newText) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
     if (msg.role != LlmMessageRole.user || msg.id == null) return;
     final trimmed = newText.trim();
     if (trimmed.isEmpty || _isSending) return;
-
-    // 删除该消息及之后的所有消息
     await _manageChat.deleteMessagesFrom(msg.id!, _activeSessionId!);
     _messages = await _manageChat.listMessages(_activeSessionId!);
     notifyListeners();
-
-    // 用新文本重新发送
     await sendUserMessage(trimmed);
   }
+
+  /// 自动跑 WD-Tagger 解析图片，返回 system 上下文文本（失败时返回空字符串，不阻断主流程）。
+  /// [imageBase64] 是用户发送的图片 base64 字符串（不含 data: 前缀）。
+  Future<String> _autoAnalyzeImageTags(String imageBase64) async {
+    File? tempFile;
+    try {
+      final tempDir = await getTemporaryDirectory();
+      tempFile = File('${tempDir.path}/agent_img_${DateTime.now().millisecondsSinceEpoch}.png');
+      await tempFile.writeAsBytes(base64Decode(imageBase64));
+
+      final wdResult = await _analyzeImageTags.analyze(
+        imagePath: tempFile.path,
+        modelRepo: 'SmilingWolf/wd-swinv2-tagger-v3',
+        generalThreshold: 0.35,
+        characterThreshold: 0.85,
+      );
+
+      final generalTags = wdResult.generalTags.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final characterTags = wdResult.characterTags.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final buf = StringBuffer();
+      buf.writeln('## 用户上传图片已自动解析（WD-Tagger）');
+      buf.writeln('以下是图片中检测到的 Danbooru 风格 tag（按置信度排序）：');
+      if (characterTags.isNotEmpty) {
+        buf.writeln('### 角色标签');
+        for (final e in characterTags) {
+          buf.writeln('- ${e.key}（置信度 ${(e.value * 100).toStringAsFixed(0)}%）');
+        }
+      }
+      if (generalTags.isNotEmpty) {
+        buf.writeln('### 通用标签');
+        // 限制最多 40 个，避免上下文过长
+        final top = generalTags.take(40).toList();
+        for (final e in top) {
+          buf.writeln('- ${e.key}（${(e.value * 100).toStringAsFixed(0)}%）');
+        }
+        if (generalTags.length > 40) {
+          buf.writeln('- ... 其余 ${generalTags.length - 40} 个 tag 已省略');
+        }
+      }
+      buf.writeln('\n你可以在 vision 模型看图基础上参考这些 tag 编排提示词。');
+      return buf.toString();
+    } catch (e) {
+      // 解析失败不阻断主流程，vision 模型仍能看图
+      if (kDebugMode) {
+        debugPrint('autoAnalyzeImageTags failed: $e');
+      }
+      return '';
+    } finally {
+      try {
+        await tempFile?.delete();
+      } catch (_) {}
+    }
+  }
+}
+
+/// 副作用工具确认请求。UI 用此对象构造弹窗。
+class AgentToolConfirmRequest {
+  final String toolName;
+  final String description;
+  final Map<String, dynamic> arguments;
+  const AgentToolConfirmRequest({
+    required this.toolName,
+    required this.description,
+    required this.arguments,
+  });
 }

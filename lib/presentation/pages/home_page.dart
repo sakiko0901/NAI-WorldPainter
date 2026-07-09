@@ -99,7 +99,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               HistoryPage(onNavigate: _switchPage), // 0
               GeneratePage(onNavigate: _switchPage), // 1
-              const SettingsPage(), // 2
+              SettingsPage(onNavigateToGenerate: () => _switchPage(1)), // 2
             ],
           ),
 

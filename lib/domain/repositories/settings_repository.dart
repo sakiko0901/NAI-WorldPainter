@@ -1,5 +1,8 @@
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 
 abstract class SettingsRepository {
   Future<String?> getApiKey();
@@ -26,6 +29,9 @@ abstract class SettingsRepository {
 
   Future<String> getDefaultNoiseSchedule();
   Future<void> setDefaultNoiseSchedule(String schedule);
+
+  Future<String> getDefaultStyleWords();
+  Future<void> setDefaultStyleWords(String value);
 
   Future<String> getPromptDraft();
   Future<void> setPromptDraft(String value);
@@ -76,39 +82,20 @@ abstract class SettingsRepository {
   Future<String?> getLlmActiveSessionId();
   Future<void> setLlmActiveSessionId(String? value);
 
-  // LLM 多配置位
-  Future<int> getLlmActiveProfile();
-  Future<void> setLlmActiveProfile(int index);
-
-  Future<int> getLlmExtractProfile();
-  Future<void> setLlmExtractProfile(int index);
-
-  Future<int> getLlmComposeProfile();
-  Future<void> setLlmComposeProfile(int index);
-
+  // LLM 上下文条数
   Future<int> getLlmContextLimit();
   Future<void> setLlmContextLimit(int value);
 
-  Future<String?> getLlmProfileApiKey(int i);
-  Future<void> setLlmProfileApiKey(int i, String value);
+  // LLM 供应商列表
+  Future<List<LlmProvider>> getLlmProviders();
+  Future<void> saveLlmProviders(List<LlmProvider> providers);
 
-  Future<String> getLlmProfileBaseUrl(int i);
-  Future<void> setLlmProfileBaseUrl(int i, String value);
+  // LLM 3 角色绑定
+  Future<LlmRoleBinding> getLlmRoleBinding(LlmProfileRole role);
+  Future<void> setLlmRoleBinding(LlmProfileRole role, LlmRoleBinding binding);
 
-  Future<String> getLlmProfileModel(int i);
-  Future<void> setLlmProfileModel(int i, String value);
-
-  Future<List<String>> getLlmProfileModels(int i);
-  Future<void> setLlmProfileModels(int i, List<String> value);
-
-  Future<String?> getLlmExtractProfileModel();
-  Future<void> setLlmExtractProfileModel(String? value);
-
-  Future<String?> getLlmComposeProfileModel();
-  Future<void> setLlmComposeProfileModel(String? value);
-
-  Future<String> getLlmProfileName(int i);
-  Future<void> setLlmProfileName(int i, String value);
+  /// 旧 3 角色 9 key + 旧单配置数据迁移到供应商+绑定结构
+  bool migrateLegacyLlm3RoleToProvider();
 
   /// 测试 API 连通性
   Future<bool> testConnection();

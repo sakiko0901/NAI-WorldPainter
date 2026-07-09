@@ -1,7 +1,32 @@
 import 'package:equatable/equatable.dart';
 
-enum PromptMemoryType { characterName, characterFeature, style, other }
-enum PromptMemorySource { manual, userInstruction, llmCandidate }
+/// 记忆类型。前 4 个为提示词领域专用，后 4 个为 agent 化预留。
+enum PromptMemoryType {
+  characterName,
+  characterFeature,
+  style,
+  other,
+  fact,
+  preference,
+  observation,
+  decision,
+}
+
+/// 来源。pendingLlmCandidate 为待用户确认的 LLM 候选，不参与检索。
+enum PromptMemorySource {
+  manual,
+  userInstruction,
+  llmCandidate,
+  pendingLlmCandidate,
+}
+
+/// 作用域。user=跨 agent 共享；project=当前项目；agent=特定 agent 私有。
+/// 当前仅使用 user，其他为 agent 化预留。
+enum PromptMemoryScope {
+  user,
+  project,
+  agent,
+}
 
 class PromptMemory extends Equatable {
   final int? id;
@@ -9,6 +34,11 @@ class PromptMemory extends Equatable {
   final String content;
   final PromptMemoryType type;
   final PromptMemorySource source;
+  final PromptMemoryScope scope;
+  final int hitCount;
+  final DateTime? lastHitAt;
+  final double weight;
+  final int? supersededBy;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -18,9 +48,18 @@ class PromptMemory extends Equatable {
     required this.content,
     required this.type,
     required this.source,
+    this.scope = PromptMemoryScope.user,
+    this.hitCount = 0,
+    this.lastHitAt,
+    this.weight = 1.0,
+    this.supersededBy,
     required this.createdAt,
     required this.updatedAt,
   });
+
+  /// 是否参与检索。pending 候选和已被覆盖的记忆不参与。
+  bool get isRetrievable =>
+      source != PromptMemorySource.pendingLlmCandidate && supersededBy == null;
 
   PromptMemory copyWith({
     int? id,
@@ -28,6 +67,11 @@ class PromptMemory extends Equatable {
     String? content,
     PromptMemoryType? type,
     PromptMemorySource? source,
+    PromptMemoryScope? scope,
+    int? hitCount,
+    DateTime? lastHitAt,
+    double? weight,
+    int? supersededBy,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -37,11 +81,29 @@ class PromptMemory extends Equatable {
       content: content ?? this.content,
       type: type ?? this.type,
       source: source ?? this.source,
+      scope: scope ?? this.scope,
+      hitCount: hitCount ?? this.hitCount,
+      lastHitAt: lastHitAt ?? this.lastHitAt,
+      weight: weight ?? this.weight,
+      supersededBy: supersededBy ?? this.supersededBy,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
   @override
-  List<Object?> get props => [id, trigger, content, type, source, createdAt, updatedAt];
+  List<Object?> get props => [
+        id,
+        trigger,
+        content,
+        type,
+        source,
+        scope,
+        hitCount,
+        lastHitAt,
+        weight,
+        supersededBy,
+        createdAt,
+        updatedAt,
+      ];
 }

@@ -8,16 +8,16 @@ import 'package:image_picker/image_picker.dart';
 
 class ChatInputBar extends StatefulWidget {
   final bool isSending;
-  final bool danbooruSearchEnabled;
-  final VoidCallback onToggleDanbooruSearch;
+  final bool webSearchEnabled;
+  final VoidCallback onToggleWebSearch;
   final void Function(String text, {String? imageBase64}) onSend;
   final TextEditingController? controller;
 
   const ChatInputBar({
     super.key,
     required this.isSending,
-    required this.danbooruSearchEnabled,
-    required this.onToggleDanbooruSearch,
+    required this.webSearchEnabled,
+    required this.onToggleWebSearch,
     required this.onSend,
     this.controller,
   });
@@ -135,14 +135,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
                 IconButton(
-                  onPressed: widget.isSending ? null : widget.onToggleDanbooruSearch,
-                  tooltip: widget.danbooruSearchEnabled
-                      ? 'Danbooru 搜索：开（点击关闭）'
-                      : 'Danbooru 搜索：关（点击开启）',
+                  onPressed: widget.isSending ? null : widget.onToggleWebSearch,
+                  tooltip: widget.webSearchEnabled
+                      ? '联网搜索：开（点击关闭）'
+                      : '联网搜索：关（点击开启）',
                   icon: Icon(
-                    CupertinoIcons.tag,
+                    CupertinoIcons.globe,
                     size: 20,
-                    color: widget.danbooruSearchEnabled
+                    color: widget.webSearchEnabled
                         ? theme.colorScheme.primary
                         : Theme.of(context).colorScheme.onSurfaceVariant,
                   ),

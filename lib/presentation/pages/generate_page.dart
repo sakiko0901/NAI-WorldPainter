@@ -11,6 +11,8 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_apply_parser.dart';
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
+import 'package:nai_huishi/presentation/widgets/prompt_capsule_sheet.dart';
 
 class _MaskStroke {
   final List<Offset> points;
@@ -665,6 +667,7 @@ class _GeneratePageState extends State<GeneratePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -771,136 +774,6 @@ class _GeneratePageState extends State<GeneratePage> {
           if (_isChatDrawerOpen)
             ChatDrawer(
               onClose: () => setState(() => _isChatDrawerOpen = false),
-              onApplyPrompt: (text, replace, label) async {
-                FocusManager.instance.primaryFocus?.unfocus();
-                // 尝试从标签中提取角色编号 → 自动定位
-                final charIdx = label != null ? characterIndex(label) : null;
-                if (charIdx != null) {
-                  while (_vm.characters.length <= charIdx) {
-                    _vm.addCharacter();
-                  }
-                  if (replace) {
-                    _vm.replaceCharacterPrompt(charIdx, text);
-                  } else {
-                    _vm.appendToCharacterPrompt(charIdx, text);
-                  }
-                  _syncPromptControllers();
-                  _showToast(replace
-                      ? '已替换角色 ${charIdx + 1} 提示词'
-                      : '已追加到角色 ${charIdx + 1} 提示词');
-                  return;
-                }
-                // 有明确标签且非角色标签 → 直接写入全局正向
-                if (label != null &&
-                    label.isNotEmpty &&
-                    !_isCharacterLabelStr(label)) {
-                  if (replace) {
-                    await _vm.replacePrompt(text);
-                  } else {
-                    await _vm.appendToPrompt(text);
-                  }
-                  _syncPromptControllers();
-                  _showToast(replace ? '已替换全局正向提示词' : '已追加到全局正向提示词');
-                  return;
-                }
-                // 含"角色"但无编号 或 无标签 → 弹选择器
-                final target = await _showApplyTargetPicker(isNegative: false);
-                if (target == null || !mounted) return;
-                if (target == -1) {
-                  if (replace) {
-                    await _vm.replacePrompt(text);
-                  } else {
-                    await _vm.appendToPrompt(text);
-                  }
-                  _syncPromptControllers();
-                  _showToast(replace ? '已替换全局正向提示词' : '已追加到全局正向提示词');
-                } else {
-                  while (_vm.characters.length <= target) {
-                    _vm.addCharacter();
-                  }
-                  if (replace) {
-                    _vm.replaceCharacterPrompt(target, text);
-                  } else {
-                    _vm.appendToCharacterPrompt(target, text);
-                  }
-                  _showToast(replace
-                      ? '已替换角色 ${target + 1} 提示词'
-                      : '已追加到角色 ${target + 1} 提示词');
-                }
-              },
-              onApplyNegative: (text, replace, label) async {
-                FocusManager.instance.primaryFocus?.unfocus();
-                // 尝试从标签中提取角色编号 → 自动定位
-                final charIdx = label != null ? characterIndex(label) : null;
-                if (charIdx != null) {
-                  while (_vm.characters.length <= charIdx) {
-                    _vm.addCharacter();
-                  }
-                  final c = _vm.characters[charIdx];
-                  final newUc = replace
-                      ? text.trim()
-                      : (c.uc == null || c.uc!.trim().isEmpty)
-                          ? text.trim()
-                          : '${c.uc!.trimRight()}, ${text.trim()}';
-                  _vm.updateCharacter(charIdx, c.copyWith(uc: newUc));
-                  _syncPromptControllers();
-                  _showToast(replace
-                      ? '已替换角色 ${charIdx + 1} 负向提示词'
-                      : '已追加到角色 ${charIdx + 1} 负向提示词');
-                  return;
-                }
-                // 有明确标签且是负向/非角色 → 直接写入全局负向
-                if (label != null &&
-                    label.isNotEmpty &&
-                    (_isNegativeLabelStr(label) ||
-                        !_isCharacterLabelStr(label))) {
-                  if (replace) {
-                    await _vm.replaceNegativePrompt(text);
-                  } else {
-                    await _vm.appendToNegativePrompt(text);
-                  }
-                  _syncPromptControllers();
-                  _showToast(replace ? '已替换全局负向提示词' : '已追加到全局负向提示词');
-                  return;
-                }
-                // 含"角色"但无编号 或 无标签 → 弹选择器
-                final target = await _showApplyTargetPicker(isNegative: true);
-                if (target == null || !mounted) return;
-                if (target == -1) {
-                  if (replace) {
-                    await _vm.replaceNegativePrompt(text);
-                  } else {
-                    await _vm.appendToNegativePrompt(text);
-                  }
-                  _syncPromptControllers();
-                  _showToast(replace ? '已替换全局负向提示词' : '已追加到全局负向提示词');
-                } else {
-                  while (_vm.characters.length <= target) {
-                    _vm.addCharacter();
-                  }
-                  final c = _vm.characters[target];
-                  final newUc = replace
-                      ? text.trim()
-                      : (c.uc == null || c.uc!.trim().isEmpty)
-                          ? text.trim()
-                          : '${c.uc!.trimRight()}, ${text.trim()}';
-                  _vm.updateCharacter(target, c.copyWith(uc: newUc));
-                  _showToast(replace
-                      ? '已替换角色 ${target + 1} 负向提示词'
-                      : '已追加到角色 ${target + 1} 负向提示词');
-                }
-              },
-              onApplyAll: (aggregated) async {
-                FocusManager.instance.primaryFocus?.unfocus();
-                await _vm.replaceAll(
-                  positive: aggregated.positive,
-                  negative: aggregated.negative,
-                  characterPrompts: aggregated.characterPrompts,
-                  characterNegatives: aggregated.characterNegatives,
-                );
-                _syncPromptControllers();
-                _showToast('已替换全部提示词');
-              },
             ),
 
           // 悬浮提示
@@ -1601,6 +1474,230 @@ class _GeneratePageState extends State<GeneratePage> {
     }
   }
 
+  Future<void> _openPromptCapsule({
+    required bool isInpaint,
+    required bool isNegative,
+  }) async {
+    final title = isInpaint
+        ? (isNegative ? '灵感胶囊 · 重绘负面' : '灵感胶囊 · 重绘正面')
+        : (isNegative ? '灵感胶囊 · 负面提示词' : '灵感胶囊 · 正面提示词');
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => PromptCapsuleSheet(
+        title: title,
+        onSelect: (tag) async {
+          if (isNegative) {
+            await _vm.appendToNegativePrompt(tag.promptText);
+          } else {
+            await _vm.appendToPrompt(tag.promptText);
+          }
+          if (!mounted) return;
+          showFloatingToast(
+            context,
+            '已插入 ${tag.zh}',
+            icon: CupertinoIcons.sparkles,
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openExpandedPromptEditor({
+    required String title,
+    required String initialValue,
+    required Future<void> Function(String value) onSubmitted,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
+        final theme = Theme.of(ctx);
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottom),
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.88,
+            ),
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(CupertinoIcons.xmark),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      autofocus: true,
+                      minLines: null,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      style: const TextStyle(fontSize: 15, height: 1.6),
+                      decoration: const InputDecoration(
+                        hintText: '请输入提示词...',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        await onSubmitted(controller.text);
+                        if (!ctx.mounted) return;
+                        Navigator.of(ctx).pop();
+                      },
+                      icon: const Icon(CupertinoIcons.check_mark),
+                      label: const Text('完成'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    controller.dispose();
+  }
+
+  Widget _buildPromptCapsuleButton({
+    required bool isInpaint,
+    required bool isNegative,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
+        ),
+        child: InkWell(
+          onTap: () => _openPromptCapsule(
+            isInpaint: isInpaint,
+            isNegative: isNegative,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.sparkles, size: 16),
+                SizedBox(width: 8),
+                Text('灵感胶囊'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromptField({
+    required TextEditingController controller,
+    required String hintText,
+    required ValueChanged<String> onChanged,
+    required Color textColor,
+    required String editorTitle,
+    required Future<void> Function(String value) onExpandedSubmit,
+  }) {
+    return Stack(
+      children: [
+        TextField(
+          controller: controller,
+          minLines: 7,
+          maxLines: 14,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: textColor,
+          ),
+          decoration: InputDecoration(
+            hintText: hintText,
+            hintStyle: TextStyle(
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.55),
+            ),
+            fillColor: Colors.transparent,
+            border: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            contentPadding: const EdgeInsets.only(right: 36),
+          ),
+          onChanged: onChanged,
+        ),
+        Positioned(
+          top: 0,
+          right: -4,
+          child: IconButton(
+            onPressed: () => _openExpandedPromptEditor(
+              title: editorTitle,
+              initialValue: controller.text,
+              onSubmitted: onExpandedSubmit,
+            ),
+            tooltip: '放大编辑',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            icon: Icon(
+              CupertinoIcons.arrow_up_left_arrow_down_right,
+              size: 15,
+              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPromptSection() {
     if (_vm.isNonNovelAiProvider) {
       return Container(
@@ -1613,8 +1710,8 @@ class _GeneratePageState extends State<GeneratePage> {
         padding: const EdgeInsets.all(16),
         child: TextField(
           controller: _promptController,
-          minLines: 5,
-          maxLines: 12,
+          minLines: 7,
+          maxLines: 14,
           style: TextStyle(fontSize: 14, height: 1.5),
           decoration: InputDecoration(
             hintText: '描述你想要的画面...',
@@ -1687,60 +1784,32 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: IndexedStack(
               index: _promptSegmentIndex,
               children: [
-                TextField(
+                _buildPromptField(
                   controller: _promptController,
-                  minLines: 5,
-                  maxLines: 12,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: '描述你想要的画面...',
-                    hintStyle: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.55)),
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                  ),
+                  hintText: '描述你想要的画面...',
                   onChanged: _vm.updatePrompt,
+                  textColor: Theme.of(context).colorScheme.onSurface,
+                  editorTitle: '编辑正面提示词',
+                  onExpandedSubmit: _vm.updatePrompt,
                 ),
-                TextField(
+                _buildPromptField(
                   controller: _negativeController,
-                  minLines: 5,
-                  maxLines: 12,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: '描述你不想要的画面...',
-                    hintStyle: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.55)),
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                  ),
+                  hintText: '描述你不想要的画面...',
                   onChanged: _vm.updateNegativePrompt,
+                  textColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                  editorTitle: '编辑负面提示词',
+                  onExpandedSubmit: _vm.updateNegativePrompt,
                 ),
               ],
             ),
+          ),
+          _buildPromptCapsuleButton(
+            isInpaint: false,
+            isNegative: _promptSegmentIndex == 1,
           ),
         ],
       ),
@@ -1761,8 +1830,8 @@ class _GeneratePageState extends State<GeneratePage> {
         padding: const EdgeInsets.all(16),
         child: TextField(
           controller: _inpaintPromptController,
-          minLines: 5,
-          maxLines: 12,
+          minLines: 7,
+          maxLines: 14,
           style: TextStyle(fontSize: 14, height: 1.5),
           decoration: InputDecoration(
             hintText: '描述编辑后想要的画面...',
@@ -1850,60 +1919,32 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: IndexedStack(
               index: _inpaintPromptSegmentIndex,
               children: [
-                TextField(
+                _buildPromptField(
                   controller: _inpaintPromptController,
-                  minLines: 5,
-                  maxLines: 12,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: '描述重绘区域想要的画面...',
-                    hintStyle: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.55)),
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                  ),
+                  hintText: '描述重绘区域想要的画面...',
                   onChanged: _vm.updateInpaintPrompt,
+                  textColor: Theme.of(context).colorScheme.onSurface,
+                  editorTitle: '编辑重绘正面提示词',
+                  onExpandedSubmit: _vm.updateInpaintPrompt,
                 ),
-                TextField(
+                _buildPromptField(
                   controller: _inpaintNegativeController,
-                  minLines: 5,
-                  maxLines: 12,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: '描述重绘区域不想要的画面...',
-                    hintStyle: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.55)),
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                  ),
+                  hintText: '描述重绘区域不想要的画面...',
                   onChanged: _vm.updateInpaintNegativePrompt,
+                  textColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                  editorTitle: '编辑重绘负面提示词',
+                  onExpandedSubmit: _vm.updateInpaintNegativePrompt,
                 ),
               ],
             ),
+          ),
+          _buildPromptCapsuleButton(
+            isInpaint: true,
+            isNegative: _inpaintPromptSegmentIndex == 1,
           ),
         ],
       ),
@@ -2499,7 +2540,9 @@ class _GeneratePageState extends State<GeneratePage> {
                 ],
                 Expanded(
                   child: GestureDetector(
-                    onTap: _vm.isGenerating ? null : () => _vm.generate(),
+                    onTap: _vm.isGenerating
+                        ? () => _vm.cancelBatch()
+                        : () => _vm.generate(),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       height: 56,
@@ -2540,9 +2583,11 @@ class _GeneratePageState extends State<GeneratePage> {
                                               .onSurface)),
                                   SizedBox(width: 12),
                                   Text(
-                                    _vm.batchCount > 1
-                                        ? '生成中… ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
-                                        : 'Generating...',
+                                    _vm.isBatchCancelling
+                                        ? '取消中…'
+                                        : (_vm.batchCount > 1
+                                            ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
+                                            : '取消生成'),
                                     style: TextStyle(
                                         color: Theme.of(context)
                                             .colorScheme
@@ -3020,6 +3065,111 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                             widget.vm.setCharacterPositionAuto(entry.key),
                         onGridPosition: (row, col) => widget.vm
                             .setCharacterGridPosition(entry.key, row, col),
+                        onOpenExpandedEditor: ({
+                          required title,
+                          required initialValue,
+                          required onSubmitted,
+                        }) => showModalBottomSheet<void>(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (ctx) {
+                            final controller = TextEditingController(
+                              text: initialValue,
+                            );
+                            final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
+                            final theme = Theme.of(ctx);
+                            return Padding(
+                              padding: EdgeInsets.only(bottom: bottom),
+                              child: Container(
+                                constraints: BoxConstraints(
+                                  maxHeight:
+                                      MediaQuery.sizeOf(ctx).height * 0.88,
+                                ),
+                                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.surface,
+                                  borderRadius: BorderRadius.circular(28),
+                                  border: Border.all(
+                                    color: theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.08),
+                                  ),
+                                ),
+                                child: SafeArea(
+                                  top: false,
+                                  child: Column(
+                                    children: [
+                                      Container(
+                                        width: 44,
+                                        height: 5,
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.onSurfaceVariant
+                                              .withValues(alpha: 0.35),
+                                          borderRadius:
+                                              BorderRadius.circular(99),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              title,
+                                              style: TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.w800,
+                                                color: theme.colorScheme.onSurface,
+                                              ),
+                                            ),
+                                          ),
+                                          IconButton(
+                                            onPressed: () => Navigator.of(ctx).pop(),
+                                            icon: const Icon(CupertinoIcons.xmark),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: controller,
+                                          autofocus: true,
+                                          minLines: null,
+                                          maxLines: null,
+                                          expands: true,
+                                          textAlignVertical: TextAlignVertical.top,
+                                          style: const TextStyle(
+                                            fontSize: 15,
+                                            height: 1.6,
+                                          ),
+                                          decoration: const InputDecoration(
+                                            hintText: '请输入提示词...',
+                                            alignLabelWithHint: true,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 14),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton.icon(
+                                          onPressed: () async {
+                                            await onSubmitted(controller.text);
+                                            if (!ctx.mounted) return;
+                                            Navigator.of(ctx).pop();
+                                          },
+                                          icon: const Icon(
+                                            CupertinoIcons.check_mark,
+                                          ),
+                                          label: const Text('完成'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                 ],
               ),
@@ -3048,6 +3198,11 @@ class _CharacterCard extends StatefulWidget {
   final ValueChanged<CharacterSpec> onChanged;
   final VoidCallback onAutoPosition;
   final void Function(int row, int col) onGridPosition;
+  final Future<void> Function({
+    required String title,
+    required String initialValue,
+    required Future<void> Function(String value) onSubmitted,
+  }) onOpenExpandedEditor;
 
   const _CharacterCard({
     super.key,
@@ -3062,6 +3217,7 @@ class _CharacterCard extends StatefulWidget {
     required this.onChanged,
     required this.onAutoPosition,
     required this.onGridPosition,
+    required this.onOpenExpandedEditor,
   });
 
   @override
@@ -3246,46 +3402,105 @@ class _CharacterCardState extends State<_CharacterCard> {
                   child: IndexedStack(
                     index: _tabIndex,
                     children: [
-                      TextField(
-                        controller: _promptController,
-                        focusNode: _promptFocusNode,
-                        minLines: 4,
-                        maxLines: 6,
-                        style: TextStyle(fontSize: 13, height: 1.5),
-                        decoration: InputDecoration(
-                          hintText: '描述该角色的外观...',
-                          hintStyle: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant
-                                  .withValues(alpha: 0.55)),
-                          filled: true,
-                          fillColor: Colors.black.withValues(alpha: 0.2),
-                        ),
-                        onChanged: (value) => widget.onChanged(
-                            widget.character.copyWith(prompt: value)),
+                      Stack(
+                        children: [
+                          TextField(
+                            controller: _promptController,
+                            focusNode: _promptFocusNode,
+                            minLines: 6,
+                            maxLines: 8,
+                            style: TextStyle(fontSize: 13, height: 1.5),
+                            decoration: InputDecoration(
+                              hintText: '描述该角色的外观...',
+                              hintStyle: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withValues(alpha: 0.55)),
+                              filled: true,
+                              fillColor: Colors.black.withValues(alpha: 0.2),
+                              contentPadding: const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                            ),
+                            onChanged: (value) => widget.onChanged(
+                                widget.character.copyWith(prompt: value)),
+                          ),
+                          Positioned(
+                            top: 2,
+                            right: -4,
+                            child: IconButton(
+                              onPressed: () => widget.onOpenExpandedEditor(
+                                title: '编辑角色 ${widget.index + 1} Prompt',
+                                initialValue: _promptController.text,
+                                onSubmitted: (value) async {
+                                  widget.onChanged(
+                                    widget.character.copyWith(prompt: value),
+                                  );
+                                },
+                              ),
+                              tooltip: '放大编辑',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              icon: Icon(
+                                CupertinoIcons.arrow_up_left_arrow_down_right,
+                                size: 15,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      TextField(
-                        controller: _ucController,
-                        focusNode: _ucFocusNode,
-                        minLines: 4,
-                        maxLines: 6,
-                        style: TextStyle(fontSize: 13, height: 1.5),
-                        decoration: InputDecoration(
-                          hintText: '描述该角色不需要的特征...',
-                          hintStyle: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant
-                                  .withValues(alpha: 0.55)),
-                          filled: true,
-                          fillColor: Colors.black.withValues(alpha: 0.2),
-                        ),
-                        onChanged: (value) =>
-                            widget.onChanged(widget.character.copyWith(
-                          uc: value.isEmpty ? null : value,
-                          clearUc: value.isEmpty,
-                        )),
+                      Stack(
+                        children: [
+                          TextField(
+                            controller: _ucController,
+                            focusNode: _ucFocusNode,
+                            minLines: 6,
+                            maxLines: 8,
+                            style: TextStyle(fontSize: 13, height: 1.5),
+                            decoration: InputDecoration(
+                              hintText: '描述该角色不需要的特征...',
+                              hintStyle: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withValues(alpha: 0.55)),
+                              filled: true,
+                              fillColor: Colors.black.withValues(alpha: 0.2),
+                              contentPadding: const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                            ),
+                            onChanged: (value) =>
+                                widget.onChanged(widget.character.copyWith(
+                              uc: value.isEmpty ? null : value,
+                              clearUc: value.isEmpty,
+                            )),
+                          ),
+                          Positioned(
+                            top: 2,
+                            right: -4,
+                            child: IconButton(
+                              onPressed: () => widget.onOpenExpandedEditor(
+                                title: '编辑角色 ${widget.index + 1} UContent',
+                                initialValue: _ucController.text,
+                                onSubmitted: (value) async {
+                                  widget.onChanged(widget.character.copyWith(
+                                    uc: value.isEmpty ? null : value,
+                                    clearUc: value.isEmpty,
+                                  ));
+                                },
+                              ),
+                              tooltip: '放大编辑',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              icon: Icon(
+                                CupertinoIcons.arrow_up_left_arrow_down_right,
+                                size: 15,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       _CharacterPositionGrid(
                         centerX: widget.character.centerX,

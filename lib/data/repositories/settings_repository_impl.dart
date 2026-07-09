@@ -1,5 +1,8 @@
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/data/datasources/local/settings_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
@@ -64,6 +67,12 @@ class SettingsRepositoryImpl implements SettingsRepository {
 
   @override
   Future<void> setDefaultNoiseSchedule(String s) => _local.setDefaultNoiseSchedule(s);
+
+  @override
+  Future<String> getDefaultStyleWords() async => _local.getDefaultStyleWords();
+
+  @override
+  Future<void> setDefaultStyleWords(String v) => _local.setDefaultStyleWords(v);
 
   @override
   Future<String> getPromptDraft() async => _local.getPromptDraft();
@@ -161,74 +170,50 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<void> setLlmActiveSessionId(String? value) => _local.setLlmActiveSessionId(value);
 
-  @override
-  Future<int> getLlmActiveProfile() async => _local.getLlmActiveProfile();
-
-  @override
-  Future<void> setLlmActiveProfile(int index) => _local.setLlmActiveProfile(index);
-
-  @override
-  Future<int> getLlmExtractProfile() async => _local.getLlmExtractProfile();
-
-  @override
-  Future<void> setLlmExtractProfile(int index) => _local.setLlmExtractProfile(index);
-
-  @override
-  Future<int> getLlmComposeProfile() async => _local.getLlmComposeProfile();
-
-  @override
-  Future<void> setLlmComposeProfile(int index) => _local.setLlmComposeProfile(index);
-
+  // LLM 上下文条数
   @override
   Future<int> getLlmContextLimit() async => _local.getLlmContextLimit();
 
   @override
   Future<void> setLlmContextLimit(int value) => _local.setLlmContextLimit(value);
 
+  // LLM 供应商列表
   @override
-  Future<String?> getLlmProfileApiKey(int i) async => _local.getLlmProfileApiKey(i);
+  Future<List<LlmProvider>> getLlmProviders() async => _local.getLlmProviders();
 
   @override
-  Future<void> setLlmProfileApiKey(int i, String value) => _local.setLlmProfileApiKey(i, value);
+  Future<void> saveLlmProviders(List<LlmProvider> providers) =>
+      _local.setLlmProviders(providers);
+
+  // LLM 角色绑定
+  @override
+  Future<LlmRoleBinding> getLlmRoleBinding(LlmProfileRole role) async {
+    switch (role) {
+      case LlmProfileRole.main:
+        return _local.getLlmRoleBindingMain();
+      case LlmProfileRole.vision:
+        return _local.getLlmRoleBindingVision();
+      case LlmProfileRole.aux:
+        return const LlmRoleBinding();
+    }
+  }
 
   @override
-  Future<String> getLlmProfileBaseUrl(int i) async => _local.getLlmProfileBaseUrl(i);
+  Future<void> setLlmRoleBinding(LlmProfileRole role, LlmRoleBinding binding) async {
+    switch (role) {
+      case LlmProfileRole.main:
+        await _local.setLlmRoleBindingMain(binding);
+        break;
+      case LlmProfileRole.vision:
+        await _local.setLlmRoleBindingVision(binding);
+        break;
+      case LlmProfileRole.aux:
+        break;
+    }
+  }
 
   @override
-  Future<void> setLlmProfileBaseUrl(int i, String value) => _local.setLlmProfileBaseUrl(i, value);
-
-  @override
-  Future<String> getLlmProfileModel(int i) async => _local.getLlmProfileModel(i);
-
-  @override
-  Future<void> setLlmProfileModel(int i, String value) => _local.setLlmProfileModel(i, value);
-
-  @override
-  Future<List<String>> getLlmProfileModels(int i) async => _local.getLlmProfileModels(i);
-
-  @override
-  Future<void> setLlmProfileModels(int i, List<String> value) =>
-      _local.setLlmProfileModels(i, value);
-
-  @override
-  Future<String?> getLlmExtractProfileModel() async => _local.getLlmExtractProfileModel();
-
-  @override
-  Future<void> setLlmExtractProfileModel(String? value) =>
-      _local.setLlmExtractProfileModel(value);
-
-  @override
-  Future<String?> getLlmComposeProfileModel() async => _local.getLlmComposeProfileModel();
-
-  @override
-  Future<void> setLlmComposeProfileModel(String? value) =>
-      _local.setLlmComposeProfileModel(value);
-
-  @override
-  Future<String> getLlmProfileName(int i) async => _local.getLlmProfileName(i);
-
-  @override
-  Future<void> setLlmProfileName(int i, String value) => _local.setLlmProfileName(i, value);
+  bool migrateLegacyLlm3RoleToProvider() => _local.migrateLegacyLlm3RoleToProvider();
 
   @override
   Future<bool> testConnection() async {
@@ -258,6 +243,7 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<void> setDanbooruCalibrationEnabled(bool value) =>
       _local.setDanbooruCalibrationEnabled(value);
+
   @override
   Future<String> getDanbooruBaseUrl() async => _local.getDanbooruBaseUrl();
   @override

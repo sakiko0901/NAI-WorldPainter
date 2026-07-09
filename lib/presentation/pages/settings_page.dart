@@ -5,10 +5,14 @@ import 'package:nai_huishi/presentation/pages/api_config_page.dart';
 import 'package:nai_huishi/presentation/pages/artist_prompt_manager_page.dart';
 import 'package:nai_huishi/presentation/pages/danbooru_tag_search_page.dart';
 import 'package:nai_huishi/presentation/pages/image_enhance_page.dart';
+import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
+import 'package:nai_huishi/presentation/pages/pixiv_upload_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  final VoidCallback? onNavigateToGenerate;
+
+  const SettingsPage({super.key, this.onNavigateToGenerate});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -101,8 +105,33 @@ class _SettingsPageState extends State<SettingsPage> {
                     CupertinoPageRoute(builder: (_) => const ImageEnhancePage()),
                   ),
                 ),
+                _SettingsTile(
+                  icon: CupertinoIcons.tag,
+                  title: '图片解析',
+                  subtitle: 'NAI 元数据提取 / WD-Tagger 智能识别',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => ImageTagPage(
+                      onNavigateToGenerate: widget.onNavigateToGenerate,
+                    )),
+                  ),
+                ),
               ],
             ),
+            SizedBox(height: 18),
+            _SettingsGroup(
+              title: 'Pixiv 投稿',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.cloud_upload,
+                  title: '上传到 Pixiv',
+                  subtitle: '把作品发布到 Pixiv，自动填充标题 / 标签 / 描述',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => const PixivUploadPage()),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 18),
           ],
         ),
       ),

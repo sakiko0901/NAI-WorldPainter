@@ -1,0 +1,18 @@
+[
+  { "name": "床上", "tag": "on bed" },
+  { "name": "教室", "tag": "classroom" },
+  { "name": "浴室", "tag": "bathroom" },
+  { "name": "海边", "tag": "beach" },
+  { "name": "樱花树下", "tag": "cherry blossom" },
+  { "name": "图书馆", "tag": "library" },
+  { "name": "森林", "tag": "forest" },
+  { "name": "厨房", "tag": "kitchen" },
+  { "name": "雨中", "tag": "rain" },
+  { "name": "屋顶", "tag": "rooftop" },
+  { "name": "温泉", "tag": "onsen" },
+  { "name": "电车上", "tag": "train interior" },
+  { "name": "更衣室", "tag": "locker room" },
+  { "name": "病房", "tag": "hospital" },
+  { "name": "夜晚街道", "tag": "night street" },
+  { "name": "客厅", "tag": "living room" }
+]

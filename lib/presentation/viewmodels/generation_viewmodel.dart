@@ -6,6 +6,7 @@ import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/core/services/background_keepalive_service.dart';
+import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/entities/preset.dart';
@@ -34,7 +35,7 @@ class ImageModelOption {
   });
 }
 
-class GenerationViewModel extends ChangeNotifier {
+class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final GenerateImageUseCase _generateImage;
   final ManageSettingsUseCase _manageSettings;
   final SaveImageUseCase _saveImage;
@@ -56,6 +57,10 @@ class GenerationViewModel extends ChangeNotifier {
   String negativePrompt = '';
   String inpaintPrompt = '';
   String inpaintNegativePrompt = '';
+  /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
+  /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
+  int _promptVersion = 0;
+  int get promptVersion => _promptVersion;
   String selectedModel = '';
   String selectedResolution = '832x1216';
   String selectedNanoImageSize = '1K';
@@ -65,7 +70,6 @@ class GenerationViewModel extends ChangeNotifier {
   String selectedNoiseSchedule = 'native';
   int? seed;
   int? appliedSeed;
-  List<CharacterSpec> characters = [];
   List<NaiModel> models = [];
   List<ImageModelOption> imageModelOptions = [];
 
@@ -133,6 +137,10 @@ class GenerationViewModel extends ChangeNotifier {
   /// generate() 重入守卫：从按下"生成"到批次全部完成期间一直为 true，
   /// 比 queueState.isProcessing 更早置位、更晚置位，杜绝任何并发批次。
   bool _generateInFlight = false;
+  /// 批量取消标志：用户在生成中再次点击"生成"按钮时设为 true，
+  /// 当前正在生成的图跑完后，循环 break，剩余张数不再生成。
+  bool _cancelBatch = false;
+  bool get isBatchCancelling => _cancelBatch;
 
   GenerationMode generationMode = GenerationMode.textToImage;
   String? sourceImagePath;
@@ -161,6 +169,7 @@ class GenerationViewModel extends ChangeNotifier {
     inpaintNegativePrompt = await _manageSettings.getInpaintNegativePromptDraft();
     characters = await _manageSettings.getCharactersDraft();
     batchCount = await _manageSettings.getBatchCount();
+
     notifyListeners();
   }
 
@@ -297,26 +306,125 @@ class GenerationViewModel extends ChangeNotifier {
 
   Future<void> updatePrompt(String value) async {
     prompt = value;
+    _promptVersion++;
     await _manageSettings.setPromptDraft(value);
     notifyListeners();
   }
 
   Future<void> updateNegativePrompt(String value) async {
     negativePrompt = value;
+    _promptVersion++;
     await _manageSettings.setNegativePromptDraft(value);
     notifyListeners();
   }
 
   Future<void> updateInpaintPrompt(String value) async {
     inpaintPrompt = value;
+    _promptVersion++;
     await _manageSettings.setInpaintPromptDraft(value);
     notifyListeners();
   }
 
   Future<void> updateInpaintNegativePrompt(String value) async {
     inpaintNegativePrompt = value;
+    _promptVersion++;
     await _manageSettings.setInpaintNegativePromptDraft(value);
     notifyListeners();
+  }
+
+  // ───── PromptBoxAccessor 实现 ─────
+  @override
+  String get positive => prompt;
+  @override
+  String get negative => negativePrompt;
+  @override
+  String get inpaintPositive => inpaintPrompt;
+  @override
+  String get inpaintNegative => inpaintNegativePrompt;
+  @override
+  int get version => _promptVersion;
+
+  @override
+  bool get isInpaintingMode => generationMode == GenerationMode.inpainting;
+
+  @override
+  List<CharacterSpec> get characters => _characters;
+  set characters(List<CharacterSpec> v) {
+    _characters = v;
+  }
+  List<CharacterSpec> _characters = const [];
+
+  @override
+  Future<int> writePrompt({
+    required String target,
+    required String content,
+    required bool append,
+  }) async {
+    final trimmed = content.trim();
+    // 局部重绘框守卫：非重绘模式下禁止写入 inpaint 框
+    if ((target == 'inpaint_positive' || target == 'inpaint_negative') &&
+        !isInpaintingMode) {
+      throw InpaintModeGuardError(target);
+    }
+
+    // 多角色框：character_N（prompt）或 character_N_uc（负向）
+    final charMatch = RegExp(r'^character_(\d+)(_uc)?$').firstMatch(target);
+    if (charMatch != null) {
+      final idx = int.parse(charMatch.group(1)!) - 1; // 用户视角 1-based
+      final isUc = charMatch.group(2) == '_uc';
+      if (idx < 0 || idx >= 6) {
+        throw ArgumentError('角色序号超出范围（1-6）：$target');
+      }
+      // 补齐角色列表到 idx+1 个
+      while (_characters.length <= idx) {
+        _characters = [..._characters, const CharacterSpec(
+          prompt: '', uc: null, centerX: 0.5, centerY: 0.5,
+        )];
+      }
+      if (isUc) {
+        final current = _characters[idx].uc ?? '';
+        final newUc = append && current.isNotEmpty
+            ? _mergePrompt(current, trimmed)
+            : trimmed;
+        replaceCharacterNegative(idx, newUc);
+      } else {
+        final current = _characters[idx].prompt;
+        final newPrompt = append && current.isNotEmpty
+            ? _mergePrompt(current, trimmed)
+            : trimmed;
+        replaceCharacterPrompt(idx, newPrompt);
+      }
+      _promptVersion++;
+      await _saveCharactersDraft();
+      notifyListeners();
+      return _promptVersion;
+    }
+
+    switch (target) {
+      case 'positive':
+        await updatePrompt(append && prompt.isNotEmpty
+            ? _mergePrompt(prompt, trimmed)
+            : trimmed);
+        break;
+      case 'negative':
+        await updateNegativePrompt(append && negativePrompt.isNotEmpty
+            ? _mergePrompt(negativePrompt, trimmed)
+            : trimmed);
+        break;
+      case 'inpaint_positive':
+        await updateInpaintPrompt(append && inpaintPrompt.isNotEmpty
+            ? _mergePrompt(inpaintPrompt, trimmed)
+            : trimmed);
+        break;
+      case 'inpaint_negative':
+        await updateInpaintNegativePrompt(append && inpaintNegativePrompt.isNotEmpty
+            ? _mergePrompt(inpaintNegativePrompt, trimmed)
+            : trimmed);
+        break;
+      default:
+        throw ArgumentError('unknown target: $target');
+    }
+    return _promptVersion;
   }
 
   Future<void> appendToPrompt(String value) async {
@@ -450,11 +558,61 @@ class GenerationViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 拆分 NovelAI 提示词字符串为 tag 列表。
+  /// 按逗号切分，去除首尾空白，丢弃空片段。
+  /// 不处理权重语法内部结构，保留 `1.5::tag::` 这类原始片段。
+  static List<String> _splitTags(String s) {
+    if (s.trim().isEmpty) return const [];
+    return s
+        .split(',')
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+  }
+
+  /// 提取 tag 的"基础名"用于去重比较。
+  /// 去除权重前缀 `1.5::` 和闭合 `::`、去除包裹的 `{{}}` `[]`，
+  /// 转小写，仅用于比较，不影响实际写入的 tag 形态。
+  static String _tagKey(String tag) {
+    var t = tag.trim();
+    // 数字权重：`1.5::tag::` → `tag`
+    final weighted = RegExp(r'^(\d+(?:\.\d+)?)::(.*)::$').firstMatch(t);
+    if (weighted != null) {
+      t = weighted.group(2)!;
+    }
+    // 去掉包裹的 {{...}}、[[...]]、(...)
+    while (t.startsWith('{{') && t.endsWith('}}')) {
+      t = t.substring(2, t.length - 2);
+    }
+    while (t.startsWith('[') && t.endsWith(']')) {
+      t = t.substring(1, t.length - 1);
+    }
+    while (t.startsWith('(') && t.endsWith(')')) {
+      t = t.substring(1, t.length - 1);
+    }
+    return t.toLowerCase().trim();
+  }
+
   String _mergePrompt(String current, String incoming) {
     if (current.trim().isEmpty) return incoming;
-    final left = current.trimRight();
-    final needsComma = !left.endsWith(',');
-    return needsComma ? '$left, $incoming' : '$left $incoming';
+    if (incoming.trim().isEmpty) return current;
+
+    final existingTags = _splitTags(current);
+    final incomingTags = _splitTags(incoming);
+    final existingKeys = existingTags.map(_tagKey).toSet();
+
+    final dedupedIncoming = incomingTags.where((t) {
+      final key = _tagKey(t);
+      // 空 key（如纯逗号）跳过；已存在的 key 跳过
+      if (key.isEmpty) return false;
+      return !existingKeys.contains(key);
+    }).toList();
+
+    if (dedupedIncoming.isEmpty) {
+      // 新内容全部已存在，原样返回 current
+      return existingTags.join(', ');
+    }
+    return '${existingTags.join(', ')}, ${dedupedIncoming.join(', ')}';
   }
 
   Future<void> updateSelectedModel(String value) async {
@@ -597,8 +755,17 @@ class GenerationViewModel extends ChangeNotifier {
     } finally {
       _generateInFlight = false;
       _batchRemaining = 0;
+      _cancelBatch = false;
       notifyListeners();
     }
+  }
+
+  /// 取消批量生成：当前正在生成的图跑完后停止后续张数。
+  /// 仅在批量生成中调用有效。
+  void cancelBatch() {
+    if (!_generateInFlight) return;
+    _cancelBatch = true;
+    notifyListeners();
   }
 
   Future<void> _generateInner() async {
@@ -679,6 +846,8 @@ class GenerationViewModel extends ChangeNotifier {
     try {
       int? sharedSeed = seed;
       for (int i = 0; i < count; i++) {
+        // 用户在生成中点击了取消按钮：当前张跑完后停止后续张数
+        if (_cancelBatch && i > 0) break;
         // 后续每张换一个 seed，避免完全相同的图（除非用户固定了 seed）
         final useSeed = (i == 0) ? sharedSeed : null;
         final taskI = task.copyWith(

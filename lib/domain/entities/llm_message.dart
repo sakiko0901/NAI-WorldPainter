@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
 
 enum LlmMessageRole { user, assistant }
 
@@ -8,14 +9,16 @@ class LlmMessage extends Equatable {
   final LlmMessageRole role;
   final String content;
   final DateTime createdAt;
-  /// 图片 base64（仅内存，不持久化到 DB）
+  /// 图片 base64（仅内存，不持久化到 DB）。tentative 阶段用于即时显示。
   final String? imageBase64;
-  /// 三段式流程当前阶段（仅内存）：
-  /// null → 普通消息；'extracting' → 抽取关键词；'searching' → 检索 Danbooru；
-  /// 'composing' → 编排提示词；'done' → 流程完成（成功）；'fallback' → 降级到单次 LLM。
-  final String? pipelineStage;
-  /// 阶段对应的展示文案（仅内存）。例："📚 正在检索 Danbooru…"
-  final String? pipelineStatus;
+  /// 图片本地文件路径（持久化到 DB）。落库后通过此字段渲染。
+  final String? imagePath;
+  /// Agent 工具调用历史 JSON（持久化到 DB）。由 AgentLoop.run 产出，
+  /// 形如 `[{"toolName":"web_search","arguments":{"query":"..."},"status":"done","result":{"text":"..."}}, ...]`。
+  /// UI 渲染时通过 AgentEvent.fromJsonList 反序列化为 List<AgentEvent>。
+  final String? toolCallsJson;
+  /// Agent 工具执行时间线（内存对象，由 toolCallsJson 反序列化得来；新消息会直接赋值）
+  final List<AgentEvent>? agentTimeline;
 
   const LlmMessage({
     this.id,
@@ -24,8 +27,9 @@ class LlmMessage extends Equatable {
     required this.content,
     required this.createdAt,
     this.imageBase64,
-    this.pipelineStage,
-    this.pipelineStatus,
+    this.imagePath,
+    this.toolCallsJson,
+    this.agentTimeline,
   });
 
   String get roleString => role == LlmMessageRole.user ? 'user' : 'assistant';
@@ -40,8 +44,9 @@ class LlmMessage extends Equatable {
     String? content,
     DateTime? createdAt,
     String? imageBase64,
-    String? pipelineStage,
-    String? pipelineStatus,
+    String? imagePath,
+    String? toolCallsJson,
+    List<AgentEvent>? agentTimeline,
   }) {
     return LlmMessage(
       id: id ?? this.id,
@@ -50,11 +55,12 @@ class LlmMessage extends Equatable {
       content: content ?? this.content,
       createdAt: createdAt ?? this.createdAt,
       imageBase64: imageBase64 ?? this.imageBase64,
-      pipelineStage: pipelineStage ?? this.pipelineStage,
-      pipelineStatus: pipelineStatus ?? this.pipelineStatus,
+      imagePath: imagePath ?? this.imagePath,
+      toolCallsJson: toolCallsJson ?? this.toolCallsJson,
+      agentTimeline: agentTimeline ?? this.agentTimeline,
     );
   }
 
   @override
-  List<Object?> get props => [id, sessionId, role, content, createdAt];
+  List<Object?> get props => [id, sessionId, role, content, createdAt, imagePath];
 }

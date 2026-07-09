@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
@@ -9,22 +10,15 @@ import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dart';
-import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_apply_parser.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_sessions_panel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
 
 class ChatDrawer extends StatefulWidget {
   final VoidCallback onClose;
-  final void Function(String text, bool replace, String? label) onApplyPrompt;
-  final void Function(String text, bool replace, String? label) onApplyNegative;
-  final void Function(AppliedSegments aggregated)? onApplyAll;
 
   const ChatDrawer({
     super.key,
     required this.onClose,
-    required this.onApplyPrompt,
-    required this.onApplyNegative,
-    this.onApplyAll,
   });
 
   @override
@@ -36,12 +30,17 @@ class _ChatDrawerState extends State<ChatDrawer> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   bool _ready = false;
+  bool _isAtBottom = true;
+  int _unreadCount = 0;
 
   @override
   void initState() {
     super.initState();
     _vm = sl<LlmChatViewModel>();
     _vm.addListener(_onVmChanged);
+    // 注入副作用工具确认回调：本 State 实现弹窗
+    _vm.onRequireConfirmation = _showConfirmationDialog;
+    _scrollController.addListener(_onScroll);
     _init();
   }
 
@@ -49,13 +48,84 @@ class _ChatDrawerState extends State<ChatDrawer> {
     await _vm.ensureInitialized();
     if (!mounted) return;
     setState(() => _ready = true);
-    _jumpToBottom();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+  }
+
+  Future<bool> _showConfirmationDialog(AgentToolConfirmRequest request) async {
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text('Agent 请求执行操作'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('工具：${request.toolName}',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+              const SizedBox(height: 8),
+              Text('说明：${request.description}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 12),
+              Text('参数：',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                  child: Text(
+                    const JsonEncoder().convert(request.arguments),
+                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('拒绝'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('同意执行'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    final cur = _scrollController.position.pixels;
+    final atBottom = (max - cur).abs() < 80;
+    if (atBottom != _isAtBottom) {
+      setState(() {
+        _isAtBottom = atBottom;
+        if (atBottom) _unreadCount = 0;
+      });
+    }
   }
 
   void _onVmChanged() {
     if (!mounted) return;
+    if (!_isAtBottom) {
+      _unreadCount++;
+    }
     setState(() {});
-    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+    if (_isAtBottom) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+    }
   }
 
   void _jumpToBottom() {
@@ -67,9 +137,19 @@ class _ChatDrawerState extends State<ChatDrawer> {
     );
   }
 
+  void _scrollToBottomAndClear() {
+    _jumpToBottom();
+    setState(() {
+      _isAtBottom = true;
+      _unreadCount = 0;
+    });
+  }
+
   @override
   void dispose() {
     _vm.removeListener(_onVmChanged);
+    _vm.onRequireConfirmation = null;
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _inputController.dispose();
     super.dispose();
@@ -184,8 +264,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
                         ChatInputBar(
                           controller: _inputController,
                           isSending: _vm.isSending,
-                          danbooruSearchEnabled: _vm.danbooruSearchEnabled,
-                          onToggleDanbooruSearch: _vm.toggleDanbooruSearch,
+                          webSearchEnabled: _vm.webSearchEnabled,
+                          onToggleWebSearch: () => _vm.setWebSearchEnabled(!_vm.webSearchEnabled),
                           onSend: (text, {String? imageBase64}) =>
                               _vm.sendUserMessage(text, imageBase64: imageBase64),
                         ),
@@ -263,26 +343,64 @@ class _ChatDrawerState extends State<ChatDrawer> {
       );
     }
 
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      itemCount: _vm.messages.length,
-      itemBuilder: (context, index) {
-        final message = _vm.messages[index];
-        return ChatMessageBubble(
-          message: message,
-          messageIndex: index,
-          onApplyPrompt: widget.onApplyPrompt,
-          onApplyNegative: widget.onApplyNegative,
-          onApplyAll: widget.onApplyAll,
-          onRetry: message.role == LlmMessageRole.user
-              ? () => _vm.retryFromIndex(index)
-              : null,
-          onEditAndResend: message.role == LlmMessageRole.user
-              ? (newText) => _vm.editAndResend(index, newText)
-              : null,
-        );
-      },
+    final theme = Theme.of(context);
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          itemCount: _vm.messages.length,
+          itemBuilder: (context, index) {
+            final message = _vm.messages[index];
+            return ChatMessageBubble(
+              message: message,
+              messageIndex: index,
+              onRetry: message.role == LlmMessageRole.user
+                  ? () => _vm.retryFromIndex(index)
+                  : null,
+              onEditAndResend: message.role == LlmMessageRole.user
+                  ? (newText) => _vm.editAndResend(index, newText)
+                  : null,
+            );
+          },
+        ),
+        if (!_isAtBottom)
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: FloatingActionButton(
+              mini: true,
+              backgroundColor: theme.colorScheme.surface.withValues(alpha: 0.92),
+              elevation: 2,
+              onPressed: _scrollToBottomAndClear,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(CupertinoIcons.arrow_down, size: 18, color: theme.colorScheme.onSurface),
+                  if (_unreadCount > 0)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.redAccent,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                        child: Text(
+                          _unreadCount > 9 ? '9+' : '$_unreadCount',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

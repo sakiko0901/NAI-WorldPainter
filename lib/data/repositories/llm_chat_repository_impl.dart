@@ -1,6 +1,11 @@
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
+import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
@@ -8,13 +13,16 @@ import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
 class LlmChatRepositoryImpl implements LlmChatRepository {
   final LlmChatLocalDatasource _local;
   final LlmApiService _api;
+  final Dio _dio;
   final _uuid = const Uuid();
 
   LlmChatRepositoryImpl({
     required LlmChatLocalDatasource local,
     required LlmApiService api,
+    Dio? dio,
   })  : _local = local,
-        _api = api;
+        _api = api,
+        _dio = dio ?? Dio();
 
   @override
   Future<List<LlmSession>> listSessions() => _local.listSessions();
@@ -53,29 +61,138 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   Future<List<LlmMessage>> listMessages(String sessionId) => _local.listMessages(sessionId);
 
   @override
-  Future<LlmMessage> sendUserMessage({
+  Future<int> saveUserMessage({
     required String sessionId,
     required String userText,
     String? imageBase64,
-    required String systemPrompt,
-    required String apiKey,
-    required String baseUrl,
-    required String model,
-    int contextLimit = 20,
   }) async {
     final now = DateTime.now();
-
-    // 1. 先落库 user 消息（存储文本；图片不持久化到 DB）
     final storeContent = userText.trim().isNotEmpty ? userText : '[图片]';
+    String? userImagePath;
+    if (imageBase64 != null) {
+      try {
+        final filename = ImageUtils.generateFilename();
+        userImagePath = await ImageUtils.saveBase64Image(imageBase64, filename);
+      } catch (_) {/* 忽略 */}
+    }
     final userMessage = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.user,
       content: storeContent,
       createdAt: now,
+      imagePath: userImagePath,
     );
     final userId = await _local.insertMessage(userMessage);
 
-    // 2. 如果是会话第一条用户消息，用前 20 字更新 session.title
+    // 更新 session title（如果是第一条用户消息）
+    final allMessages = await _local.listMessages(sessionId);
+    final existingSession = await _local.getSession(sessionId);
+    if (existingSession != null && allMessages.length == 1) {
+      final preview = storeContent.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final title = preview.length > 20 ? preview.substring(0, 20) : preview;
+      await _local.updateSession(existingSession.copyWith(
+        title: title.isEmpty ? '新对话' : title,
+        updatedAt: now,
+      ));
+    } else if (existingSession != null) {
+      await _local.touchSession(sessionId, now);
+    }
+    return userId;
+  }
+
+  @override
+  Future<LlmMessage> saveAgentRunResult({
+    required String sessionId,
+    required String assistantText,
+    String? toolCallsJson,
+    List<AgentEvent>? agentTimeline,
+  }) async {
+    final replyTime = DateTime.now();
+    final processed = await _tryExtractAndDownloadAssistantImage(assistantText);
+    final assistantMessage = LlmMessage(
+      sessionId: sessionId,
+      role: LlmMessageRole.assistant,
+      content: processed.cleanedText,
+      createdAt: replyTime,
+      imagePath: processed.imagePath,
+      toolCallsJson: toolCallsJson ??
+          (agentTimeline != null && agentTimeline.isNotEmpty
+              ? AgentEvent.toJsonList(agentTimeline)
+              : null),
+      agentTimeline: agentTimeline,
+    );
+    final assistantId = await _local.insertMessage(assistantMessage);
+    await _local.touchSession(sessionId, replyTime);
+    return LlmMessage(
+      id: assistantId,
+      sessionId: sessionId,
+      role: LlmMessageRole.assistant,
+      content: processed.cleanedText,
+      createdAt: replyTime,
+      imagePath: processed.imagePath,
+      toolCallsJson: toolCallsJson,
+      agentTimeline: agentTimeline ?? const [],
+    );
+  }
+
+  /// 尝试从 assistant 回复中提取并下载图片。
+  /// 成功：返回去掉 markdown 图片标记的文本和本地文件路径。
+  /// 失败：返回原文本，imagePath 为 null（不中断流程）。
+  Future<_AssistantImageResult> _tryExtractAndDownloadAssistantImage(String text) async {
+    final url = ImageUtils.extractImageUrlFromMarkdown(text);
+    if (url == null) return _AssistantImageResult(text, null);
+    try {
+      final dir = await ImageUtils.getImageDirectory();
+      final filename = ImageUtils.extractFilenameFromUrl(url);
+      final filePath = '${dir.path}${Platform.pathSeparator}$filename';
+      final file = File(filePath);
+      if (!await file.exists()) {
+        await _dio.download(url, filePath);
+      }
+      // 剥离 markdown 图片标记
+      final cleaned = text.replaceAllMapped(
+        RegExp(r'!\[image\]\([^)]+\)'),
+        (_) => '',
+      ).trim();
+      return _AssistantImageResult(cleaned, filePath);
+    } catch (_) {
+      return _AssistantImageResult(text, null);
+    }
+  }
+
+  @override
+  Future<void> deleteMessagesFrom(int messageId, String sessionId) =>
+      _local.deleteMessagesFrom(messageId, sessionId);
+
+  @override
+  Future<LlmMessage> saveUserAndAssistantMessages({
+    required String sessionId,
+    required String userText,
+    String? imageBase64,
+    String? imagePath,
+    required String assistantText,
+  }) async {
+    final now = DateTime.now();
+
+    // 1. 落库 user 消息
+    final storeContent = userText.trim().isNotEmpty ? userText : '[图片]';
+    String? userImagePath = imagePath;
+    if (userImagePath == null && imageBase64 != null) {
+      try {
+        final filename = ImageUtils.generateFilename();
+        userImagePath = await ImageUtils.saveBase64Image(imageBase64, filename);
+      } catch (_) {/* 忽略 */}
+    }
+    final userMessage = LlmMessage(
+      sessionId: sessionId,
+      role: LlmMessageRole.user,
+      content: storeContent,
+      createdAt: now,
+      imagePath: userImagePath,
+    );
+    final userId = await _local.insertMessage(userMessage);
+
+    // 2. 更新 session title（如果是第一条用户消息）
     final allMessages = await _local.listMessages(sessionId);
     final existingSession = await _local.getSession(sessionId);
     if (existingSession != null && allMessages.length == 1) {
@@ -89,68 +206,30 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       await _local.touchSession(sessionId, now);
     }
 
-    // 3. 组装上下文（system + 最近 contextLimit 条历史消息）
-    final historyMessages = allMessages.length > contextLimit
-        ? allMessages.sublist(allMessages.length - contextLimit)
-        : allMessages;
+    // 3. 落库 assistant 消息
+    final replyTime = DateTime.now();
+    final processed = await _tryExtractAndDownloadAssistantImage(assistantText);
+    final assistantMessage = LlmMessage(
+      sessionId: sessionId,
+      role: LlmMessageRole.assistant,
+      content: processed.cleanedText,
+      createdAt: replyTime,
+      imagePath: processed.imagePath,
+    );
+    final assistantId = await _local.insertMessage(assistantMessage);
+    await _local.touchSession(sessionId, replyTime);
 
-    // 构建 payload，支持图片（vision 格式）
-    final payload = <Map<String, dynamic>>[
-      {'role': 'system', 'content': systemPrompt},
-    ];
-
-    for (final m in historyMessages) {
-      // 最后一条 user 消息可能带图片
-      if (m.id == userId && imageBase64 != null) {
-        final contentParts = <Map<String, dynamic>>[];
-        if (userText.trim().isNotEmpty) {
-          contentParts.add({'type': 'text', 'text': userText});
-        }
-        contentParts.add({
-          'type': 'image_url',
-          'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
-        });
-        payload.add({'role': 'user', 'content': contentParts});
-      } else {
-        payload.add({'role': m.roleString, 'content': m.content});
-      }
-    }
-
-    try {
-      final assistantText = await _api.chatCompletions(
-        apiKey: apiKey,
-        baseUrl: baseUrl,
-        model: model,
-        messages: payload,
-      );
-
-      // 4. 落库 assistant 回复
-      final replyTime = DateTime.now();
-      final assistantMessage = LlmMessage(
-        sessionId: sessionId,
-        role: LlmMessageRole.assistant,
-        content: assistantText,
-        createdAt: replyTime,
-      );
-      final assistantId = await _local.insertMessage(assistantMessage);
-      await _local.touchSession(sessionId, replyTime);
-      return LlmMessage(
-        id: assistantId,
-        sessionId: sessionId,
-        role: LlmMessageRole.assistant,
-        content: assistantText,
-        createdAt: replyTime,
-      );
-    } catch (e) {
-      // ignore: unused_local_variable
-      final _ = userId;
-      rethrow;
-    }
+    // ignore: unused_local_variable
+    final _ = userId;
+    return LlmMessage(
+      id: assistantId,
+      sessionId: sessionId,
+      role: LlmMessageRole.assistant,
+      content: processed.cleanedText,
+      createdAt: replyTime,
+      imagePath: processed.imagePath,
+    );
   }
-
-  @override
-  Future<void> deleteMessagesFrom(int messageId, String sessionId) =>
-      _local.deleteMessagesFrom(messageId, sessionId);
 
   @override
   Future<String> chatCompletionsRaw({
@@ -170,4 +249,10 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       ],
     );
   }
+}
+
+class _AssistantImageResult {
+  final String cleanedText;
+  final String? imagePath;
+  const _AssistantImageResult(this.cleanedText, this.imagePath);
 }

@@ -41,11 +41,16 @@ android {
     // 超分功能：把 jniLibs 里的可执行文件(librealsr.so/librealcugan.so)及依赖库
     // 解压到 nativeLibraryDir。Android 10+ 的 W^X 策略只允许从该目录执行 ELF，
     // 因此必须 useLegacyPackaging=true 强制解压，否则 .so 留在 APK 内无法 exec。
+    // 同时排除非 arm64-v8a ABI 的预编译 .so (超分插件打包了多 ABI)
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += setOf("lib/armeabi-v7a/**", "lib/x86_64/**", "lib/x86/**")
         }
     }
+}
+
+dependencies {
 }
 
 flutter {

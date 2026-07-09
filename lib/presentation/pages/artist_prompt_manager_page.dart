@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/artist_prompt.dart';
 import 'package:nai_huishi/presentation/viewmodels/artist_prompt_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
@@ -122,7 +123,9 @@ class _ArtistPromptManagerPageState extends State<ArtistPromptManagerPage> {
                             onPressed: () async {
                               final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
                               if (picked == null) return;
-                              imageCtrl.text = picked.path;
+                              // 复制到应用私有目录并压缩，避免临时路径失效导致图片消失
+                              final persistedPath = await ImageUtils.copyAndCompressImage(File(picked.path));
+                              imageCtrl.text = persistedPath;
                               setSheetState(() {});
                             },
                             icon: const Icon(CupertinoIcons.photo),
