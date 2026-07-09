@@ -1,6 +1,6 @@
 <div align="center">
 
-# 绘世 · NAI Huishi
+# NAI-WorldPainter
 
 > 一个基于 Flutter 的 NovelAI 图像生成 Android 客户端，集成 LLM 提示词助手、Agent 工具循环、Pixiv 上传队列、图片超分与打标等一体化创作工作流。
 
@@ -300,6 +300,6 @@ Clean Architecture 分层，每层职责清晰：
 
 <div align="center">
 
-**[↑ 返回顶部](#绘世--nai-huishi)**
+**[↑ 返回顶部](#nai-worldpainter)**
 
 </div>
