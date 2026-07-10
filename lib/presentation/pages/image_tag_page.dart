@@ -20,6 +20,20 @@ class ImageTagPage extends StatefulWidget {
 }
 
 class _ImageTagPageState extends State<ImageTagPage> {
+  static const _metadataLabels = <String, String>{
+    'seed': '随机种子',
+    'steps': '迭代步数',
+    'step': '迭代步数',
+    'sampler': '采样器',
+    'scale': '引导比例',
+    'cfg_rescale': '引导重缩放',
+    'noise_schedule': '噪声调度',
+    'width': '图像宽度',
+    'height': '图像高度',
+    'Source': '来源',
+    'Software': '生成软件',
+  };
+
   late final ImageTagViewModel _vm;
   final ImagePicker _picker = ImagePicker();
 
@@ -56,7 +70,8 @@ class _ImageTagPageState extends State<ImageTagPage> {
     await _vm.analyze();
     if (!mounted) return;
     if (_vm.error != null) {
-      showFloatingToast(context, _vm.error!, icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, _vm.error!,
+          icon: CupertinoIcons.exclamationmark_circle);
     } else if (_vm.result != null) {
       showFloatingToast(context, '分析完成', icon: CupertinoIcons.checkmark_circle);
     }
@@ -71,7 +86,8 @@ class _ImageTagPageState extends State<ImageTagPage> {
     if (positive.isNotEmpty) parts.add('【正向】\n$positive');
     if (negative.isNotEmpty) parts.add('【负向】\n$negative');
     if (parts.isEmpty) {
-      showFloatingToast(context, '没有选中的标签', icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, '没有选中的标签',
+          icon: CupertinoIcons.exclamationmark_circle);
       return;
     }
     await Clipboard.setData(ClipboardData(text: parts.join('\n\n')));
@@ -81,7 +97,8 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   Future<void> _copyTags(String text, {String label = '已复制'}) async {
     if (text.isEmpty) {
-      showFloatingToast(context, '没有选中的标签', icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, '没有选中的标签',
+          icon: CupertinoIcons.exclamationmark_circle);
       return;
     }
     await Clipboard.setData(ClipboardData(text: text));
@@ -158,15 +175,24 @@ class _ImageTagPageState extends State<ImageTagPage> {
     } else {
       child = Image.file(File(imagePath), fit: BoxFit.contain);
     }
-    return GestureDetector(
+    final preview = GestureDetector(
       onTap: _pickImage,
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Container(color: cardColor, child: child),
-        ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(color: cardColor, child: child),
       ),
+    );
+    if (imagePath == null || !File(imagePath).existsSync()) {
+      return AspectRatio(aspectRatio: 1, child: preview);
+    }
+
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final previewHeight = (screenHeight * 0.58).clamp(380.0, 640.0);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      height: previewHeight,
+      child: preview,
     );
   }
 
@@ -292,8 +318,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
           Row(
             children: [
               const Text('通用阈值',
-                  style:
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
               const Spacer(),
               Text(_vm.generalThreshold.toStringAsFixed(2),
                   style: TextStyle(
@@ -313,8 +338,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
           Row(
             children: [
               const Text('角色阈值',
-                  style:
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
               const Spacer(),
               Text(_vm.characterThreshold.toStringAsFixed(2),
                   style: TextStyle(
@@ -354,13 +378,12 @@ class _ImageTagPageState extends State<ImageTagPage> {
                           strokeWidth: 2, color: Colors.white)),
                   SizedBox(width: 10),
                   Text('分析中...',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700)),
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                 ],
               )
             : const Text('开始分析',
-                style:
-                    TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
       ),
     );
   }
@@ -469,8 +492,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
                   size: 16, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 6),
               const Text('生成参数',
-                  style:
-                      TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
             ],
           ),
           const SizedBox(height: 10),
@@ -482,7 +504,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
                 children: [
                   SizedBox(
                     width: 90,
-                    child: Text(e.key,
+                    child: Text(_metadataLabels[e.key] ?? e.key,
                         style: TextStyle(
                             fontSize: 12,
                             color: isDark ? Colors.white60 : Colors.black54,
@@ -541,18 +563,16 @@ class _ImageTagPageState extends State<ImageTagPage> {
               _miniBtn(
                   icon: CupertinoIcons.circle,
                   label: '反选',
-                  onTap: () => isNegative
-                      ? _vm.invertNegative()
-                      : _vm.invertGeneral()),
+                  onTap: () =>
+                      isNegative ? _vm.invertNegative() : _vm.invertGeneral()),
               const SizedBox(width: 6),
               _miniBtn(
                   icon: CupertinoIcons.doc_on_doc,
                   label: '复制',
-                  onTap: () => _copyTags(
-                      tags
-                          .where((t) => t.selected)
-                          .map((t) => t.tag)
-                          .join(', '))),
+                  onTap: () => _copyTags(tags
+                      .where((t) => t.selected)
+                      .map((t) => t.tag)
+                      .join(', '))),
             ],
           ),
           const SizedBox(height: 12),
@@ -592,8 +612,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
           Row(
             children: [
               const Text('角色识别',
-                  style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(width: 8),
               Text('$selectedCount / ${tags.length}',
                   style: TextStyle(
@@ -617,8 +636,8 @@ class _ImageTagPageState extends State<ImageTagPage> {
               for (int i = 0; i < tags.length; i++)
                 _tagChip(
                   entry: tags[i],
-                  onTap: () => _vm.toggleTag(_vm.result!.source,
-                      characterIndex: i),
+                  onTap: () =>
+                      _vm.toggleTag(_vm.result!.source, characterIndex: i),
                 ),
             ],
           ),
@@ -645,8 +664,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
                   size: 16, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 6),
               const Text('多角色',
-                  style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(width: 6),
               Text('${r.characters!.length} 个',
                   style: TextStyle(
@@ -657,8 +675,8 @@ class _ImageTagPageState extends State<ImageTagPage> {
           const SizedBox(height: 10),
           for (int i = 0; i < r.characters!.length; i++) ...[
             if (i > 0) const SizedBox(height: 12),
-            _buildCharacterRow(i + 1, r.characters![i].prompt,
-                r.characters![i].uc, isDark),
+            _buildCharacterRow(
+                i + 1, r.characters![i].prompt, r.characters![i].uc, isDark),
           ],
         ],
       ),
@@ -775,8 +793,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon,
-                size: 13,
-                color: isDark ? Colors.white70 : Colors.black54),
+                size: 13, color: isDark ? Colors.white70 : Colors.black54),
             const SizedBox(width: 3),
             Text(label,
                 style: TextStyle(
@@ -845,7 +862,9 @@ class _ImageTagPageState extends State<ImageTagPage> {
                   fontSize: 11,
                   color: selected
                       ? primary.withValues(alpha: 0.65)
-                      : (isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black45),
+                      : (isDark
+                          ? Colors.white.withValues(alpha: 0.45)
+                          : Colors.black45),
                 ),
               ),
             ],

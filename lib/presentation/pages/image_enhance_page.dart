@@ -54,7 +54,8 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
     if (_vm.status == SrStatus.success) {
       showFloatingToast(context, '增强完成', icon: CupertinoIcons.checkmark_circle);
     } else if (_vm.status == SrStatus.failed) {
-      showFloatingToast(context, '处理失败', icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, '处理失败',
+          icon: CupertinoIcons.exclamationmark_circle);
     }
   }
 
@@ -64,7 +65,9 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
     showFloatingToast(
       context,
       ok ? '已保存到相册' : '保存失败',
-      icon: ok ? CupertinoIcons.checkmark_circle : CupertinoIcons.exclamationmark_circle,
+      icon: ok
+          ? CupertinoIcons.checkmark_circle
+          : CupertinoIcons.exclamationmark_circle,
     );
   }
 
@@ -104,6 +107,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
     } else if (showOutput && outputPath != null) {
       // 增强成功 → 拖拽对比
       child = _BeforeAfterCompare(
+        key: ValueKey('$inputPath::$outputPath'),
         beforePath: inputPath,
         afterPath: outputPath,
         scaleLabel: '${_vm.model.scale}x',
@@ -114,15 +118,25 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
       child = Image.file(File(inputPath), fit: BoxFit.contain);
     }
 
-    return GestureDetector(
+    final preview = GestureDetector(
       onTap: showOutput ? null : _pickImage,
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Container(color: cardColor, child: child),
-        ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(color: cardColor, child: child),
       ),
+    );
+
+    if (!showOutput) {
+      return AspectRatio(aspectRatio: 1, child: preview);
+    }
+
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final comparisonHeight = (screenHeight * 0.6).clamp(420.0, 680.0);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      height: comparisonHeight,
+      child: preview,
     );
   }
 
@@ -301,7 +315,8 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
           child: FilledButton(
             onPressed: _vm.isRunning ? _vm.cancel : _run,
             child: Text(_vm.isRunning ? '取消' : '开始增强',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
           ),
         ),
         if (hasOutput && !_vm.isRunning) ...[
@@ -345,6 +360,7 @@ class _BeforeAfterCompare extends StatefulWidget {
   final bool isDark;
 
   const _BeforeAfterCompare({
+    super.key,
     required this.beforePath,
     required this.afterPath,
     required this.scaleLabel,
@@ -418,8 +434,8 @@ class _BeforeAfterCompareState extends State<_BeforeAfterCompare> {
                 bottom: 8,
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),
                       borderRadius: BorderRadius.circular(20),
@@ -509,4 +525,3 @@ class _DragHandle extends StatelessWidget {
     );
   }
 }
-
