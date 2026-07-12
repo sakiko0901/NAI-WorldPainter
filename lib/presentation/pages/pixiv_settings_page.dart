@@ -124,7 +124,8 @@ class _PixivSettingsPageState extends State<PixivSettingsPage> {
                       icon: Icon(_obscureCookie
                           ? CupertinoIcons.eye_slash
                           : CupertinoIcons.eye),
-                      onPressed: () => setState(() => _obscureCookie = !_obscureCookie),
+                      onPressed: () =>
+                          setState(() => _obscureCookie = !_obscureCookie),
                     ),
                   ),
                 ),
@@ -141,7 +142,8 @@ class _PixivSettingsPageState extends State<PixivSettingsPage> {
                       icon: Icon(_obscureCsrf
                           ? CupertinoIcons.eye_slash
                           : CupertinoIcons.eye),
-                      onPressed: () => setState(() => _obscureCsrf = !_obscureCsrf),
+                      onPressed: () =>
+                          setState(() => _obscureCsrf = !_obscureCsrf),
                     ),
                   ),
                 ),
@@ -170,8 +172,7 @@ class _PixivSettingsPageState extends State<PixivSettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _Hint(
-                    text: '国内直连 Pixiv 通常不可用。留空则不使用代理，可能需要全局代理或 VPN。'),
+                _Hint(text: '国内直连 Pixiv 通常不可用。留空则不使用代理，可能需要全局代理或 VPN。'),
               ],
             ),
           ),
@@ -240,7 +241,8 @@ class _PixivSettingsPageState extends State<PixivSettingsPage> {
                     await _vm.save(s.copyWith(cooldownMinutes: v.round()));
                   },
                 ),
-                _label('描述抽样比例: ${(s.repTagsPercent * 100).toStringAsFixed(0)}%'),
+                _label(
+                    '描述抽样比例: ${(s.repTagsPercent * 100).toStringAsFixed(0)}%'),
                 Slider(
                   value: s.repTagsPercent.clamp(0.0, 1.0),
                   min: 0.0,
@@ -302,7 +304,8 @@ class _Section extends StatelessWidget {
   final bool isDark;
   final String title;
   final Widget child;
-  const _Section({required this.isDark, required this.title, required this.child});
+  const _Section(
+      {required this.isDark, required this.title, required this.child});
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -349,8 +352,8 @@ class _Hint extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(CupertinoIcons.info, size: 14,
-              color: Theme.of(context).colorScheme.primary),
+          Icon(CupertinoIcons.info,
+              size: 14, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 6),
           Expanded(child: Text(text, style: const TextStyle(fontSize: 11))),
         ],

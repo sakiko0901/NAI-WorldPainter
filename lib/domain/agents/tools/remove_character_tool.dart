@@ -11,8 +11,7 @@ class RemoveCharacterTool extends AgentTool {
   String get name => 'remove_character';
 
   @override
-  String get description =>
-      '删除指定的多角色格子。当用户不需要那么多角色、或某个角色不再需要时调用。'
+  String get description => '删除指定的多角色格子。当用户不需要那么多角色、或某个角色不再需要时调用。'
       'index 是 1-based 角色序号（1-6），对应 write_prompt 的 character_N。'
       '\n\n使用场景：'
       '\n- 用户原本要 3 角色生图，临时改成 2 角色 → 删除第 3 个角色格'
@@ -45,8 +44,7 @@ class RemoveCharacterTool extends AgentTool {
     }
     final chars = _genVm.characters;
     if (index > chars.length) {
-      return ToolResult.failure(
-          '当前只有 ${chars.length} 个角色格，无法删除第 $index 个');
+      return ToolResult.failure('当前只有 ${chars.length} 个角色格，无法删除第 $index 个');
     }
     _genVm.removeCharacter(index - 1);
     return ToolResult.success(
@@ -65,8 +63,7 @@ class ClearCharactersTool extends AgentTool {
   String get name => 'clear_characters';
 
   @override
-  String get description =>
-      '清空所有多角色格子（character_1 到 character_N）。'
+  String get description => '清空所有多角色格子（character_1 到 character_N）。'
       '当用户从多角色场景切换到单角色场景、或要重新编排所有角色时调用。'
       '只清角色格，不影响 positive / negative / inpaint 框。';
 

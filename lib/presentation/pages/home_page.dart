@@ -2,24 +2,21 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
 import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/history_page.dart';
 import 'package:nai_huishi/presentation/pages/settings_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/history_viewmodel.dart';
 
-class _ThemeToggleButton extends StatelessWidget {
-  final Brightness brightness;
+class _AdvancedParametersButton extends StatelessWidget {
   final VoidCallback? onTap;
 
-  const _ThemeToggleButton({required this.brightness, this.onTap});
+  const _AdvancedParametersButton({this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = brightness == Brightness.dark;
-    const iconGold = Color(0xFFF5D57A);
-    const iconBlue = Color(0xFF3B82F6);
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -27,26 +24,10 @@ class _ThemeToggleButton extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 320),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              final rotate = Tween<double>(begin: 0.72, end: 1).animate(animation);
-              return FadeTransition(
-                opacity: animation,
-                child: ScaleTransition(
-                  scale: animation,
-                  child: RotationTransition(turns: rotate, child: child),
-                ),
-              );
-            },
-            child: Icon(
-              isDark ? CupertinoIcons.moon_stars : CupertinoIcons.sun_max,
-              key: ValueKey(isDark),
-              color: isDark ? iconBlue : iconGold,
-              size: 28,
-            ),
+          child: Icon(
+            CupertinoIcons.slider_horizontal_3,
+            color: Theme.of(context).colorScheme.primary,
+            size: 28,
           ),
         ),
       ),
@@ -57,13 +38,13 @@ class _ThemeToggleButton extends StatelessWidget {
 class HomePage extends StatefulWidget {
   static const initialIndex = 1;
 
-  final Brightness brightness;
-  final VoidCallback? onToggleTheme;
+  final AppearanceMode appearanceMode;
+  final ValueChanged<AppearanceMode> onAppearanceChanged;
 
   const HomePage({
     super.key,
-    this.brightness = Brightness.dark,
-    this.onToggleTheme,
+    required this.appearanceMode,
+    required this.onAppearanceChanged,
   });
 
   @override
@@ -99,7 +80,11 @@ class _HomePageState extends State<HomePage> {
             children: [
               HistoryPage(onNavigate: _switchPage), // 0
               GeneratePage(onNavigate: _switchPage), // 1
-              SettingsPage(onNavigateToGenerate: () => _switchPage(1)), // 2
+              SettingsPage(
+                appearanceMode: widget.appearanceMode,
+                onAppearanceChanged: widget.onAppearanceChanged,
+                onNavigateToGenerate: () => _switchPage(1),
+              ), // 2
             ],
           ),
 
@@ -107,9 +92,12 @@ class _HomePageState extends State<HomePage> {
             Positioned(
               left: 14,
               top: MediaQuery.paddingOf(context).top + 10,
-              child: _ThemeToggleButton(
-                brightness: widget.brightness,
-                onTap: widget.onToggleTheme,
+              child: _AdvancedParametersButton(
+                onTap: () => Navigator.of(context).push(
+                  CupertinoPageRoute(
+                    builder: (_) => const AdvancedParametersPage(),
+                  ),
+                ),
               ),
             ),
 
@@ -135,21 +123,29 @@ class _HomePageState extends State<HomePage> {
         child: Container(
           height: 64 + MediaQuery.paddingOf(context).bottom,
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E).withValues(alpha: 0.8) : surface.withValues(alpha: 0.88),
+            color: isDark
+                ? const Color(0xFF1C1C1E).withValues(alpha: 0.8)
+                : surface.withValues(alpha: 0.88),
             border: Border(
               top: BorderSide(
-                color: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFBBD7FF),
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.1)
+                    : const Color(0xFFBBD7FF),
                 width: 0.5,
               ),
             ),
           ),
-          padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavItem(0, CupertinoIcons.clock, CupertinoIcons.clock_fill, '历史'),
-              _buildNavItem(1, CupertinoIcons.paintbrush, CupertinoIcons.paintbrush_fill, '生成'),
-              _buildNavItem(2, CupertinoIcons.settings, CupertinoIcons.settings_solid, '更多'),
+              _buildNavItem(
+                  0, CupertinoIcons.clock, CupertinoIcons.clock_fill, '历史'),
+              _buildNavItem(1, CupertinoIcons.paintbrush,
+                  CupertinoIcons.paintbrush_fill, '生成'),
+              _buildNavItem(2, CupertinoIcons.settings,
+                  CupertinoIcons.settings_solid, '更多'),
             ],
           ),
         ),
@@ -157,9 +153,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildNavItem(int index, IconData icon, IconData activeIcon, String label) {
+  Widget _buildNavItem(
+      int index, IconData icon, IconData activeIcon, String label) {
     final isSelected = _currentIndex == index;
-    final color = isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant;
+    final color = isSelected
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.onSurfaceVariant;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,

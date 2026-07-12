@@ -132,14 +132,24 @@ class _StylePresetDetailPageState extends State<StylePresetDetailPage> {
               height: 360,
               color: const Color(0xFF1C1C21),
               child: exists
-                  ? InteractiveViewer(child: Image.file(file, fit: BoxFit.contain))
-                  : Center(child: Icon(CupertinoIcons.photo, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.25), size: 44)),
+                  ? InteractiveViewer(
+                      child: Image.file(file, fit: BoxFit.contain))
+                  : Center(
+                      child: Icon(CupertinoIcons.photo,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: 0.25),
+                          size: 44)),
             ),
           ),
           SizedBox(height: 16),
           SelectableText(
             _preset.prompt,
-            style: TextStyle(fontSize: 14, height: 1.6, color: Theme.of(context).colorScheme.onSurface),
+            style: TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           SizedBox(height: 18),
           FilledButton.icon(

@@ -6,7 +6,7 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 9;
+  static const int dbVersion = 11;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
@@ -30,12 +30,17 @@ class AppConstants {
   static const String keySelectedModelDraft = 'selected_model_draft';
   static const String keySelectedResolutionDraft = 'selected_resolution_draft';
   static const String keySelectedSamplerDraft = 'selected_sampler_draft';
-  static const String keySelectedNoiseScheduleDraft = 'selected_noise_schedule_draft';
+  static const String keySelectedNoiseScheduleDraft =
+      'selected_noise_schedule_draft';
   static const String keyScaleDraft = 'scale_draft';
   static const String keyCfgRescaleDraft = 'cfg_rescale_draft';
+  static const String keyStepsDraft = 'steps_draft';
+  static const String keyStepsLocked = 'steps_locked';
   static const String keyCharactersDraft = 'characters_draft';
+  static const String keyVibeReferencesDraft = 'vibe_references_draft';
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
-  static const String keyInpaintNegativePromptDraft = 'inpaint_negative_prompt_draft';
+  static const String keyInpaintNegativePromptDraft =
+      'inpaint_negative_prompt_draft';
 
   // LLM 提示词辅助（旧单配置，仅用于迁移，迁移后不再读取）
   static const String keyLlmApiKey = 'llm_api_key';
@@ -60,7 +65,8 @@ class AppConstants {
   static const String keyWebSearchEnabled = 'llm_web_search_enabled';
 
   // Danbooru 智能校准
-  static const String keyDanbooruCalibrationEnabled = 'danbooru_calibration_enabled';
+  static const String keyDanbooruCalibrationEnabled =
+      'danbooru_calibration_enabled';
   static const String keyDanbooruBaseUrl = 'danbooru_base_url';
 
   static const int defaultLlmContextLimit = 20;
@@ -143,26 +149,47 @@ class AppConstants {
       '- 多角色场景（2 人及以上）**禁止单纯把全部特征写入 positive**，必须按角色拆分到 character_1、character_2…；positive 只放通用画质词与画风词，角色独有特征（角色名、发色、瞳色、服装、动作）一律进 character_N。\n';
 
   // 图像 API 供应商配置
-  static const String keyImageProviderNovelAiBaseUrl = 'image_provider_novelai_base_url';
-  static const String keyImageProviderNovelAiApiKey = 'image_provider_novelai_api_key';
-  static const String keyImageProviderNovelAiModel = 'image_provider_novelai_model';
-  static const String keyImageProviderGptBaseUrl = 'image_provider_gpt_base_url';
+  static const String keyImageProviderNovelAiBaseUrl =
+      'image_provider_novelai_base_url';
+  static const String keyImageProviderNovelAiApiKey =
+      'image_provider_novelai_api_key';
+  static const String keyImageProviderNovelAiModel =
+      'image_provider_novelai_model';
+  static const String keyImageProviderGptBaseUrl =
+      'image_provider_gpt_base_url';
   static const String keyImageProviderGptApiKey = 'image_provider_gpt_api_key';
   static const String keyImageProviderGptModel = 'image_provider_gpt_model';
-  static const String keyImageProviderNanoBaseUrl = 'image_provider_nano_base_url';
-  static const String keyImageProviderNanoApiKey = 'image_provider_nano_api_key';
+  static const String keyImageProviderNanoBaseUrl =
+      'image_provider_nano_base_url';
+  static const String keyImageProviderNanoApiKey =
+      'image_provider_nano_api_key';
   static const String keyImageProviderNanoModel = 'image_provider_nano_model';
 
+  // NovelAI 固定双槽定义
+  static const String novelAiChatCompletionsEndpointId = '7877';
+  static const String novelAiChatCompletionsProtocol = 'chat-completions';
+  static const String novelAiImageGenerationsEndpointId = 'ikun';
+  static const String novelAiImageGenerationsProtocol = 'image-generations';
+
   // 图像 API 供应商配置 — v2 多中转站结构
-  static const String keyImageProviderNovelAiEndpoints = 'image_provider_novelai_endpoints';
-  static const String keyImageProviderNovelAiActiveEndpointId = 'image_provider_novelai_active_endpoint_id';
-  static const String keyImageProviderNovelAiActiveModel = 'image_provider_novelai_active_model_v2';
-  static const String keyImageProviderGptEndpoints = 'image_provider_gpt_endpoints';
-  static const String keyImageProviderGptActiveEndpointId = 'image_provider_gpt_active_endpoint_id';
-  static const String keyImageProviderGptActiveModel = 'image_provider_gpt_active_model_v2';
-  static const String keyImageProviderNanoEndpoints = 'image_provider_nano_endpoints';
-  static const String keyImageProviderNanoActiveEndpointId = 'image_provider_nano_active_endpoint_id';
-  static const String keyImageProviderNanoActiveModel = 'image_provider_nano_active_model_v2';
+  static const String keyImageProviderNovelAiEndpoints =
+      'image_provider_novelai_endpoints';
+  static const String keyImageProviderNovelAiActiveEndpointId =
+      'image_provider_novelai_active_endpoint_id';
+  static const String keyImageProviderNovelAiActiveModel =
+      'image_provider_novelai_active_model_v2';
+  static const String keyImageProviderGptEndpoints =
+      'image_provider_gpt_endpoints';
+  static const String keyImageProviderGptActiveEndpointId =
+      'image_provider_gpt_active_endpoint_id';
+  static const String keyImageProviderGptActiveModel =
+      'image_provider_gpt_active_model_v2';
+  static const String keyImageProviderNanoEndpoints =
+      'image_provider_nano_endpoints';
+  static const String keyImageProviderNanoActiveEndpointId =
+      'image_provider_nano_active_endpoint_id';
+  static const String keyImageProviderNanoActiveModel =
+      'image_provider_nano_active_model_v2';
 
   // 批量生成
   static const String keyBatchCount = 'batch_count_draft';
@@ -171,9 +198,12 @@ class AppConstants {
   static const String keyImageTagImagePath = 'image_tag_image_path';
   static const String keyImageTagMode = 'image_tag_mode'; // 0=nai, 1=wdTagger
   static const String keyImageTagResultJson = 'image_tag_result_json';
-  static const String keyImageTagWdModel = 'image_tag_wd_model'; // wd-tagger 模型 repo
-  static const String keyImageTagGeneralThreshold = 'image_tag_general_threshold';
-  static const String keyImageTagCharacterThreshold = 'image_tag_character_threshold';
+  static const String keyImageTagWdModel =
+      'image_tag_wd_model'; // wd-tagger 模型 repo
+  static const String keyImageTagGeneralThreshold =
+      'image_tag_general_threshold';
+  static const String keyImageTagCharacterThreshold =
+      'image_tag_character_threshold';
 
   // 任务状态
   static const String taskPending = 'pending';

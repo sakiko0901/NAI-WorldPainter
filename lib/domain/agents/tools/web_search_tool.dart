@@ -11,8 +11,7 @@ class WebSearchTool extends AgentTool {
   String get name => 'web_search';
 
   @override
-  String get description =>
-      '使用 DuckDuckGo Lite 做通用联网搜索。用于查询实时信息、角色最新设定、不确定的事实。'
+  String get description => '使用 DuckDuckGo Lite 做通用联网搜索。用于查询实时信息、角色最新设定、不确定的事实。'
       '返回结果列表（最多 max_results 条），每条包含 title、url、snippet。'
       '注意：DDG 可能因为反爬限速失败，失败时返回空列表，应该告知用户搜索失败。';
 

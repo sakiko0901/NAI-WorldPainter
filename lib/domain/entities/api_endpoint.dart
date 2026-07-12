@@ -7,6 +7,7 @@ class ApiEndpoint extends Equatable {
   final String baseUrl;
   final String apiKey;
   final List<String> models;
+  final String protocol;
 
   const ApiEndpoint({
     required this.id,
@@ -14,6 +15,7 @@ class ApiEndpoint extends Equatable {
     required this.baseUrl,
     required this.apiKey,
     required this.models,
+    this.protocol = 'openaiChat',
   });
 
   ApiEndpoint copyWith({
@@ -22,6 +24,7 @@ class ApiEndpoint extends Equatable {
     String? baseUrl,
     String? apiKey,
     List<String>? models,
+    String? protocol,
   }) {
     return ApiEndpoint(
       id: id ?? this.id,
@@ -29,6 +32,7 @@ class ApiEndpoint extends Equatable {
       baseUrl: baseUrl ?? this.baseUrl,
       apiKey: apiKey ?? this.apiKey,
       models: models ?? this.models,
+      protocol: protocol ?? this.protocol,
     );
   }
 
@@ -38,6 +42,7 @@ class ApiEndpoint extends Equatable {
         'base_url': baseUrl,
         'api_key': apiKey,
         'models': models,
+        'protocol': protocol,
       };
 
   factory ApiEndpoint.fromJson(Map<String, dynamic> json) => ApiEndpoint(
@@ -45,9 +50,11 @@ class ApiEndpoint extends Equatable {
         name: json['name'] as String? ?? '',
         baseUrl: json['base_url'] as String? ?? '',
         apiKey: json['api_key'] as String? ?? '',
-        models: (json['models'] as List?)?.map((e) => e as String).toList() ?? const [],
+        models: (json['models'] as List?)?.map((e) => e as String).toList() ??
+            const [],
+        protocol: json['protocol'] as String? ?? 'openaiChat',
       );
 
   @override
-  List<Object?> get props => [id, name, baseUrl, apiKey, models];
+  List<Object?> get props => [id, name, baseUrl, apiKey, models, protocol];
 }

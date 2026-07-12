@@ -11,10 +11,12 @@ class ManageLlmChatUseCase {
   Future<List<LlmSession>> listSessions() => _repo.listSessions();
   Future<LlmSession> createSession({String? initialTitle}) =>
       _repo.createSession(initialTitle: initialTitle);
-  Future<void> renameSession(String id, String title) => _repo.renameSession(id, title);
+  Future<void> renameSession(String id, String title) =>
+      _repo.renameSession(id, title);
   Future<void> deleteSession(String id) => _repo.deleteSession(id);
   Future<void> deleteAllSessions() => _repo.deleteAllSessions();
-  Future<List<LlmMessage>> listMessages(String sessionId) => _repo.listMessages(sessionId);
+  Future<List<LlmMessage>> listMessages(String sessionId) =>
+      _repo.listMessages(sessionId);
 
   /// 仅落库 user 消息（Agent 化后由 ViewModel 先调此方法落 user，再跑 AgentLoop）
   Future<int> saveUserMessage({

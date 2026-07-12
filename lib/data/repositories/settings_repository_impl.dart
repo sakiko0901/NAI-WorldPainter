@@ -63,10 +63,12 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<void> setDefaultCfgRescale(double v) => _local.setDefaultCfgRescale(v);
 
   @override
-  Future<String> getDefaultNoiseSchedule() async => _local.getDefaultNoiseSchedule();
+  Future<String> getDefaultNoiseSchedule() async =>
+      _local.getDefaultNoiseSchedule();
 
   @override
-  Future<void> setDefaultNoiseSchedule(String s) => _local.setDefaultNoiseSchedule(s);
+  Future<void> setDefaultNoiseSchedule(String s) =>
+      _local.setDefaultNoiseSchedule(s);
 
   @override
   Future<String> getDefaultStyleWords() async => _local.getDefaultStyleWords();
@@ -81,34 +83,44 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<void> setPromptDraft(String value) => _local.setPromptDraft(value);
 
   @override
-  Future<String> getNegativePromptDraft() async => _local.getNegativePromptDraft();
+  Future<String> getNegativePromptDraft() async =>
+      _local.getNegativePromptDraft();
 
   @override
-  Future<void> setNegativePromptDraft(String value) => _local.setNegativePromptDraft(value);
+  Future<void> setNegativePromptDraft(String value) =>
+      _local.setNegativePromptDraft(value);
 
   @override
-  Future<String?> getSelectedModelDraft() async => _local.getSelectedModelDraft();
+  Future<String?> getSelectedModelDraft() async =>
+      _local.getSelectedModelDraft();
 
   @override
-  Future<void> setSelectedModelDraft(String value) => _local.setSelectedModelDraft(value);
+  Future<void> setSelectedModelDraft(String value) =>
+      _local.setSelectedModelDraft(value);
 
   @override
-  Future<String> getSelectedResolutionDraft() async => _local.getSelectedResolutionDraft();
+  Future<String> getSelectedResolutionDraft() async =>
+      _local.getSelectedResolutionDraft();
 
   @override
-  Future<void> setSelectedResolutionDraft(String value) => _local.setSelectedResolutionDraft(value);
+  Future<void> setSelectedResolutionDraft(String value) =>
+      _local.setSelectedResolutionDraft(value);
 
   @override
-  Future<String> getSelectedSamplerDraft() async => _local.getSelectedSamplerDraft();
+  Future<String> getSelectedSamplerDraft() async =>
+      _local.getSelectedSamplerDraft();
 
   @override
-  Future<void> setSelectedSamplerDraft(String value) => _local.setSelectedSamplerDraft(value);
+  Future<void> setSelectedSamplerDraft(String value) =>
+      _local.setSelectedSamplerDraft(value);
 
   @override
-  Future<String> getSelectedNoiseScheduleDraft() async => _local.getSelectedNoiseScheduleDraft();
+  Future<String> getSelectedNoiseScheduleDraft() async =>
+      _local.getSelectedNoiseScheduleDraft();
 
   @override
-  Future<void> setSelectedNoiseScheduleDraft(String value) => _local.setSelectedNoiseScheduleDraft(value);
+  Future<void> setSelectedNoiseScheduleDraft(String value) =>
+      _local.setSelectedNoiseScheduleDraft(value);
 
   @override
   Future<double> getScaleDraft() async => _local.getScaleDraft();
@@ -120,25 +132,54 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<double> getCfgRescaleDraft() async => _local.getCfgRescaleDraft();
 
   @override
-  Future<void> setCfgRescaleDraft(double value) => _local.setCfgRescaleDraft(value);
+  Future<void> setCfgRescaleDraft(double value) =>
+      _local.setCfgRescaleDraft(value);
 
   @override
-  Future<List<CharacterSpec>> getCharactersDraft() async => _local.getCharactersDraft();
+  Future<int> getStepsDraft() async => _local.getStepsDraft();
 
   @override
-  Future<void> setCharactersDraft(List<CharacterSpec> value) => _local.setCharactersDraft(value);
+  Future<void> setStepsDraft(int value) => _local.setStepsDraft(value);
 
   @override
-  Future<String> getInpaintPromptDraft() async => _local.getInpaintPromptDraft();
+  Future<bool> getStepsLocked() async => _local.getStepsLocked();
 
   @override
-  Future<void> setInpaintPromptDraft(String value) => _local.setInpaintPromptDraft(value);
+  Future<void> setStepsLocked(bool value) => _local.setStepsLocked(value);
 
   @override
-  Future<String> getInpaintNegativePromptDraft() async => _local.getInpaintNegativePromptDraft();
+  Future<List<CharacterSpec>> getCharactersDraft() async =>
+      _local.getCharactersDraft();
 
   @override
-  Future<void> setInpaintNegativePromptDraft(String value) => _local.setInpaintNegativePromptDraft(value);
+  Future<void> setCharactersDraft(List<CharacterSpec> value) =>
+      _local.setCharactersDraft(value);
+
+  @override
+  Future<List<CharacterReferenceImage>> getVibeReferencesDraft() async =>
+      _local.getVibeReferencesDraft();
+
+  @override
+  Future<void> setVibeReferencesDraft(
+    List<CharacterReferenceImage> value,
+  ) =>
+      _local.setVibeReferencesDraft(value);
+
+  @override
+  Future<String> getInpaintPromptDraft() async =>
+      _local.getInpaintPromptDraft();
+
+  @override
+  Future<void> setInpaintPromptDraft(String value) =>
+      _local.setInpaintPromptDraft(value);
+
+  @override
+  Future<String> getInpaintNegativePromptDraft() async =>
+      _local.getInpaintNegativePromptDraft();
+
+  @override
+  Future<void> setInpaintNegativePromptDraft(String value) =>
+      _local.setInpaintNegativePromptDraft(value);
 
   @override
   Future<String?> getLlmApiKey() async => _local.getLlmApiKey();
@@ -162,20 +203,24 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<String> getLlmSystemPrompt() async => _local.getLlmSystemPrompt();
 
   @override
-  Future<void> setLlmSystemPrompt(String value) => _local.setLlmSystemPrompt(value);
+  Future<void> setLlmSystemPrompt(String value) =>
+      _local.setLlmSystemPrompt(value);
 
   @override
-  Future<String?> getLlmActiveSessionId() async => _local.getLlmActiveSessionId();
+  Future<String?> getLlmActiveSessionId() async =>
+      _local.getLlmActiveSessionId();
 
   @override
-  Future<void> setLlmActiveSessionId(String? value) => _local.setLlmActiveSessionId(value);
+  Future<void> setLlmActiveSessionId(String? value) =>
+      _local.setLlmActiveSessionId(value);
 
   // LLM 上下文条数
   @override
   Future<int> getLlmContextLimit() async => _local.getLlmContextLimit();
 
   @override
-  Future<void> setLlmContextLimit(int value) => _local.setLlmContextLimit(value);
+  Future<void> setLlmContextLimit(int value) =>
+      _local.setLlmContextLimit(value);
 
   // LLM 供应商列表
   @override
@@ -199,7 +244,8 @@ class SettingsRepositoryImpl implements SettingsRepository {
   }
 
   @override
-  Future<void> setLlmRoleBinding(LlmProfileRole role, LlmRoleBinding binding) async {
+  Future<void> setLlmRoleBinding(
+      LlmProfileRole role, LlmRoleBinding binding) async {
     switch (role) {
       case LlmProfileRole.main:
         await _local.setLlmRoleBindingMain(binding);
@@ -213,7 +259,8 @@ class SettingsRepositoryImpl implements SettingsRepository {
   }
 
   @override
-  bool migrateLegacyLlm3RoleToProvider() => _local.migrateLegacyLlm3RoleToProvider();
+  bool migrateLegacyLlm3RoleToProvider() =>
+      _local.migrateLegacyLlm3RoleToProvider();
 
   @override
   Future<bool> testConnection() async {
@@ -234,7 +281,8 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<bool> getWebSearchEnabled() async => _local.getWebSearchEnabled();
   @override
-  Future<void> setWebSearchEnabled(bool value) => _local.setWebSearchEnabled(value);
+  Future<void> setWebSearchEnabled(bool value) =>
+      _local.setWebSearchEnabled(value);
 
   // Danbooru 智能校准
   @override
@@ -247,63 +295,85 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<String> getDanbooruBaseUrl() async => _local.getDanbooruBaseUrl();
   @override
-  Future<void> setDanbooruBaseUrl(String value) => _local.setDanbooruBaseUrl(value);
+  Future<void> setDanbooruBaseUrl(String value) =>
+      _local.setDanbooruBaseUrl(value);
 
   // 图像 API 供应商配置 — NovelAI
   @override
-  Future<String> getImageProviderNovelAiBaseUrl() async => _local.getImageProviderNovelAiBaseUrl();
+  Future<String> getImageProviderNovelAiBaseUrl() async =>
+      _local.getImageProviderNovelAiBaseUrl();
   @override
-  Future<void> setImageProviderNovelAiBaseUrl(String value) => _local.setImageProviderNovelAiBaseUrl(value);
+  Future<void> setImageProviderNovelAiBaseUrl(String value) =>
+      _local.setImageProviderNovelAiBaseUrl(value);
   @override
-  Future<String?> getImageProviderNovelAiApiKey() async => _local.getImageProviderNovelAiApiKey();
+  Future<String?> getImageProviderNovelAiApiKey() async =>
+      _local.getImageProviderNovelAiApiKey();
   @override
-  Future<void> setImageProviderNovelAiApiKey(String value) => _local.setImageProviderNovelAiApiKey(value);
+  Future<void> setImageProviderNovelAiApiKey(String value) =>
+      _local.setImageProviderNovelAiApiKey(value);
   @override
-  Future<String> getImageProviderNovelAiModel() async => _local.getImageProviderNovelAiModel();
+  Future<String> getImageProviderNovelAiModel() async =>
+      _local.getImageProviderNovelAiModel();
   @override
-  Future<void> setImageProviderNovelAiModel(String value) => _local.setImageProviderNovelAiModel(value);
+  Future<void> setImageProviderNovelAiModel(String value) =>
+      _local.setImageProviderNovelAiModel(value);
 
   // 图像 API 供应商配置 — GPT
   @override
-  Future<String> getImageProviderGptBaseUrl() async => _local.getImageProviderGptBaseUrl();
+  Future<String> getImageProviderGptBaseUrl() async =>
+      _local.getImageProviderGptBaseUrl();
   @override
-  Future<void> setImageProviderGptBaseUrl(String value) => _local.setImageProviderGptBaseUrl(value);
+  Future<void> setImageProviderGptBaseUrl(String value) =>
+      _local.setImageProviderGptBaseUrl(value);
   @override
-  Future<String?> getImageProviderGptApiKey() async => _local.getImageProviderGptApiKey();
+  Future<String?> getImageProviderGptApiKey() async =>
+      _local.getImageProviderGptApiKey();
   @override
-  Future<void> setImageProviderGptApiKey(String value) => _local.setImageProviderGptApiKey(value);
+  Future<void> setImageProviderGptApiKey(String value) =>
+      _local.setImageProviderGptApiKey(value);
   @override
-  Future<String> getImageProviderGptModel() async => _local.getImageProviderGptModel();
+  Future<String> getImageProviderGptModel() async =>
+      _local.getImageProviderGptModel();
   @override
-  Future<void> setImageProviderGptModel(String value) => _local.setImageProviderGptModel(value);
+  Future<void> setImageProviderGptModel(String value) =>
+      _local.setImageProviderGptModel(value);
 
   // 图像 API 供应商配置 — Nano Banana
   @override
-  Future<String> getImageProviderNanoBaseUrl() async => _local.getImageProviderNanoBaseUrl();
+  Future<String> getImageProviderNanoBaseUrl() async =>
+      _local.getImageProviderNanoBaseUrl();
   @override
-  Future<void> setImageProviderNanoBaseUrl(String value) => _local.setImageProviderNanoBaseUrl(value);
+  Future<void> setImageProviderNanoBaseUrl(String value) =>
+      _local.setImageProviderNanoBaseUrl(value);
   @override
-  Future<String?> getImageProviderNanoApiKey() async => _local.getImageProviderNanoApiKey();
+  Future<String?> getImageProviderNanoApiKey() async =>
+      _local.getImageProviderNanoApiKey();
   @override
-  Future<void> setImageProviderNanoApiKey(String value) => _local.setImageProviderNanoApiKey(value);
+  Future<void> setImageProviderNanoApiKey(String value) =>
+      _local.setImageProviderNanoApiKey(value);
   @override
-  Future<String> getImageProviderNanoModel() async => _local.getImageProviderNanoModel();
+  Future<String> getImageProviderNanoModel() async =>
+      _local.getImageProviderNanoModel();
   @override
-  Future<void> setImageProviderNanoModel(String value) => _local.setImageProviderNanoModel(value);
+  Future<void> setImageProviderNanoModel(String value) =>
+      _local.setImageProviderNanoModel(value);
 
   // ===== 图像 API 供应商 v2 多中转站 =====
   @override
-  Future<List<ApiEndpoint>> getEndpoints(ImageProviderType p) async => _local.getEndpoints(p);
+  Future<List<ApiEndpoint>> getEndpoints(ImageProviderType p) async =>
+      _local.getEndpoints(p);
   @override
   Future<void> setEndpoints(ImageProviderType p, List<ApiEndpoint> list) =>
       _local.setEndpoints(p, list);
   @override
-  Future<String?> getActiveEndpointId(ImageProviderType p) async => _local.getActiveEndpointId(p);
+  Future<String?> getActiveEndpointId(ImageProviderType p) async =>
+      _local.getActiveEndpointId(p);
   @override
   Future<void> setActiveEndpointId(ImageProviderType p, String? id) =>
       _local.setActiveEndpointId(p, id);
   @override
-  Future<String?> getActiveModel(ImageProviderType p) async => _local.getActiveModel(p);
+  Future<String?> getActiveModel(ImageProviderType p) async =>
+      _local.getActiveModel(p);
   @override
   Future<void> setActiveModel(ImageProviderType p, String? model) =>
       _local.setActiveModel(p, model);

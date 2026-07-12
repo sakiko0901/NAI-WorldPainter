@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -39,12 +40,14 @@ class NovelAiApiService {
 
       if (data is Map<String, dynamic> && data.containsKey('data')) {
         final List list = data['data'];
-        return list.map((e) => NaiModel(
-          id: e['id'] ?? '',
-          name: e['id'] ?? '',
-          description: e['object'] ?? '',
-          type: e['owned_by'] ?? '',
-        )).toList();
+        return list
+            .map((e) => NaiModel(
+                  id: e['id'] ?? '',
+                  name: e['id'] ?? '',
+                  description: e['object'] ?? '',
+                  type: e['owned_by'] ?? '',
+                ))
+            .toList();
       }
 
       return [];
@@ -57,20 +60,30 @@ class NovelAiApiService {
     }
   }
 
-  Future<GenerationTask> generateImage(GenerationTask task, String apiKey, String baseUrl) async {
+  Future<GenerationTask> generateImage(
+      GenerationTask task, String apiKey, String baseUrl) async {
     _configureAuth(apiKey, baseUrl);
 
     try {
-      final requestBody = _buildChatCompletionsBody(task);
+      final usesImageGenerations =
+          task.protocol == AppConstants.novelAiImageGenerationsProtocol;
+      final requestPath = usesImageGenerations
+          ? ApiConstants.imageGenerations
+          : ApiConstants.chatCompletions;
       final response = await _dio.post(
-        ApiConstants.chatCompletions,
-        data: requestBody,
+        requestPath,
+        data: usesImageGenerations
+            ? await _buildImageGenerationsBody(task)
+            : _buildChatCompletionsBody(task),
         options: Options(
           receiveTimeout: const Duration(minutes: 5),
           sendTimeout: const Duration(minutes: 1),
         ),
       );
 
+      if (usesImageGenerations) {
+        return _parseImageGenerationResponse(response.data, task, apiKey);
+      }
       final parsed = _parseResponse(response.data, task);
       return await _downloadIfNeeded(parsed, apiKey);
     } on DioException catch (e) {
@@ -82,7 +95,43 @@ class NovelAiApiService {
     }
   }
 
-  Future<GenerationTask> inpaintImage(GenerationTask task, String apiKey, String baseUrl) async {
+  Future<Uint8List> annotateImage({
+    required String imagePath,
+    required String apiKey,
+    required String baseUrl,
+  }) async {
+    _configureAuth(apiKey, baseUrl);
+    final bytes = await File(imagePath).readAsBytes();
+    try {
+      final response = await _dio.post<List<int>>(
+        ApiConstants.imageAnnotate,
+        data: Stream.fromIterable([bytes]),
+        options: Options(
+          contentType: 'image/png',
+          responseType: ResponseType.bytes,
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Accept': 'image/png',
+          },
+          receiveTimeout: const Duration(minutes: 2),
+        ),
+      );
+      final data = response.data;
+      if (data == null || data.isEmpty) {
+        throw ApiException(message: '标注接口未返回 PNG');
+      }
+      return Uint8List.fromList(data);
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
+  }
+
+  Future<GenerationTask> inpaintImage(
+      GenerationTask task, String apiKey, String baseUrl) async {
     _configureAuth(apiKey, baseUrl);
 
     print('[NAI] === INPAINT START ===');
@@ -106,12 +155,27 @@ class NovelAiApiService {
     final formData = FormData.fromMap({
       'model': task.model,
       'prompt': task.prompt,
-      'image': MultipartFile.fromBytes(alphaSourceBytes, filename: 'source_alpha.png'),
+      'negative_prompt': task.negativePrompt ?? '',
+      'image': MultipartFile.fromBytes(alphaSourceBytes,
+          filename: 'source_alpha.png'),
       'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps,
+      'n_samples': 1,
+      'scale': task.scale,
+      'sampler': task.sampler,
+      'noise_schedule': task.noiseSchedule,
+      'cfg_rescale': task.cfgRescale,
+      if (task.seed != null) 'seed': task.seed,
+      'characterPrompts': jsonEncode(_buildCharacterPrompts(task.characters)),
+      'use_coords': task.useCoords,
+      'strength': task.inpaintStrength ?? 1.0,
       'response_format': 'b64_json',
     });
 
-    print('[NAI] sending alpha image as multipart/form-data to /v1/images/edits');
+    print(
+        '[NAI] sending alpha image as multipart/form-data to /v1/images/edits');
 
     try {
       final response = await _dio.post(
@@ -139,7 +203,8 @@ class NovelAiApiService {
             if (first is Map) {
               print('[NAI] response data[0] keys: ${first.keys.toList()}');
               if (first.containsKey('b64_json')) {
-                print('[NAI] response data[0].b64_json length: ${(first['b64_json'] as String?)?.length}');
+                print(
+                    '[NAI] response data[0].b64_json length: ${(first['b64_json'] as String?)?.length}');
               }
               if (first.containsKey('url')) {
                 print('[NAI] response data[0].url: ${first['url']}');
@@ -150,10 +215,12 @@ class NovelAiApiService {
       }
 
       final parsed = await _parseInpaintingResponse(response.data, task);
-      print('[NAI] parsed status: ${parsed.status}, imagePath: ${parsed.imagePath}, imageUrl: ${parsed.imageUrl}');
+      print(
+          '[NAI] parsed status: ${parsed.status}, imagePath: ${parsed.imagePath}, imageUrl: ${parsed.imageUrl}');
       return parsed;
     } on DioException catch (e) {
-      print('[NAI] DioException: ${e.type}, statusCode: ${e.response?.statusCode}');
+      print(
+          '[NAI] DioException: ${e.type}, statusCode: ${e.response?.statusCode}');
       print('[NAI] DioException response: ${e.response?.data}');
       throw ApiException(
         message: _handleDioError(e),
@@ -171,15 +238,22 @@ class NovelAiApiService {
     }
 
     final output = img.Image.from(source);
-    final resizedMask = mask.width == output.width && mask.height == output.height
-        ? mask
-        : img.copyResize(mask, width: output.width, height: output.height, interpolation: img.Interpolation.nearest);
+    final resizedMask =
+        mask.width == output.width && mask.height == output.height
+            ? mask
+            : img.copyResize(mask,
+                width: output.width,
+                height: output.height,
+                interpolation: img.Interpolation.nearest);
 
     int transparentPixels = 0;
     for (int y = 0; y < output.height; y++) {
       for (int x = 0; x < output.width; x++) {
         final maskPixel = resizedMask.getPixel(x, y);
-        final shouldRepaint = maskPixel.r > 127 || maskPixel.g > 127 || maskPixel.b > 127 || maskPixel.a < 128;
+        final shouldRepaint = maskPixel.r > 127 ||
+            maskPixel.g > 127 ||
+            maskPixel.b > 127 ||
+            maskPixel.a < 128;
         final sourcePixel = output.getPixel(x, y);
         output.setPixelRgba(
           x,
@@ -194,8 +268,86 @@ class NovelAiApiService {
     }
 
     final totalPixels = output.width * output.height;
-    print('[NAI] alpha source transparent pixels: $transparentPixels / $totalPixels (${(transparentPixels / totalPixels * 100).toStringAsFixed(2)}%)');
+    print(
+        '[NAI] alpha source transparent pixels: $transparentPixels / $totalPixels (${(transparentPixels / totalPixels * 100).toStringAsFixed(2)}%)');
     return img.encodePng(output);
+  }
+
+  Future<Map<String, dynamic>> _buildImageGenerationsBody(
+      GenerationTask task) async {
+    final references = <String>[];
+    final strengths = <double>[];
+    final informationExtracted = <double>[];
+    for (final reference in task.vibeReferences) {
+      final file = File(reference.path);
+      if (!await file.exists()) continue;
+      references.add(base64Encode(await file.readAsBytes()));
+      strengths.add(reference.strength);
+      informationExtracted.add(reference.informationExtracted);
+    }
+    final characterPrompts = _buildCharacterPrompts(task.characters);
+    final responseFormat =
+        const {'b64_json', 'url'}.contains(task.responseFormat)
+            ? task.responseFormat!
+            : 'b64_json';
+    return {
+      'prompt': task.prompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
+      'model': task.model,
+      'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps,
+      'n_samples': 1,
+      'scale': task.scale,
+      'sampler': _normalizeImageGenerationsSampler(task.sampler),
+      'noise_schedule':
+          _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule),
+      'cfg_rescale': task.cfgRescale,
+      if (task.seed != null) 'seed': task.seed,
+      'response_format': responseFormat,
+      if (characterPrompts.isNotEmpty) 'characterPrompts': characterPrompts,
+      if (characterPrompts.isNotEmpty) 'use_coords': task.useCoords,
+      if (references.isNotEmpty) 'reference_images': references,
+      if (references.isNotEmpty) 'reference_strength_multiple': strengths,
+      if (references.isNotEmpty)
+        'reference_information_extracted_multiple': informationExtracted,
+    };
+  }
+
+  String _normalizeImageGenerationsSampler(String sampler) {
+    return sampler == 'ddim' ? 'ddim_v3' : sampler;
+  }
+
+  String _normalizeImageGenerationsNoiseSchedule(String noiseSchedule) {
+    return noiseSchedule == 'polyexponential' ? 'exponential' : noiseSchedule;
+  }
+
+  List<Map<String, dynamic>> _buildCharacterPrompts(
+    List<CharacterSpec>? characters,
+  ) {
+    if (characters == null) return const [];
+    return characters.where((character) => character.enabled).map((character) {
+      return {
+        'prompt': character.prompt,
+        'uc': character.uc ?? '',
+        if (character.centerX != null && character.centerY != null)
+          'center': {
+            'x': character.centerX,
+            'y': character.centerY,
+          },
+      };
+    }).toList();
+  }
+
+  Future<GenerationTask> _parseImageGenerationResponse(
+    dynamic data,
+    GenerationTask originalTask,
+    String apiKey,
+  ) async {
+    final parsed = await _parseInpaintingResponse(data, originalTask);
+    return _downloadIfNeeded(parsed, apiKey);
   }
 
   Map<String, dynamic> _buildChatCompletionsBody(GenerationTask task) {
@@ -256,7 +408,8 @@ class NovelAiApiService {
       'strength': task.inpaintStrength ?? 1.0,
       if (task.seed != null) 'seed': task.seed,
       'size': '${task.width}x${task.height}',
-      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty) 'negative_prompt': task.negativePrompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
       'steps': ApiConstants.defaultInpaintingSteps,
       'scale': task.scale,
       'cfg_rescale': task.cfgRescale,
@@ -294,7 +447,8 @@ class NovelAiApiService {
     return 'Characters: ${jsonEncode(payload)}';
   }
 
-  Future<GenerationTask> _parseInpaintingResponse(dynamic data, GenerationTask originalTask) async {
+  Future<GenerationTask> _parseInpaintingResponse(
+      dynamic data, GenerationTask originalTask) async {
     if (data is Map<String, dynamic>) {
       final images = data['data'] as List<dynamic>?;
       if (images != null && images.isNotEmpty) {
@@ -309,7 +463,8 @@ class NovelAiApiService {
           }
           if (imageData['b64_json'] is String) {
             final filename = ImageUtils.generateFilename();
-            final filePath = await ImageUtils.saveBase64Image(imageData['b64_json'] as String, filename);
+            final filePath = await ImageUtils.saveBase64Image(
+                imageData['b64_json'] as String, filename);
             return originalTask.copyWith(
               status: 'success',
               imagePath: filePath,
@@ -346,7 +501,8 @@ class NovelAiApiService {
                   imageUrl = part['image_url']?['url'];
                   break;
                 } else if (part['type'] == 'text') {
-                  imageUrl = ImageUtils.extractImageUrlFromMarkdown(part['text'] ?? '');
+                  imageUrl = ImageUtils.extractImageUrlFromMarkdown(
+                      part['text'] ?? '');
                   if (imageUrl != null) break;
                 }
               }
@@ -379,7 +535,8 @@ class NovelAiApiService {
     );
   }
 
-  Future<GenerationTask> _downloadIfNeeded(GenerationTask task, String apiKey) async {
+  Future<GenerationTask> _downloadIfNeeded(
+      GenerationTask task, String apiKey) async {
     if (task.imageUrl != null && task.imagePath == null) {
       try {
         final filename = ImageUtils.generateFilename();
@@ -435,22 +592,48 @@ class NovelAiApiService {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
         return '请求超时，请检查网络连接';
+      case DioExceptionType.receiveTimeout:
+        return '响应超时，服务器未在规定时间内返回结果';
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
         final body = e.response?.data;
         if (statusCode == 401) return 'API Key 无效或已过期';
         if (statusCode == 402) return '额度不足';
         if (statusCode == 429) return '请求过于频繁，请稍后再试';
-        if (statusCode == 500) return '服务器内部错误';
-        if (body is Map) return body['error']?['message']?.toString() ?? '请求失败 ($statusCode)';
-        return '请求失败 ($statusCode)';
+        final summary = _extractErrorSummary(body);
+        if (statusCode != null && statusCode >= 500) {
+          return summary == null
+              ? '服务器错误 ($statusCode)'
+              : '服务器错误 ($statusCode)：$summary';
+        }
+        return summary ?? '请求失败 ($statusCode)';
       case DioExceptionType.connectionError:
         return '无法连接到服务器，请检查 Base URL';
       default:
         return '网络错误: ${e.message}';
     }
+  }
+
+  String? _extractErrorSummary(dynamic body) {
+    if (body is String) {
+      final trimmed = body.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (body is Map) {
+      final error = body['error'];
+      if (error is Map && error['message'] != null) {
+        return error['message'].toString();
+      }
+      if (error is String && error.trim().isNotEmpty) return error.trim();
+      for (final key in const ['message', 'detail']) {
+        final value = body[key];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString().trim();
+        }
+      }
+    }
+    return null;
   }
 
   /// 判断是否为端点不可用错误（404 或 Invalid URL）
@@ -465,7 +648,8 @@ class NovelAiApiService {
       return true;
     }
     if (body is Map) {
-      final errorStr = body['error']?.toString() ?? body['message']?.toString() ?? '';
+      final errorStr =
+          body['error']?.toString() ?? body['message']?.toString() ?? '';
       if (errorStr.contains('Invalid URL')) {
         return true;
       }

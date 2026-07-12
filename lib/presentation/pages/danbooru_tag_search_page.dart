@@ -147,7 +147,8 @@ class _DanbooruTagSearchPageState extends State<DanbooruTagSearchPage> {
       return Center(
         child: Text(
           '输入关键词后搜索 Danbooru 标签',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -155,7 +156,8 @@ class _DanbooruTagSearchPageState extends State<DanbooruTagSearchPage> {
       return Center(
         child: Text(
           '没有找到相关 tag',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -213,14 +215,16 @@ class _TagCard extends StatelessWidget {
                       children: [
                         SelectableText(
                           novelAiTag,
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700),
                         ),
                         SizedBox(height: 4),
                         SelectableText(
                           tag.tag,
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             fontFamily: 'monospace',
                           ),
                         ),
@@ -236,7 +240,10 @@ class _TagCard extends StatelessWidget {
               ),
               if (subtitle.isNotEmpty) ...[
                 SizedBox(height: 8),
-                Text(subtitle, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                Text(subtitle,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
               ],
               if (tag.wiki.trim().isNotEmpty) ...[
                 SizedBox(height: 8),
@@ -284,12 +291,17 @@ class _TagDetailSheet extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Container(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.82),
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.82),
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.16)),
+            border: Border.all(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.16)),
           ),
           child: SingleChildScrollView(
             child: Column(
@@ -329,9 +341,13 @@ class _TagDetailSheet extends StatelessWidget {
                     runSpacing: 8,
                     children: meta
                         .map((e) => Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(e, style: TextStyle(fontSize: 12)),
@@ -341,7 +357,9 @@ class _TagDetailSheet extends StatelessWidget {
                 ],
                 if (tag.wiki.trim().isNotEmpty) ...[
                   SizedBox(height: 18),
-                  Text('Wiki', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  Text('Wiki',
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   SizedBox(height: 8),
                   SelectableText(
                     tag.wiki.trim(),

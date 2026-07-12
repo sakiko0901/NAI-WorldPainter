@@ -44,5 +44,14 @@ class ArtistPrompt extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, name, tag, imagePath, categories, danbooruCount, createdAt, updatedAt];
+  List<Object?> get props => [
+        id,
+        name,
+        tag,
+        imagePath,
+        categories,
+        danbooruCount,
+        createdAt,
+        updatedAt
+      ];
 }

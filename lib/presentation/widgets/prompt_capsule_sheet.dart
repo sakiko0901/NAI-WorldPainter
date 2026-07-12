@@ -28,7 +28,8 @@ class _PromptCapsuleSheetState extends State<PromptCapsuleSheet> {
   }
 
   List<PromptCapsuleCategory> get _categories =>
-      filterPromptCapsuleCategories(_searchController.text, source: mergedPromptCapsules);
+      filterPromptCapsuleCategories(_searchController.text,
+          source: mergedPromptCapsules);
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +65,8 @@ class _PromptCapsuleSheetState extends State<PromptCapsuleSheet> {
                 width: 42,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                  color: theme.colorScheme.onSurfaceVariant
+                      .withValues(alpha: 0.35),
                   borderRadius: BorderRadius.circular(99),
                 ),
               ),
@@ -137,7 +139,8 @@ class _PromptCapsuleSheetState extends State<PromptCapsuleSheet> {
                       return ChoiceChip(
                         label: Text(categories[index].name),
                         selected: selected,
-                        onSelected: (_) => setState(() => _categoryIndex = index),
+                        onSelected: (_) =>
+                            setState(() => _categoryIndex = index),
                       );
                     },
                   ),
@@ -175,12 +178,14 @@ class _PromptCapsuleSheetState extends State<PromptCapsuleSheet> {
                                       tag.promptText,
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: theme.colorScheme.onSurfaceVariant,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
                                       ),
                                     ),
                                   ],
                                 ),
-                                avatar: const Icon(CupertinoIcons.add, size: 14),
+                                avatar:
+                                    const Icon(CupertinoIcons.add, size: 14),
                                 onPressed: () => widget.onSelect(tag),
                               ),
                           ],

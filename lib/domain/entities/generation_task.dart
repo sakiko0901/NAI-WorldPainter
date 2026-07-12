@@ -15,6 +15,8 @@ class GenerationTask extends Equatable {
   final int? id;
   final String taskId;
   final String model;
+  final String? endpointId;
+  final String? protocol;
   final String prompt;
   final String? negativePrompt;
   final int width;
@@ -24,8 +26,11 @@ class GenerationTask extends Equatable {
   final double cfgRescale;
   final String sampler;
   final String noiseSchedule;
+  final int steps;
+  final bool useCoords;
   final int? seed;
   final List<CharacterSpec>? characters;
+  final List<CharacterReferenceImage> vibeReferences;
   final String status;
   final String? imagePath;
   final String? imageUrl;
@@ -45,6 +50,8 @@ class GenerationTask extends Equatable {
     this.id,
     required this.taskId,
     required this.model,
+    this.endpointId,
+    this.protocol,
     required this.prompt,
     this.negativePrompt,
     required this.width,
@@ -54,8 +61,11 @@ class GenerationTask extends Equatable {
     required this.cfgRescale,
     required this.sampler,
     required this.noiseSchedule,
+    this.steps = 28,
+    this.useCoords = true,
     this.seed,
     this.characters,
+    this.vibeReferences = const [],
     required this.status,
     this.imagePath,
     this.imageUrl,
@@ -76,6 +86,8 @@ class GenerationTask extends Equatable {
     int? id,
     String? taskId,
     String? model,
+    String? endpointId,
+    String? protocol,
     String? prompt,
     String? negativePrompt,
     int? width,
@@ -85,8 +97,11 @@ class GenerationTask extends Equatable {
     double? cfgRescale,
     String? sampler,
     String? noiseSchedule,
+    int? steps,
+    bool? useCoords,
     int? seed,
     List<CharacterSpec>? characters,
+    List<CharacterReferenceImage>? vibeReferences,
     String? status,
     String? imagePath,
     String? imageUrl,
@@ -106,6 +121,8 @@ class GenerationTask extends Equatable {
       id: id ?? this.id,
       taskId: taskId ?? this.taskId,
       model: model ?? this.model,
+      endpointId: endpointId ?? this.endpointId,
+      protocol: protocol ?? this.protocol,
       prompt: prompt ?? this.prompt,
       negativePrompt: negativePrompt ?? this.negativePrompt,
       width: width ?? this.width,
@@ -115,8 +132,11 @@ class GenerationTask extends Equatable {
       cfgRescale: cfgRescale ?? this.cfgRescale,
       sampler: sampler ?? this.sampler,
       noiseSchedule: noiseSchedule ?? this.noiseSchedule,
+      steps: steps ?? this.steps,
+      useCoords: useCoords ?? this.useCoords,
       seed: seed ?? this.seed,
       characters: characters ?? this.characters,
+      vibeReferences: vibeReferences ?? this.vibeReferences,
       status: status ?? this.status,
       imagePath: imagePath ?? this.imagePath,
       imageUrl: imageUrl ?? this.imageUrl,
@@ -138,6 +158,46 @@ class GenerationTask extends Equatable {
   List<Object?> get props => [taskId];
 }
 
+class CharacterReferenceImage extends Equatable {
+  final String path;
+  final double strength;
+  final double informationExtracted;
+
+  const CharacterReferenceImage({
+    required this.path,
+    this.strength = 0.6,
+    this.informationExtracted = 1.0,
+  });
+
+  CharacterReferenceImage copyWith({
+    String? path,
+    double? strength,
+    double? informationExtracted,
+  }) =>
+      CharacterReferenceImage(
+        path: path ?? this.path,
+        strength: strength ?? this.strength,
+        informationExtracted: informationExtracted ?? this.informationExtracted,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'path': path,
+        'strength': strength,
+        'information_extracted': informationExtracted,
+      };
+
+  factory CharacterReferenceImage.fromJson(Map<String, dynamic> json) =>
+      CharacterReferenceImage(
+        path: json['path'] as String? ?? '',
+        strength: (json['strength'] as num?)?.toDouble() ?? 0.6,
+        informationExtracted:
+            (json['information_extracted'] as num?)?.toDouble() ?? 1.0,
+      );
+
+  @override
+  List<Object?> get props => [path, strength, informationExtracted];
+}
+
 /// 多人物坐标规格
 class CharacterSpec extends Equatable {
   final String prompt;
@@ -145,6 +205,7 @@ class CharacterSpec extends Equatable {
   final double? centerX;
   final double? centerY;
   final bool enabled;
+  final List<CharacterReferenceImage> referenceImages;
 
   const CharacterSpec({
     required this.prompt,
@@ -152,6 +213,7 @@ class CharacterSpec extends Equatable {
     this.centerX,
     this.centerY,
     this.enabled = true,
+    this.referenceImages = const [],
   });
 
   CharacterSpec copyWith({
@@ -162,6 +224,7 @@ class CharacterSpec extends Equatable {
     bool clearUc = false,
     bool clearCenter = false,
     bool? enabled,
+    List<CharacterReferenceImage>? referenceImages,
   }) {
     return CharacterSpec(
       prompt: prompt ?? this.prompt,
@@ -169,25 +232,40 @@ class CharacterSpec extends Equatable {
       centerX: clearCenter ? null : (centerX ?? this.centerX),
       centerY: clearCenter ? null : (centerY ?? this.centerY),
       enabled: enabled ?? this.enabled,
+      referenceImages: referenceImages ?? this.referenceImages,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'prompt': prompt,
-    if (uc != null) 'uc': uc,
-    if (centerX != null) 'center_x': centerX,
-    if (centerY != null) 'center_y': centerY,
-    'enabled': enabled,
-  };
+        'prompt': prompt,
+        if (uc != null) 'uc': uc,
+        if (centerX != null) 'center_x': centerX,
+        if (centerY != null) 'center_y': centerY,
+        'enabled': enabled,
+        if (referenceImages.isNotEmpty)
+          'reference_images':
+              referenceImages.map((image) => image.toJson()).toList(),
+      };
 
   factory CharacterSpec.fromJson(Map<String, dynamic> json) => CharacterSpec(
-    prompt: json['prompt'] as String,
-    uc: json['uc'] as String?,
-    centerX: json['center_x'] != null ? (json['center_x'] as num).toDouble() : null,
-    centerY: json['center_y'] != null ? (json['center_y'] as num).toDouble() : null,
-    enabled: json['enabled'] as bool? ?? true,
-  );
+        prompt: json['prompt'] as String,
+        uc: json['uc'] as String?,
+        centerX: json['center_x'] != null
+            ? (json['center_x'] as num).toDouble()
+            : null,
+        centerY: json['center_y'] != null
+            ? (json['center_y'] as num).toDouble()
+            : null,
+        enabled: json['enabled'] as bool? ?? true,
+        referenceImages: (json['reference_images'] as List?)
+                ?.whereType<Map>()
+                .map((image) => CharacterReferenceImage.fromJson(
+                    Map<String, dynamic>.from(image)))
+                .toList() ??
+            const [],
+      );
 
   @override
-  List<Object?> get props => [prompt, uc, centerX, centerY, enabled];
+  List<Object?> get props =>
+      [prompt, uc, centerX, centerY, enabled, referenceImages];
 }

@@ -9,5 +9,6 @@ abstract class PromptMemoryRepository {
   Future<void> incrementHit(int id);
   Future<List<PromptMemory>> findConflicts(String trigger);
   Future<List<PromptMemory>> listPending();
-  Future<List<PromptMemory>> listStale({Duration olderThan = const Duration(days: 90)});
+  Future<List<PromptMemory>> listStale(
+      {Duration olderThan = const Duration(days: 90)});
 }

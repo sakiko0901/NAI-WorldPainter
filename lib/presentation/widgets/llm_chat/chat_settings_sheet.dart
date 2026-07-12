@@ -8,7 +8,8 @@ import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/presentation/pages/llm_provider_manage_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
-import 'package:nai_huishi/presentation/widgets/floating_toast.dart' show showFloatingToast;
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
+    show showFloatingToast;
 
 Future<void> showChatSettingsSheet(
   BuildContext context,
@@ -51,7 +52,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
     _contextLimitController =
         TextEditingController(text: vm.contextLimit.toString());
     _nsfwBookPathController = TextEditingController(text: '');
-    _defaultStyleWordsController = TextEditingController(text: vm.defaultStyleWords);
+    _defaultStyleWordsController =
+        TextEditingController(text: vm.defaultStyleWords);
     _webSearchEnabled = vm.webSearchEnabled;
 
     _loadNsfwBookStatus();
@@ -60,7 +62,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
   Future<void> _loadNsfwBookStatus() async {
     final vm = widget.vm;
     _nsfwBookLoaded = vm.nsfwBook.isLoaded;
-    _nsfwBookStatus = _nsfwBookLoaded ? '已加载（${vm.nsfwBook.entryCount} 条）' : '未加载';
+    _nsfwBookStatus =
+        _nsfwBookLoaded ? '已加载（${vm.nsfwBook.entryCount} 条）' : '未加载';
     if (mounted) setState(() {});
   }
 
@@ -115,7 +118,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: Icon(CupertinoIcons.xmark_circle_fill,
-                        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
+                        color: theme.colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.6)),
                   ),
                 ],
               ),
@@ -266,7 +270,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
               const SizedBox(width: 8),
               if (binding.isConfigured)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.greenAccent.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(4),
@@ -279,7 +284,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                 )
               else
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.orange.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(4),
@@ -329,7 +335,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
           const SizedBox(height: 12),
           _Label('模型'),
           DropdownButton<String>(
-            value: (selectedProvider != null && binding.model.isNotEmpty &&
+            value: (selectedProvider != null &&
+                    binding.model.isNotEmpty &&
                     selectedProvider.models.contains(binding.model))
                 ? binding.model
                 : null,
@@ -348,20 +355,20 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                       child: Text(m, style: const TextStyle(fontSize: 13)),
                     ))
                 .toList(),
-            onChanged: (selectedProvider == null ||
-                    selectedProvider.models.isEmpty)
-                ? null
-                : (newModel) async {
-                    if (newModel == null) return;
-                    final provider = selectedProvider;
-                    if (provider == null) return;
-                    final newBinding = LlmRoleBinding(
-                      providerId: provider.id,
-                      model: newModel,
-                    );
-                    await vm.setRoleBinding(role, newBinding);
-                    if (mounted) setState(() {});
-                  },
+            onChanged:
+                (selectedProvider == null || selectedProvider.models.isEmpty)
+                    ? null
+                    : (newModel) async {
+                        if (newModel == null) return;
+                        final provider = selectedProvider;
+                        if (provider == null) return;
+                        final newBinding = LlmRoleBinding(
+                          providerId: provider.id,
+                          model: newModel,
+                        );
+                        await vm.setRoleBinding(role, newBinding);
+                        if (mounted) setState(() {});
+                      },
           ),
         ],
       ),
@@ -391,7 +398,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
             children: [
               TextButton(
                 onPressed: () {
-                  _systemPromptController.text = AppConstants.defaultLlmSystemPrompt;
+                  _systemPromptController.text =
+                      AppConstants.defaultLlmSystemPrompt;
                 },
                 child: const Text('恢复默认'),
               ),
@@ -479,8 +487,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
               const Spacer(),
               FilledButton(
                 onPressed: () async {
-                  await widget.vm
-                      .setDefaultStyleWords(_defaultStyleWordsController.text.trim());
+                  await widget.vm.setDefaultStyleWords(
+                      _defaultStyleWordsController.text.trim());
                   if (mounted) showFloatingToast(context, '已保存');
                 },
                 child: const Text('保存'),

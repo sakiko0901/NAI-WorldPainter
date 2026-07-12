@@ -15,7 +15,9 @@ class StylePresetModel {
         title: row['title'] as String,
         prompt: row['prompt'] as String,
         imagePath: row['image_path'] as String,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
       );
 }

@@ -22,7 +22,8 @@ class ToolResult {
     this.followUpHint,
   });
 
-  factory ToolResult.success(String text, {String? displayText, String? followUpHint}) {
+  factory ToolResult.success(String text,
+      {String? displayText, String? followUpHint}) {
     return ToolResult(
       success: true,
       text: text,

@@ -32,7 +32,8 @@ class GptApiService {
     return trimmed;
   }
 
-  Future<GenerationTask> generateImage(GenerationTask task, String apiKey, String baseUrl) async {
+  Future<GenerationTask> generateImage(
+      GenerationTask task, String apiKey, String baseUrl) async {
     _configureAuth(apiKey, baseUrl);
 
     try {
@@ -57,7 +58,8 @@ class GptApiService {
     }
   }
 
-  Future<GenerationTask> editImage(GenerationTask task, String apiKey, String baseUrl) async {
+  Future<GenerationTask> editImage(
+      GenerationTask task, String apiKey, String baseUrl) async {
     // 局部重绘用 sourceImagePath，图生图用 gptImagePaths
     final imagePaths = task.mode == GenerationMode.inpainting
         ? (task.sourceImagePath != null ? [task.sourceImagePath!] : <String>[])
@@ -73,14 +75,17 @@ class GptApiService {
       // 用 files + fields 分开追加，支持同名多个 image 字段
       final multiImageFormData = FormData();
       for (final path in imagePaths) {
-        multiImageFormData.files.add(MapEntry('image', await MultipartFile.fromFile(path)));
+        multiImageFormData.files
+            .add(MapEntry('image', await MultipartFile.fromFile(path)));
       }
       multiImageFormData.fields.add(MapEntry('prompt', task.prompt));
       multiImageFormData.fields.add(MapEntry('model', task.model));
-      multiImageFormData.fields.add(MapEntry('size', task.size ?? '${task.width}x${task.height}'));
+      multiImageFormData.fields
+          .add(MapEntry('size', task.size ?? '${task.width}x${task.height}'));
       multiImageFormData.fields.add(const MapEntry('n', '1'));
       if (task.maskImagePath != null) {
-        multiImageFormData.files.add(MapEntry('mask', await MultipartFile.fromFile(task.maskImagePath!)));
+        multiImageFormData.files.add(MapEntry(
+            'mask', await MultipartFile.fromFile(task.maskImagePath!)));
       }
 
       final response = await _dio.post(
@@ -113,7 +118,8 @@ class GptApiService {
     };
   }
 
-  Future<GenerationTask> _parseResponse(dynamic data, GenerationTask originalTask) async {
+  Future<GenerationTask> _parseResponse(
+      dynamic data, GenerationTask originalTask) async {
     String? imageUrl;
     String? imagePath;
 
@@ -173,12 +179,15 @@ class GptApiService {
       status: success ? 'success' : 'failed',
       imageUrl: imageUrl,
       imagePath: imagePath,
-      errorMessage: success ? null : '未能从 GPT 响应中提取图片 (响应键: ${data is Map ? data.keys.toList() : data.runtimeType})',
+      errorMessage: success
+          ? null
+          : '未能从 GPT 响应中提取图片 (响应键: ${data is Map ? data.keys.toList() : data.runtimeType})',
       completedAt: DateTime.now(),
     );
   }
 
-  Future<GenerationTask> _downloadIfNeeded(GenerationTask task, String apiKey) async {
+  Future<GenerationTask> _downloadIfNeeded(
+      GenerationTask task, String apiKey) async {
     if (task.imageUrl != null && task.imagePath == null) {
       try {
         final filename = ImageUtils.generateFilename();
@@ -217,8 +226,10 @@ class GptApiService {
         if (statusCode == 402) return '额度不足';
         if (statusCode == 429) return '请求过于频繁，请稍后再试';
         if (statusCode == 500) return '服务器内部错误 (500)';
-        if (statusCode == 502 || statusCode == 504) return '网关错误 ($statusCode)，中转站或上游服务暂时不可用';
-        if (body is Map) return body['error']?['message']?.toString() ?? '请求失败 ($statusCode)';
+        if (statusCode == 502 || statusCode == 504)
+          return '网关错误 ($statusCode)，中转站或上游服务暂时不可用';
+        if (body is Map)
+          return body['error']?['message']?.toString() ?? '请求失败 ($statusCode)';
         return '请求失败 ($statusCode)';
       case DioExceptionType.connectionError:
         return '无法连接到服务器，请检查 Base URL 和网络';
@@ -237,7 +248,9 @@ class GptApiService {
         return '网络异常 (unknown): ${msg ?? inner?.toString() ?? '无详细信息'}';
       default:
         final msg = e.message;
-        return msg != null && msg.isNotEmpty ? '网络错误: $msg' : '网络错误 (${e.type.name})';
+        return msg != null && msg.isNotEmpty
+            ? '网络错误: $msg'
+            : '网络错误 (${e.type.name})';
     }
   }
 }

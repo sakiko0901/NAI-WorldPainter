@@ -79,7 +79,8 @@ List<PromptSegment> splitPromptContent(String content) {
         segments.add(PromptSegment.text(text));
       }
     }
-    segments.add(PromptSegment.code((m.group(2) ?? '').trim(), m.group(1) ?? '', pendingLabel));
+    segments.add(PromptSegment.code(
+        (m.group(2) ?? '').trim(), m.group(1) ?? '', pendingLabel));
     pendingLabel = '';
     cursor = m.end;
   }
@@ -105,7 +106,8 @@ String extractPromptLabel(String textBefore) {
         .replaceAll(RegExp(r'^[#\-\>\s]+'), '')
         .trim();
     if (line.isEmpty) continue;
-    final match = RegExp(r'^[\s]*([\u4e00-\u9fff\d\s]+?)[\s]*[：:]').firstMatch(line);
+    final match =
+        RegExp(r'^[\s]*([\u4e00-\u9fff\d\s]+?)[\s]*[：:]').firstMatch(line);
     if (match != null) return match.group(1)!.trim();
     if (RegExp(r'^[\s]*[\u4e00-\u9fff\d\s]+[\s]*$').hasMatch(line)) {
       return line.trim();
@@ -229,20 +231,6 @@ AppliedSegments _aggregateSegments(List<PromptSegment> segments) {
   final charPrompts = <int, String>{};
   final charNegatives = <int, String>{};
   int nextUnindexedChar = 0;
-  // 用于追踪无标签代码块的分配位置
-  // 单角色场景：第1个无标签→正向，第2个无标签→负向
-  // 多角色场景：按顺序分配给角色或通用/负向
-  int unlabeledCodeIndex = 0;
-  bool hasCharacterBlock = false;
-
-  // 先扫描一遍，判断是否存在角色块
-  for (final seg in segments) {
-    if (!seg.isCode || seg.text.trim().isEmpty) continue;
-    if (isCharacterLabel(seg.label)) {
-      hasCharacterBlock = true;
-      break;
-    }
-  }
 
   for (final seg in segments) {
     if (!seg.isCode || seg.text.trim().isEmpty) continue;
@@ -274,26 +262,7 @@ AppliedSegments _aggregateSegments(List<PromptSegment> segments) {
       positive = positive == null ? text : '$positive, $text';
       continue;
     }
-    // ===== 无标签代码块：根据上下文智能分配 =====
-    if (hasCharacterBlock) {
-      // 多角色场景下，无标签代码块按顺序：
-      // 第1个 → 通用底模词(positive)，中间的 → 角色，最后1个 → 负向
-      // 但实际上如果有角色块，无标签块不应该出现。
-      // 安全策略：归为正向
-      positive = positive == null ? text : '$positive, $text';
-    } else {
-      // 单角色场景：无标签代码块按顺序分配
-      // 第1个 → 正向，第2个 → 负向
-      if (unlabeledCodeIndex == 0) {
-        positive = positive == null ? text : '$positive, $text';
-      } else if (unlabeledCodeIndex == 1) {
-        negative = negative == null ? text : '$negative, $text';
-      } else {
-        // 超过2个无标签代码块，后续都追加到正向
-        positive = positive == null ? text : '$positive, $text';
-      }
-    }
-    unlabeledCodeIndex++;
+    // 无标签代码块缺少明确应用目标，保持忽略，避免把普通示例代码误写入提示词。
   }
 
   final maxIdx = [...charPrompts.keys, ...charNegatives.keys]

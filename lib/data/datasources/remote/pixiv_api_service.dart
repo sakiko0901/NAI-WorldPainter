@@ -237,7 +237,8 @@ class PixivApiService {
 
     final data = resp.data;
     if (data is! Map) {
-      throw PixivUploadException('上传响应格式异常: HTTP ${resp.statusCode}', raw: data);
+      throw PixivUploadException('上传响应格式异常: HTTP ${resp.statusCode}',
+          raw: data);
     }
 
     if (data['error'] == true) {
@@ -245,11 +246,12 @@ class PixivApiService {
       if (errors is Map && errors['gRecaptchaResponse'] != null) {
         throw PixivCooldownException('投稿冷却（gRecaptcha），请稍后再试');
       }
-      final msg = data['message']?.toString() ??
-          errors?.toString() ??
-          'unknown error';
+      final msg =
+          data['message']?.toString() ?? errors?.toString() ?? 'unknown error';
       // 常见认证失效
-      if (msg.contains('csrf') || msg.contains('CSRF') || msg.contains('未登录') ||
+      if (msg.contains('csrf') ||
+          msg.contains('CSRF') ||
+          msg.contains('未登录') ||
           msg.contains('login')) {
         throw PixivAuthException(msg);
       }

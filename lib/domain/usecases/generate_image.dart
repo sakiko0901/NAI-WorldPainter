@@ -9,10 +9,10 @@ class GenerateImageUseCase {
   GenerateImageUseCase(this._historyRepo);
 
   /// 提交生成任务（通过队列）
-  Future<GenerationTask> execute(GenerationQueue queue, GenerationTask task) async {
-    final taskWithId = task.taskId.isEmpty
-        ? task.copyWith(taskId: const Uuid().v4())
-        : task;
+  Future<GenerationTask> execute(
+      GenerationQueue queue, GenerationTask task) async {
+    final taskWithId =
+        task.taskId.isEmpty ? task.copyWith(taskId: const Uuid().v4()) : task;
 
     final savedTask = await _historyRepo.saveTask(taskWithId);
     await queue.enqueue(savedTask);

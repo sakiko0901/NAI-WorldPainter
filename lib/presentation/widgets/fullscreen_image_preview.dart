@@ -12,7 +12,8 @@ Future<void> showFullscreenImagePreview(
       opaque: true,
       barrierColor: Colors.black,
       pageBuilder: (context, animation, secondaryAnimation) {
-        return _FullscreenImagePreview(imagePath: imagePath, imageUrl: imageUrl);
+        return _FullscreenImagePreview(
+            imagePath: imagePath, imageUrl: imageUrl);
       },
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(opacity: animation, child: child);
@@ -28,10 +29,12 @@ class _FullscreenImagePreview extends StatefulWidget {
   const _FullscreenImagePreview({this.imagePath, this.imageUrl});
 
   @override
-  State<_FullscreenImagePreview> createState() => _FullscreenImagePreviewState();
+  State<_FullscreenImagePreview> createState() =>
+      _FullscreenImagePreviewState();
 }
 
-class _FullscreenImagePreviewState extends State<_FullscreenImagePreview> with SingleTickerProviderStateMixin {
+class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
+    with SingleTickerProviderStateMixin {
   late final TransformationController _controller;
   late final AnimationController _zoomAnimationController;
   Animation<Matrix4>? _zoomAnimation;
@@ -91,7 +94,8 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview> with S
     } else if (widget.imageUrl != null) {
       child = Image.network(widget.imageUrl!, fit: BoxFit.contain);
     } else {
-      child = Icon(Icons.broken_image, size: 72, color: Theme.of(context).colorScheme.onSurfaceVariant);
+      child = Icon(Icons.broken_image,
+          size: 72, color: Theme.of(context).colorScheme.onSurfaceVariant);
     }
 
     return Material(

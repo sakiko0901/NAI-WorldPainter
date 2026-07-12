@@ -378,88 +378,92 @@ class _BeforeAfterCompareState extends State<_BeforeAfterCompare> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final dividerX = (w * _split).clamp(0.0, w);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final dividerX = (w * _split).clamp(0.0, w);
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onHorizontalDragStart: (d) => _updateSplit(d.localPosition.dx, w),
-          onHorizontalDragUpdate: (d) => _updateSplit(d.localPosition.dx, w),
-          onTapDown: (d) => _updateSplit(d.localPosition.dx, w),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 底层：增强后（after）
-              Image.file(File(widget.afterPath), fit: BoxFit.contain),
-              // 上层：增强前（before），用 ClipRect 限制只显示左半
-              ClipRect(
-                clipper: _LeftClipper(_split),
-                child: Image.file(File(widget.beforePath), fit: BoxFit.contain),
-              ),
-              // 顶部左右标签
-              Positioned(
-                left: 10,
-                top: 10,
-                child: _badge('原图', Colors.black.withValues(alpha: 0.6)),
-              ),
-              Positioned(
-                right: 10,
-                top: 10,
-                child: _badge('增强后 ${widget.scaleLabel}', widget.primary),
-              ),
-              // 分割线 + 拖动手柄
-              Positioned(
-                left: dividerX - 1,
-                top: 0,
-                bottom: 0,
-                width: 2,
-                child: IgnorePointer(
-                  child: Container(color: Colors.white),
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (d) => _updateSplit(d.localPosition.dx, w),
+            onHorizontalDragUpdate: (d) => _updateSplit(d.localPosition.dx, w),
+            onTapDown: (d) => _updateSplit(d.localPosition.dx, w),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 底层：增强后（after）
+                Image.file(File(widget.afterPath), fit: BoxFit.contain),
+                // 上层：增强前（before），用 ClipRect 限制只显示左半
+                ClipRect(
+                  clipper: _LeftClipper(_split),
+                  child:
+                      Image.file(File(widget.beforePath), fit: BoxFit.contain),
                 ),
-              ),
-              Positioned(
-                left: dividerX - 18,
-                top: 0,
-                bottom: 0,
-                width: 36,
-                child: Center(
-                  child: _DragHandle(color: widget.primary),
+                // 顶部左右标签
+                Positioned(
+                  left: 10,
+                  top: 10,
+                  child: _badge('原图', Colors.black.withValues(alpha: 0.6)),
                 ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 8,
-                child: Center(
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(CupertinoIcons.arrow_left_right,
-                            size: 12, color: Colors.white),
-                        SizedBox(width: 6),
-                        Text('左右拖动对比',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
-                      ],
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: _badge('增强后 ${widget.scaleLabel}', widget.primary),
+                ),
+                // 分割线 + 拖动手柄
+                Positioned(
+                  left: dividerX - 1,
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  child: IgnorePointer(
+                    child: Container(color: Colors.white),
+                  ),
+                ),
+                Positioned(
+                  left: dividerX - 18,
+                  top: 0,
+                  bottom: 0,
+                  width: 36,
+                  child: Center(
+                    child: _DragHandle(color: widget.primary),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 8,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(CupertinoIcons.arrow_left_right,
+                              size: 12, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text('左右拖动对比',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 

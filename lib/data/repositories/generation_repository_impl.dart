@@ -36,7 +36,8 @@ class GenerationRepositoryImpl implements GenerationRepository {
   }
 
   /// 取某 provider 的当前有效 (apiKey, baseUrl)：先看 v2 active endpoint，再回退 v1 单值
-  Future<({String apiKey, String baseUrl})> _resolveCreds(ImageProviderType p) async {
+  Future<({String apiKey, String baseUrl})> _resolveCreds(
+      ImageProviderType p) async {
     final ep = await _settingsRepo.getActiveEndpoint(p);
     if (ep != null && ep.baseUrl.isNotEmpty) {
       return (apiKey: ep.apiKey, baseUrl: ep.baseUrl);
@@ -60,13 +61,29 @@ class GenerationRepositoryImpl implements GenerationRepository {
     return (apiKey: legacyKey ?? '', baseUrl: legacyUrl);
   }
 
+  Future<({String apiKey, String baseUrl})> _resolveNovelAiCreds(
+      String? endpointId) async {
+    if (endpointId != null) {
+      final endpoints =
+          await _settingsRepo.getEndpoints(ImageProviderType.novelAi);
+      final endpoint = endpoints.where((ep) => ep.id == endpointId).firstOrNull;
+      if (endpoint != null) {
+        return (apiKey: endpoint.apiKey, baseUrl: endpoint.baseUrl);
+      }
+      return (apiKey: '', baseUrl: '');
+    }
+    return _resolveCreds(ImageProviderType.novelAi);
+  }
+
   Future<GenerationTask> _submitNovelAi(GenerationTask task) async {
-    final creds = await _resolveCreds(ImageProviderType.novelAi);
+    final creds = await _resolveNovelAiCreds(task.endpointId);
     if (creds.apiKey.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 NovelAI API Key', code: 'NO_API_KEY');
+      throw ApiException(
+          message: '请先在设置中配置 NovelAI API Key', code: 'NO_API_KEY');
     }
     if (creds.baseUrl.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 NovelAI Base URL', code: 'NO_BASE_URL');
+      throw ApiException(
+          message: '请先在设置中配置 NovelAI Base URL', code: 'NO_BASE_URL');
     }
 
     if (task.mode == GenerationMode.inpainting) {
@@ -97,10 +114,12 @@ class GenerationRepositoryImpl implements GenerationRepository {
   Future<GenerationTask> _submitNano(GenerationTask task) async {
     final creds = await _resolveCreds(ImageProviderType.nanoBanana);
     if (creds.apiKey.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 Nano Banana API Key', code: 'NO_API_KEY');
+      throw ApiException(
+          message: '请先在设置中配置 Nano Banana API Key', code: 'NO_API_KEY');
     }
     if (creds.baseUrl.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 Nano Banana Base URL', code: 'NO_BASE_URL');
+      throw ApiException(
+          message: '请先在设置中配置 Nano Banana Base URL', code: 'NO_BASE_URL');
     }
 
     if (task.gptImagePaths != null && task.gptImagePaths!.isNotEmpty) {
@@ -116,10 +135,12 @@ class GenerationRepositoryImpl implements GenerationRepository {
   Future<List<NaiModel>> fetchModels() async {
     final creds = await _resolveCreds(ImageProviderType.novelAi);
     if (creds.apiKey.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 NovelAI API Key', code: 'NO_API_KEY');
+      throw ApiException(
+          message: '请先在设置中配置 NovelAI API Key', code: 'NO_API_KEY');
     }
     if (creds.baseUrl.isEmpty) {
-      throw ApiException(message: '请先在设置中配置 NovelAI Base URL', code: 'NO_BASE_URL');
+      throw ApiException(
+          message: '请先在设置中配置 NovelAI Base URL', code: 'NO_BASE_URL');
     }
     return _apiService.fetchModels(creds.apiKey, creds.baseUrl);
   }

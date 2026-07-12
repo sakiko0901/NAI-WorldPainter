@@ -64,13 +64,15 @@ class _ChatDrawerState extends State<ChatDrawer> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('工具：${request.toolName}',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 14)),
               const SizedBox(height: 8),
               Text('说明：${request.description}',
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 12),
               Text('参数：',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
               Container(
                 padding: const EdgeInsets.all(8),
@@ -82,7 +84,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
                 child: SingleChildScrollView(
                   child: Text(
                     const JsonEncoder().convert(request.arguments),
-                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                    style:
+                        const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                   ),
                 ),
               ),
@@ -162,7 +165,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
   void _insertIntoInput(String text) {
     final current = _inputController.text.trim();
     _inputController.text = current.isEmpty ? text : '$current, $text';
-    _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
+    _inputController.selection =
+        TextSelection.collapsed(offset: _inputController.text.length);
   }
 
   Future<void> _openStylePresets() async {
@@ -192,7 +196,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onClose,
-            child: Container(color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.38)),
+            child: Container(
+                color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.38)),
           ),
         ),
         Positioned(
@@ -216,7 +221,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
                     color: isDark
                         ? const Color(0xFF14141A).withValues(alpha: 0.92)
                         : Colors.white.withValues(alpha: 0.94),
-                    border: Border.all(color: theme.colorScheme.onSurface.withValues(alpha: 0.08)),
+                    border: Border.all(
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.08)),
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(28),
                       bottomLeft: Radius.circular(28),
@@ -237,25 +244,36 @@ class _ChatDrawerState extends State<ChatDrawer> {
                             padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
                             child: Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
                               decoration: BoxDecoration(
                                 color: Colors.red.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.red.withValues(alpha: 0.24)),
+                                border: Border.all(
+                                    color: Colors.red.withValues(alpha: 0.24)),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(CupertinoIcons.exclamationmark_triangle, size: 16, color: Colors.redAccent),
+                                  Icon(CupertinoIcons.exclamationmark_triangle,
+                                      size: 16, color: Colors.redAccent),
                                   SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
                                       _vm.errorMessage!,
-                                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface),
                                     ),
                                   ),
                                   GestureDetector(
                                     onTap: _vm.clearError,
-                                    child: Icon(CupertinoIcons.xmark, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                    child: Icon(CupertinoIcons.xmark,
+                                        size: 14,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant),
                                   ),
                                 ],
                               ),
@@ -265,9 +283,10 @@ class _ChatDrawerState extends State<ChatDrawer> {
                           controller: _inputController,
                           isSending: _vm.isSending,
                           webSearchEnabled: _vm.webSearchEnabled,
-                          onToggleWebSearch: () => _vm.setWebSearchEnabled(!_vm.webSearchEnabled),
-                          onSend: (text, {String? imageBase64}) =>
-                              _vm.sendUserMessage(text, imageBase64: imageBase64),
+                          onToggleWebSearch: () =>
+                              _vm.setWebSearchEnabled(!_vm.webSearchEnabled),
+                          onSend: (text, {String? imageBase64}) => _vm
+                              .sendUserMessage(text, imageBase64: imageBase64),
                         ),
                       ],
                     ),
@@ -289,33 +308,39 @@ class _ChatDrawerState extends State<ChatDrawer> {
           IconButton(
             onPressed: _openSessions,
             tooltip: '会话列表',
-            icon: Icon(CupertinoIcons.list_bullet, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.list_bullet,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           IconButton(
             onPressed: _openStylePresets,
             tooltip: '画风收藏',
-            icon: Icon(CupertinoIcons.square_grid_2x2, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.square_grid_2x2,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           IconButton(
             onPressed: _openMemories,
             tooltip: '学习记忆',
-            icon: Icon(CupertinoIcons.book, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.book,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           const Spacer(),
           IconButton(
             onPressed: _vm.createNewSession,
             tooltip: '新建会话',
-            icon: Icon(CupertinoIcons.square_pencil, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.square_pencil,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           IconButton(
             onPressed: () => showChatSettingsSheet(context, _vm),
             tooltip: '配置',
-            icon: Icon(CupertinoIcons.gear_alt, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.gear_alt,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
           IconButton(
             onPressed: widget.onClose,
             tooltip: '关闭',
-            icon: Icon(CupertinoIcons.xmark_circle_fill, color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(CupertinoIcons.xmark_circle_fill,
+                color: Theme.of(context).colorScheme.onSurface),
           ),
         ],
       ),
@@ -330,12 +355,20 @@ class _ChatDrawerState extends State<ChatDrawer> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(CupertinoIcons.wand_stars, size: 34, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+              Icon(CupertinoIcons.wand_stars,
+                  size: 34,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant
+                      .withValues(alpha: 0.5)),
               SizedBox(height: 12),
               Text(
                 '描述你想生成的画面，我来帮你整理成提示词。\n建议让模型按正向/负向两个代码块输出。',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.6, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                    fontSize: 14,
+                    height: 1.6,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -370,14 +403,16 @@ class _ChatDrawerState extends State<ChatDrawer> {
             bottom: 12,
             child: FloatingActionButton(
               mini: true,
-              backgroundColor: theme.colorScheme.surface.withValues(alpha: 0.92),
+              backgroundColor:
+                  theme.colorScheme.surface.withValues(alpha: 0.92),
               elevation: 2,
               onPressed: _scrollToBottomAndClear,
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(CupertinoIcons.arrow_down, size: 18, color: theme.colorScheme.onSurface),
+                  Icon(CupertinoIcons.arrow_down,
+                      size: 18, color: theme.colorScheme.onSurface),
                   if (_unreadCount > 0)
                     Positioned(
                       right: -2,
@@ -388,11 +423,15 @@ class _ChatDrawerState extends State<ChatDrawer> {
                           color: Colors.redAccent,
                           shape: BoxShape.circle,
                         ),
-                        constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                        constraints:
+                            const BoxConstraints(minWidth: 14, minHeight: 14),
                         child: Text(
                           _unreadCount > 9 ? '9+' : '$_unreadCount',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w600),
+                          style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600),
                         ),
                       ),
                     ),

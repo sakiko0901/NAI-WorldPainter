@@ -4,7 +4,8 @@ import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/presentation/pages/llm_provider_edit_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
-import 'package:nai_huishi/presentation/widgets/floating_toast.dart' show showFloatingToast;
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
+    show showFloatingToast;
 
 class LlmProviderManagePage extends StatefulWidget {
   final LlmChatViewModel vm;
@@ -97,7 +98,9 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
                     backgroundColor:
                         theme.colorScheme.primary.withValues(alpha: 0.15),
                     child: Text(
-                      p.name.isNotEmpty ? p.name.substring(0, 1).toUpperCase() : '?',
+                      p.name.isNotEmpty
+                          ? p.name.substring(0, 1).toUpperCase()
+                          : '?',
                       style: TextStyle(color: theme.colorScheme.primary),
                     ),
                   ),

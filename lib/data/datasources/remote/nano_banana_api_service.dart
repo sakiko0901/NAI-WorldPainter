@@ -96,7 +96,8 @@ class NanoBananaApiService {
   }) {
     final aspectRatio = task.size ?? '1:1';
     final imageSize = task.nanoImageSize ?? '1K';
-    final enrichedPrompt = '[aspect_ratio:$aspectRatio,image_size:$imageSize] ${task.prompt}';
+    final enrichedPrompt =
+        '[aspect_ratio:$aspectRatio,image_size:$imageSize] ${task.prompt}';
 
     return {
       'contents': [
@@ -123,7 +124,9 @@ class NanoBananaApiService {
       final candidates = data['candidates'] as List<dynamic>?;
       if (candidates != null && candidates.isNotEmpty) {
         final content = candidates[0]['content'];
-        final parts = content is Map<String, dynamic> ? content['parts'] as List<dynamic>? : null;
+        final parts = content is Map<String, dynamic>
+            ? content['parts'] as List<dynamic>?
+            : null;
         if (parts != null) {
           for (final part in parts) {
             if (part is! Map<String, dynamic>) continue;
@@ -172,7 +175,9 @@ class NanoBananaApiService {
                 final dataUri = dataMatch.group(1)!;
                 final commaIdx = dataUri.indexOf(',');
                 if (commaIdx != -1) {
-                  final b64 = dataUri.substring(commaIdx + 1).replaceAll(RegExp(r'\s'), '');
+                  final b64 = dataUri
+                      .substring(commaIdx + 1)
+                      .replaceAll(RegExp(r'\s'), '');
                   final filename = ImageUtils.generateFilename();
                   imagePath = await ImageUtils.saveBase64Image(b64, filename);
                 }
@@ -191,7 +196,8 @@ class NanoBananaApiService {
                       if (commaIdx != -1) {
                         final b64 = url.substring(commaIdx + 1);
                         final filename = ImageUtils.generateFilename();
-                        imagePath = await ImageUtils.saveBase64Image(b64, filename);
+                        imagePath =
+                            await ImageUtils.saveBase64Image(b64, filename);
                       }
                     } else {
                       imageUrl = url;
@@ -200,7 +206,8 @@ class NanoBananaApiService {
                   }
                 } else if (part['type'] == 'text') {
                   final text = part['text'] as String? ?? '';
-                  final extracted = ImageUtils.extractImageUrlFromMarkdown(text);
+                  final extracted =
+                      ImageUtils.extractImageUrlFromMarkdown(text);
                   if (extracted != null) {
                     imageUrl = extracted;
                     break;
@@ -222,7 +229,9 @@ class NanoBananaApiService {
         final message = choices[0]['message'];
         final content = message?['content'];
         final contentPreview = content?.toString() ?? 'null';
-        final preview = contentPreview.length > 300 ? contentPreview.substring(0, 300) : contentPreview;
+        final preview = contentPreview.length > 300
+            ? contentPreview.substring(0, 300)
+            : contentPreview;
         debugMsg = '未能提取图片。content类型=${content?.runtimeType}, 内容预览=$preview';
       } else {
         debugMsg = '未能提取图片。choices为空或不存在。响应键=${data.keys.toList()}';
@@ -261,7 +270,8 @@ class NanoBananaApiService {
         if (statusCode == 429) return '请求过于频繁，请稍后再试';
         if (statusCode == 500 || statusCode == 502 || statusCode == 504) {
           final detail = body?.toString() ?? '无详细信息';
-          final preview = detail.length > 500 ? detail.substring(0, 500) : detail;
+          final preview =
+              detail.length > 500 ? detail.substring(0, 500) : detail;
           return '服务器错误 ($statusCode): $preview';
         }
         if (body is Map) {
@@ -285,7 +295,9 @@ class NanoBananaApiService {
         return '网络异常: ${msg ?? inner?.toString() ?? '无详细信息'}';
       default:
         final msg = e.message;
-        return msg != null && msg.isNotEmpty ? '网络错误: $msg' : '网络错误 (${e.type.name})';
+        return msg != null && msg.isNotEmpty
+            ? '网络错误: $msg'
+            : '网络错误 (${e.type.name})';
     }
   }
 }

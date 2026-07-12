@@ -186,7 +186,8 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   /// 设置 active 中转站 + 模型
-  Future<void> setActive(ImageProviderType p, String endpointId, String? model) async {
+  Future<void> setActive(
+      ImageProviderType p, String endpointId, String? model) async {
     await _manageSettings.setActiveEndpointId(p, endpointId);
     await _manageSettings.setActiveModel(p, model);
     await _reloadEndpoints();
@@ -271,11 +272,13 @@ class SettingsViewModel extends ChangeNotifier {
     _novelAiBaseUrl = value;
     notifyListeners();
   }
+
   Future<void> setNovelAiApiKey(String value) async {
     await _manageSettings.setImageProviderNovelAiApiKey(value);
     _novelAiApiKey = value;
     notifyListeners();
   }
+
   Future<void> setNovelAiModel(String value) async {
     await _manageSettings.setImageProviderNovelAiModel(value);
     _novelAiModel = value;
@@ -288,11 +291,13 @@ class SettingsViewModel extends ChangeNotifier {
     _gptBaseUrl = value;
     notifyListeners();
   }
+
   Future<void> setGptApiKey(String value) async {
     await _manageSettings.setImageProviderGptApiKey(value);
     _gptApiKey = value;
     notifyListeners();
   }
+
   Future<void> setGptModel(String value) async {
     await _manageSettings.setImageProviderGptModel(value);
     _gptModel = value;
@@ -305,11 +310,13 @@ class SettingsViewModel extends ChangeNotifier {
     _nanoBaseUrl = value;
     notifyListeners();
   }
+
   Future<void> setNanoApiKey(String value) async {
     await _manageSettings.setImageProviderNanoApiKey(value);
     _nanoApiKey = value;
     notifyListeners();
   }
+
   Future<void> setNanoModel(String value) async {
     await _manageSettings.setImageProviderNanoModel(value);
     _nanoModel = value;

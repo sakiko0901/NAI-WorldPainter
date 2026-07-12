@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class NaiHuishiApp extends StatefulWidget {
   const NaiHuishiApp({super.key});
@@ -10,23 +11,38 @@ class NaiHuishiApp extends StatefulWidget {
 }
 
 class _NaiHuishiAppState extends State<NaiHuishiApp> {
-  Brightness _brightness = Brightness.dark;
+  static const _appearanceKey = 'appearance_mode';
+  AppearanceMode _appearanceMode = AppearanceMode.dark;
 
-  void _toggleTheme() {
-    setState(() {
-      _brightness = _brightness == Brightness.dark ? Brightness.light : Brightness.dark;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadAppearance();
+  }
+
+  Future<void> _loadAppearance() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = AppearanceMode.parse(prefs.getString(_appearanceKey));
+    if (mounted) setState(() => _appearanceMode = mode);
+  }
+
+  Future<void> _setAppearance(AppearanceMode mode) async {
+    if (mode == AppearanceMode.coffeePaper) return;
+    setState(() => _appearanceMode = mode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_appearanceKey, mode.name);
   }
 
   @override
   Widget build(BuildContext context) {
+    final brightness = _appearanceMode.brightness;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'nai 绘世',
-      theme: buildNaiHuishiTheme(_brightness),
+      theme: buildNaiHuishiTheme(brightness),
       home: HomePage(
-        brightness: _brightness,
-        onToggleTheme: _toggleTheme,
+        appearanceMode: _appearanceMode,
+        onAppearanceChanged: _setAppearance,
       ),
     );
   }

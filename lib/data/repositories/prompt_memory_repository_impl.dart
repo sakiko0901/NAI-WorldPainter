@@ -133,7 +133,10 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
   Future<void> markSuperseded(int oldId, int newId) async {
     await _db.update(
       _table,
-      {'superseded_by': newId, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+      {
+        'superseded_by': newId,
+        'updated_at': DateTime.now().millisecondsSinceEpoch
+      },
       where: 'id = ?',
       whereArgs: [oldId],
     );
@@ -145,7 +148,8 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
     required PromptMemory newMemory,
   }) async {
     final now = DateTime.now();
-    final mergedContent = '${newMemory.content.trim()}\n---\n${oldMemory.content.trim()}';
+    final mergedContent =
+        '${newMemory.content.trim()}\n---\n${oldMemory.content.trim()}';
     final merged = newMemory.copyWith(content: mergedContent, updatedAt: now);
     final saved = await save(merged);
     if (saved.id != null) {
@@ -200,7 +204,8 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
   }
 
   @override
-  Future<List<PromptMemory>> listStale({Duration olderThan = const Duration(days: 90)}) async {
+  Future<List<PromptMemory>> listStale(
+      {Duration olderThan = const Duration(days: 90)}) async {
     final threshold = DateTime.now().subtract(olderThan).millisecondsSinceEpoch;
     final rows = await _db.rawQuery('''
       SELECT * FROM $_table
@@ -214,7 +219,8 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
   }
 
   /// 把 pending 候选晋升为正式记忆（参与检索）。
-  Future<void> promotePending(int id, {String? newContent, String? newTrigger}) async {
+  Future<void> promotePending(int id,
+      {String? newContent, String? newTrigger}) async {
     final updates = <String, Object?>{
       'source': PromptMemorySource.llmCandidate.name,
       'updated_at': DateTime.now().millisecondsSinceEpoch,

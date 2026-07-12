@@ -35,7 +35,8 @@ class ArtistPromptViewModel extends ChangeNotifier {
   List<ArtistPrompt> get filteredArtists {
     final query = searchQuery.trim().toLowerCase();
     var list = artists.where((artist) {
-      final matchesCategory = currentCategory == '全部' || artist.categories.contains(currentCategory);
+      final matchesCategory = currentCategory == '全部' ||
+          artist.categories.contains(currentCategory);
       final matchesSearch = query.isEmpty ||
           artist.name.toLowerCase().contains(query) ||
           artist.tag.toLowerCase().contains(query);
@@ -44,7 +45,8 @@ class ArtistPromptViewModel extends ChangeNotifier {
 
     switch (sortMode) {
       case ArtistPromptSortMode.name:
-        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        list.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         break;
       case ArtistPromptSortMode.hot:
         list.sort((a, b) => b.danbooruCount.compareTo(a.danbooruCount));
@@ -63,7 +65,9 @@ class ArtistPromptViewModel extends ChangeNotifier {
       if (id == null) continue;
       final weight = selectedWeights[id];
       if (weight == null) continue;
-      parts.add(weight == 1 ? artist.tag : '${weight.toStringAsFixed(1)}::${artist.tag}::');
+      parts.add(weight == 1
+          ? artist.tag
+          : '${weight.toStringAsFixed(1)}::${artist.tag}::');
     }
     return parts.join(', ');
   }

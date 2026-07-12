@@ -11,7 +11,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 /// 内部维护引用计数，多次 acquire 可叠加；只有最后一次 release 才会真正停止。
 class BackgroundKeepAliveService {
   BackgroundKeepAliveService._();
-  static final BackgroundKeepAliveService instance = BackgroundKeepAliveService._();
+  static final BackgroundKeepAliveService instance =
+      BackgroundKeepAliveService._();
 
   int _refCount = 0;
   bool _initialized = false;
@@ -73,14 +74,16 @@ class BackgroundKeepAliveService {
             await Future.delayed(const Duration(milliseconds: 100));
           }
         } else if (notificationText != null) {
-          await FlutterForegroundTask.updateService(notificationText: notificationText);
+          await FlutterForegroundTask.updateService(
+              notificationText: notificationText);
         }
       } catch (_) {
         // 前台服务启动失败不阻塞生成流程。
       }
     } else if (notificationText != null) {
       try {
-        await FlutterForegroundTask.updateService(notificationText: notificationText);
+        await FlutterForegroundTask.updateService(
+            notificationText: notificationText);
       } catch (_) {}
     }
   }

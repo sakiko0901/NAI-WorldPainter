@@ -11,8 +11,7 @@ class UpscaleImageTool extends AgentTool {
   String get name => 'upscale_image';
 
   @override
-  String get description =>
-      '对本地图片做超分放大（Real-ESRGAN / RealCUGAN）。副作用工具，需用户确认。'
+  String get description => '对本地图片做超分放大（Real-ESRGAN / RealCUGAN）。副作用工具，需用户确认。'
       'image_path 是本地文件路径（绝对路径）。'
       'engine 可选 realesrgan_anime（4x，动漫专用）或 realcugan（2x/4x，自然风格）。'
       'scale 可选 2 或 4（realesrgan_anime 仅支持 4）。'
@@ -49,7 +48,8 @@ class UpscaleImageTool extends AgentTool {
     if (inputPath.isEmpty) {
       return ToolResult.failure('image_path 不能为空');
     }
-    final engineStr = (arguments['engine'] as String?)?.trim() ?? 'realesrgan_anime';
+    final engineStr =
+        (arguments['engine'] as String?)?.trim() ?? 'realesrgan_anime';
     final scale = (arguments['scale'] as int?) ?? 4;
 
     SrModel? model;

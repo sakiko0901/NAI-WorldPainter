@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
-import 'package:nai_huishi/presentation/widgets/floating_toast.dart' show showFloatingToast;
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
+    show showFloatingToast;
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 
 class ChatMessageBubble extends StatefulWidget {
@@ -124,8 +125,8 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                     if (hasText)
                       isUser
                           ? _TapDetector(
-                              onTap: () => setState(
-                                  () => _menuVisible = !_menuVisible),
+                              onTap: () =>
+                                  setState(() => _menuVisible = !_menuVisible),
                               child: SelectableText(
                                 message.content.trim(),
                                 style: TextStyle(
@@ -133,8 +134,8 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                                   height: 1.5,
                                   color: theme.colorScheme.onSurface,
                                 ),
-                                contextMenuBuilder: (context,
-                                    editableTextState) {
+                                contextMenuBuilder:
+                                    (context, editableTextState) {
                                   return AdaptiveTextSelectionToolbar
                                       .editableText(
                                     editableTextState: editableTextState,
@@ -318,8 +319,7 @@ class _TapDetectorState extends State<_TapDetector> {
     }
     final distance = (event.position - downPos).distance;
     final elapsed = DateTime.now().difference(downT);
-    if (distance < _maxDragDistance &&
-        elapsed < _longPressThreshold) {
+    if (distance < _maxDragDistance && elapsed < _longPressThreshold) {
       widget.onTap(); // 短按 = 单击 = 弹菜单
     }
   }
@@ -446,10 +446,12 @@ class _RoundBlockState extends State<_RoundBlock> {
     final hasError = widget.events.any((e) => e.status == 'error');
     if (hasError) return '失败';
     final hasRunning = widget.events.any((e) =>
-        e.status == 'running' || e.status == 'pending' || e.status == 'awaiting_confirm');
+        e.status == 'running' ||
+        e.status == 'pending' ||
+        e.status == 'awaiting_confirm');
     if (hasRunning) return '执行中';
-    final allDone = widget.events.every((e) =>
-        e.status == 'done' || e.status == 'cancelled');
+    final allDone = widget.events
+        .every((e) => e.status == 'done' || e.status == 'cancelled');
     if (allDone) return '已完成';
     return '执行中';
   }
@@ -512,7 +514,8 @@ class _RoundBlockState extends State<_RoundBlock> {
                   ),
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                     decoration: BoxDecoration(
                       color: summaryColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),

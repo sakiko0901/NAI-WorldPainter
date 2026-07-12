@@ -6,6 +6,16 @@ import 'package:nai_huishi/presentation/app_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
+  test('appearance mode parses and maps brightness', () {
+    expect(AppearanceMode.parse('light'), AppearanceMode.light);
+    expect(AppearanceMode.parse('dark'), AppearanceMode.dark);
+    expect(AppearanceMode.parse('coffeePaper'), AppearanceMode.coffeePaper);
+    expect(AppearanceMode.parse('unknown'), AppearanceMode.dark);
+    expect(AppearanceMode.light.brightness, Brightness.light);
+    expect(AppearanceMode.dark.brightness, Brightness.dark);
+    expect(AppearanceMode.coffeePaper.brightness, Brightness.dark);
+  });
+
   test('dark theme keeps black and gold palette', () {
     final theme = buildNaiHuishiTheme(Brightness.dark, useGoogleFonts: false);
 

@@ -69,7 +69,8 @@ class GenerationQueue {
       await _historyRepo.updateTask(generatingTask);
       _taskController.add(generatingTask);
 
-      final completedTask = await _generationRepo.submitGeneration(generatingTask);
+      final completedTask =
+          await _generationRepo.submitGeneration(generatingTask);
       await _historyRepo.updateTask(completedTask);
       _taskController.add(completedTask);
     } on ApiException catch (e) {
@@ -78,22 +79,29 @@ class GenerationQueue {
         errorMessage: e.message,
         completedAt: DateTime.now(),
       );
-      await _historyRepo.updateTask(failedTask);
-      _taskController.add(failedTask);
+      await _publishFailedTask(failedTask);
     } catch (e) {
       final failedTask = _currentTask!.copyWith(
         status: 'failed',
         errorMessage: e.toString(),
         completedAt: DateTime.now(),
       );
-      await _historyRepo.updateTask(failedTask);
-      _taskController.add(failedTask);
+      await _publishFailedTask(failedTask);
     } finally {
       _currentTask = null;
       _isProcessing = false;
       _notifyState();
       _processNext();
     }
+  }
+
+  Future<void> _publishFailedTask(GenerationTask failedTask) async {
+    try {
+      await _historyRepo.updateTask(failedTask);
+    } catch (_) {
+      // 持久化失败不能阻止 UI 收到任务终态，否则生成页会一直等待。
+    }
+    _taskController.add(failedTask);
   }
 
   void _notifyState() {

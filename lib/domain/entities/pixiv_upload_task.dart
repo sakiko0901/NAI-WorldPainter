@@ -2,12 +2,12 @@ import 'package:equatable/equatable.dart';
 
 /// Pixiv 单次发布任务的状态
 enum PixivUploadStatus {
-  pending,    // 在队列里等待
-  uploading,  // 正在调用 Pixiv API
-  cooldown,   // 上传成功，等待冷却时间
-  completed,  // 已成功（拿到 illustId）
-  failed,     // 失败终止
-  canceled,   // 用户取消
+  pending, // 在队列里等待
+  uploading, // 正在调用 Pixiv API
+  cooldown, // 上传成功，等待冷却时间
+  completed, // 已成功（拿到 illustId）
+  failed, // 失败终止
+  canceled, // 用户取消
 }
 
 /// 单条 Pixiv 上传任务
@@ -73,7 +73,8 @@ class PixivUploadTask extends Equatable {
       error: clearError ? null : (error ?? this.error),
       createdAt: createdAt,
       completedAt: completedAt ?? this.completedAt,
-      cooldownUntil: clearCooldown ? null : (cooldownUntil ?? this.cooldownUntil),
+      cooldownUntil:
+          clearCooldown ? null : (cooldownUntil ?? this.cooldownUntil),
     );
   }
 

@@ -14,8 +14,7 @@ class SaveImageTool extends AgentTool {
   String get name => 'save_image';
 
   @override
-  String get description =>
-      '把图片保存到系统相册。副作用工具，需用户确认。'
+  String get description => '把图片保存到系统相册。副作用工具，需用户确认。'
       'image_path 是本地图片文件路径（绝对路径）。'
       '保存成功返回保存后的本地路径。';
 
@@ -59,9 +58,7 @@ class SaveImageTool extends AgentTool {
       final savedPath = await _useCase.execute(task);
       final galleryOk = await _useCase.saveToGallery(savedPath);
       return ToolResult.success(
-        galleryOk
-            ? '已保存到本地相册。路径：$savedPath'
-            : '已保存到本地目录：$savedPath（保存到相册失败）',
+        galleryOk ? '已保存到本地相册。路径：$savedPath' : '已保存到本地目录：$savedPath（保存到相册失败）',
         displayText: galleryOk ? '已保存到相册' : '已保存到本地',
         followUpHint: '{"saved_path":"$savedPath","gallery_saved":$galleryOk}',
       );

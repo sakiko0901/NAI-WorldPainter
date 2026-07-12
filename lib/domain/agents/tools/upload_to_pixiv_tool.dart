@@ -12,8 +12,7 @@ class UploadToPixivTool extends AgentTool {
   String get name => 'upload_to_pixiv';
 
   @override
-  String get description =>
-      '把图片上传到 Pixiv。副作用工具，需用户确认。'
+  String get description => '把图片上传到 Pixiv。副作用工具，需用户确认。'
       'image_paths 是本地图片路径列表（最多 30 张）。'
       'title / caption / tags 为必填字段。'
       'is_r18 标记 NSFW 等级。'

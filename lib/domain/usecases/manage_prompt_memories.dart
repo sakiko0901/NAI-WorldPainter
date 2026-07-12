@@ -12,9 +12,11 @@ class ManagePromptMemoriesUseCase {
   Future<PromptMemory> save(PromptMemory memory) => _repo.save(memory);
   Future<void> delete(int id) => _repo.delete(id);
   Future<void> incrementHit(int id) => _repo.incrementHit(id);
-  Future<List<PromptMemory>> findConflicts(String trigger) => _repo.findConflicts(trigger);
+  Future<List<PromptMemory>> findConflicts(String trigger) =>
+      _repo.findConflicts(trigger);
   Future<List<PromptMemory>> listPending() => _repo.listPending();
-  Future<List<PromptMemory>> listStale({Duration olderThan = const Duration(days: 90)}) =>
+  Future<List<PromptMemory>> listStale(
+          {Duration olderThan = const Duration(days: 90)}) =>
       _repo.listStale(olderThan: olderThan);
 }
 

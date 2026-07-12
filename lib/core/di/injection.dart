@@ -105,16 +105,19 @@ Future<void> configureDependencies() async {
 
   sl.registerSingleton<Dio>(createRobustDio());
 
-  sl.registerSingleton<SettingsLocalDatasource>(SettingsLocalDatasource(sl<SharedPreferences>()));
+  sl.registerSingleton<SettingsLocalDatasource>(
+      SettingsLocalDatasource(sl<SharedPreferences>()));
   sl.registerSingleton<NovelAiApiService>(NovelAiApiService(sl<Dio>()));
   sl.registerSingleton<GptApiService>(GptApiService(sl<Dio>()));
   sl.registerSingleton<NanoBananaApiService>(NanoBananaApiService(sl<Dio>()));
   sl.registerSingleton<LlmApiService>(LlmApiService(sl<Dio>()));
   sl.registerSingleton<BingSearchService>(BingSearchService());
   sl.registerSingleton<DanbooruApiService>(DanbooruApiService());
-  sl.registerSingleton<DuckDuckGoSearchService>(DuckDuckGoSearchService(sl<Dio>()));
+  sl.registerSingleton<DuckDuckGoSearchService>(
+      DuckDuckGoSearchService(sl<Dio>()));
   sl.registerSingleton<WdTaggerApiService>(WdTaggerApiService(sl<Dio>()));
-  sl.registerSingleton<LlmChatLocalDatasource>(LlmChatLocalDatasource(sl<Database>()));
+  sl.registerSingleton<LlmChatLocalDatasource>(
+      LlmChatLocalDatasource(sl<Database>()));
 
   // 旧 3 角色 9 key + 旧单配置 → 供应商+绑定 迁移
   sl<SettingsLocalDatasource>().migrateLegacyLlm3RoleToProvider();
@@ -129,12 +132,17 @@ Future<void> configureDependencies() async {
     nanoApiService: sl<NanoBananaApiService>(),
     settingsRepo: sl<SettingsRepository>(),
   ));
-  sl.registerSingleton<HistoryRepository>(HistoryRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<HistoryRepository>(
+      HistoryRepositoryImpl(sl<Database>()));
   sl.registerSingleton<PresetRepository>(PresetRepositoryImpl(sl<Database>()));
-  sl.registerSingleton<PromptMemoryRepository>(PromptMemoryRepositoryImpl(sl<Database>()));
-  sl.registerSingleton<PromptTemplateRepository>(PromptTemplateRepositoryImpl(sl<Database>()));
-  sl.registerSingleton<StylePresetRepository>(StylePresetRepositoryImpl(sl<Database>()));
-  sl.registerSingleton<ArtistPromptRepository>(ArtistPromptRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<PromptMemoryRepository>(
+      PromptMemoryRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<PromptTemplateRepository>(
+      PromptTemplateRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<StylePresetRepository>(
+      StylePresetRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<ArtistPromptRepository>(
+      ArtistPromptRepositoryImpl(sl<Database>()));
   sl.registerSingleton<LlmChatRepository>(LlmChatRepositoryImpl(
     local: sl<LlmChatLocalDatasource>(),
     api: sl<LlmApiService>(),
@@ -148,15 +156,24 @@ Future<void> configureDependencies() async {
   sl.registerSingleton<GenerateImageUseCase>(GenerateImageUseCase(
     sl<HistoryRepository>(),
   ));
-  sl.registerSingleton<GetHistoryUseCase>(GetHistoryUseCase(sl<HistoryRepository>()));
-  sl.registerSingleton<ManagePresetsUseCase>(ManagePresetsUseCase(sl<PresetRepository>()));
-  sl.registerSingleton<ManagePromptMemoriesUseCase>(ManagePromptMemoriesUseCase(sl<PromptMemoryRepository>()));
-  sl.registerSingleton<ManagePromptTemplatesUseCase>(ManagePromptTemplatesUseCase(sl<PromptTemplateRepository>()));
-  sl.registerSingleton<ManageSettingsUseCase>(ManageSettingsUseCase(sl<SettingsRepository>()));
-  sl.registerSingleton<ManageStylePresetsUseCase>(ManageStylePresetsUseCase(sl<StylePresetRepository>()));
-  sl.registerSingleton<ManageArtistPromptsUseCase>(ManageArtistPromptsUseCase(sl<ArtistPromptRepository>()));
-  sl.registerSingleton<ManageLlmChatUseCase>(ManageLlmChatUseCase(sl<LlmChatRepository>()));
-  sl.registerSingleton<SaveImageUseCase>(SaveImageUseCase(sl<HistoryRepository>()));
+  sl.registerSingleton<GetHistoryUseCase>(
+      GetHistoryUseCase(sl<HistoryRepository>()));
+  sl.registerSingleton<ManagePresetsUseCase>(
+      ManagePresetsUseCase(sl<PresetRepository>()));
+  sl.registerSingleton<ManagePromptMemoriesUseCase>(
+      ManagePromptMemoriesUseCase(sl<PromptMemoryRepository>()));
+  sl.registerSingleton<ManagePromptTemplatesUseCase>(
+      ManagePromptTemplatesUseCase(sl<PromptTemplateRepository>()));
+  sl.registerSingleton<ManageSettingsUseCase>(
+      ManageSettingsUseCase(sl<SettingsRepository>()));
+  sl.registerSingleton<ManageStylePresetsUseCase>(
+      ManageStylePresetsUseCase(sl<StylePresetRepository>()));
+  sl.registerSingleton<ManageArtistPromptsUseCase>(
+      ManageArtistPromptsUseCase(sl<ArtistPromptRepository>()));
+  sl.registerSingleton<ManageLlmChatUseCase>(
+      ManageLlmChatUseCase(sl<LlmChatRepository>()));
+  sl.registerSingleton<SaveImageUseCase>(
+      SaveImageUseCase(sl<HistoryRepository>()));
   sl.registerSingleton<CalibrateWithDanbooruUseCase>(
       CalibrateWithDanbooruUseCase(sl<DanbooruApiService>()));
   sl.registerSingleton<ExtractKeywordsUseCase>(
@@ -200,26 +217,33 @@ Future<void> configureDependencies() async {
 
   // ── GenerationViewModel 注册为 lazySingleton，便于 Tool 复用同一实例 ──
   sl.registerLazySingleton<GenerationViewModel>(() => GenerationViewModel(
-    generateImage: sl<GenerateImageUseCase>(),
-    manageSettings: sl<ManageSettingsUseCase>(),
-    saveImage: sl<SaveImageUseCase>(),
-    queue: sl<GenerationQueue>(),
-  ));
+        generateImage: sl<GenerateImageUseCase>(),
+        manageSettings: sl<ManageSettingsUseCase>(),
+        saveImage: sl<SaveImageUseCase>(),
+        queue: sl<GenerationQueue>(),
+      ));
   sl.registerFactory<SuperResolutionViewModel>(() => SuperResolutionViewModel(
-    sl<UpscaleImageUseCase>(),
-    sl<SaveImageUseCase>(),
-  ));
-  sl.registerLazySingleton<HistoryViewModel>(() => HistoryViewModel(sl<GetHistoryUseCase>(), sl<GenerationQueue>()));
-  sl.registerFactory<PresetViewModel>(() => PresetViewModel(sl<ManagePresetsUseCase>()));
-  sl.registerFactory<PromptMemoryViewModel>(() => PromptMemoryViewModel(sl<ManagePromptMemoriesUseCase>()));
-  sl.registerFactory<PromptTemplateViewModel>(() => PromptTemplateViewModel(sl<ManagePromptTemplatesUseCase>()));
-  sl.registerLazySingleton<SettingsViewModel>(() => SettingsViewModel(sl<ManageSettingsUseCase>()));
-  sl.registerFactory<StylePresetViewModel>(() => StylePresetViewModel(sl<ManageStylePresetsUseCase>()));
-  sl.registerFactory<ArtistPromptViewModel>(() => ArtistPromptViewModel(sl<ManageArtistPromptsUseCase>()));
+        sl<UpscaleImageUseCase>(),
+        sl<SaveImageUseCase>(),
+      ));
+  sl.registerLazySingleton<HistoryViewModel>(
+      () => HistoryViewModel(sl<GetHistoryUseCase>(), sl<GenerationQueue>()));
+  sl.registerFactory<PresetViewModel>(
+      () => PresetViewModel(sl<ManagePresetsUseCase>()));
+  sl.registerFactory<PromptMemoryViewModel>(
+      () => PromptMemoryViewModel(sl<ManagePromptMemoriesUseCase>()));
+  sl.registerFactory<PromptTemplateViewModel>(
+      () => PromptTemplateViewModel(sl<ManagePromptTemplatesUseCase>()));
+  sl.registerLazySingleton<SettingsViewModel>(
+      () => SettingsViewModel(sl<ManageSettingsUseCase>()));
+  sl.registerFactory<StylePresetViewModel>(
+      () => StylePresetViewModel(sl<ManageStylePresetsUseCase>()));
+  sl.registerFactory<ArtistPromptViewModel>(
+      () => ArtistPromptViewModel(sl<ManageArtistPromptsUseCase>()));
   // 图片解析
   sl.registerFactory<ImageTagViewModel>(() => ImageTagViewModel(
-    useCase: sl<AnalyzeImageTagsUseCase>(),
-  ));
+        useCase: sl<AnalyzeImageTagsUseCase>(),
+      ));
 
   // ── Agent 工具与循环 ──
   final toolRegistry = ToolRegistry()
@@ -239,9 +263,9 @@ Future<void> configureDependencies() async {
 
   // AgentLoop 注册为 factory：每次 sendUserMessage 时创建新实例并传入本次的 onRequireConfirmation 回调
   sl.registerFactory<AgentLoop>(() => AgentLoop(
-    api: sl<LlmApiService>(),
-    registry: sl<ToolRegistry>(),
-  ));
+        api: sl<LlmApiService>(),
+        registry: sl<ToolRegistry>(),
+      ));
 
   sl.registerLazySingleton<LlmChatViewModel>(() {
     // 设置 ViewModel 静态依赖

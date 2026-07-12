@@ -30,10 +30,12 @@ class StylePresetRepositoryImpl implements StylePresetRepository {
   }
 
   Future<void> _seedBuiltinPresets() async {
-    final jsonStr = await rootBundle.loadString('assets/style_presets/style_presets.json');
+    final jsonStr =
+        await rootBundle.loadString('assets/style_presets/style_presets.json');
     final List list = jsonDecode(jsonStr) as List;
     final dir = await getApplicationDocumentsDirectory();
-    final targetDir = Directory(p.join(dir.path, AppConstants.stylePresetsDirName));
+    final targetDir =
+        Directory(p.join(dir.path, AppConstants.stylePresetsDirName));
     if (!await targetDir.exists()) {
       await targetDir.create(recursive: true);
     }
@@ -97,7 +99,8 @@ class StylePresetRepositoryImpl implements StylePresetRepository {
 
   @override
   Future<void> delete(int id) async {
-    final rows = await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isNotEmpty) {
       final imagePath = rows.first['image_path'] as String;
       final file = File(imagePath);
@@ -113,11 +116,13 @@ class StylePresetRepositoryImpl implements StylePresetRepository {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) throw Exception('图片格式无法读取');
 
-    final resized = decoded.width > 1080 ? img.copyResize(decoded, width: 1080) : decoded;
+    final resized =
+        decoded.width > 1080 ? img.copyResize(decoded, width: 1080) : decoded;
     final jpg = img.encodeJpg(resized, quality: 82);
 
     final dir = await getApplicationDocumentsDirectory();
-    final targetDir = Directory(p.join(dir.path, AppConstants.stylePresetsDirName));
+    final targetDir =
+        Directory(p.join(dir.path, AppConstants.stylePresetsDirName));
     if (!await targetDir.exists()) {
       await targetDir.create(recursive: true);
     }

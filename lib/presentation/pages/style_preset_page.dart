@@ -116,7 +116,10 @@ class _StylePresetPageState extends State<StylePresetPage> {
           ? const Center(child: CupertinoActivityIndicator())
           : _vm.presets.isEmpty
               ? Center(
-                  child: Text('暂无画风收藏', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  child: Text('暂无画风收藏',
+                      style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
                 )
               : GridView.builder(
                   padding: const EdgeInsets.all(16),
@@ -149,7 +152,8 @@ class _StylePresetPageState extends State<StylePresetPage> {
                       },
                       onApply: () {
                         _applyAndClose(preset.prompt);
-                        showFloatingToast(context, '已复制到对话框', icon: CupertinoIcons.checkmark_circle_fill);
+                        showFloatingToast(context, '已复制到对话框',
+                            icon: CupertinoIcons.checkmark_circle_fill);
                       },
                     );
                   },
@@ -206,7 +210,11 @@ class _StylePresetGridCardState extends State<_StylePresetGridCard> {
           decoration: BoxDecoration(
             color: Theme.of(context).cardTheme.color,
             borderRadius: BorderRadius.circular(_pressed ? 20 : 16),
-            border: Border.all(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06)),
+            border: Border.all(
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.06)),
           ),
           clipBehavior: Clip.antiAlias,
           child: Stack(
@@ -218,7 +226,10 @@ class _StylePresetGridCardState extends State<_StylePresetGridCard> {
                 Center(
                   child: Icon(
                     CupertinoIcons.photo,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withValues(alpha: 0.25),
                     size: 32,
                   ),
                 ),
@@ -232,14 +243,18 @@ class _StylePresetGridCardState extends State<_StylePresetGridCard> {
                     gradient: LinearGradient(
                       begin: Alignment.bottomCenter,
                       end: Alignment.topCenter,
-                      colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
+                      colors: [
+                        Colors.black.withValues(alpha: 0.8),
+                        Colors.transparent
+                      ],
                     ),
                   ),
                   child: Text(
                     widget.preset.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600),
                   ),
                 ),
               ),

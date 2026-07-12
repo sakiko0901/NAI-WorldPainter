@@ -11,8 +11,7 @@ class SaveMemoryTool extends AgentTool {
   String get name => 'save_memory';
 
   @override
-  String get description =>
-      '把一条"触发词→正确内容"映射保存到本地学习记忆库。当用户明确纠正人名、角色特征、画风知识时调用。'
+  String get description => '把一条"触发词→正确内容"映射保存到本地学习记忆库。当用户明确纠正人名、角色特征、画风知识时调用。'
       '例如用户说"记住：纳西妲是青绿眼"，trigger="纳西妲"，content="青绿眼"。'
       '记忆默认标记为 pendingLlmCandidate（待确认），不立即参与检索。'
       'trigger 和 content 都不能为空。type 默认为 other，可选 character_name/character_feature/style/other。';

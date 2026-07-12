@@ -20,8 +20,10 @@ class LlmChatLocalDatasource {
   }
 
   /// 查询指定会话内某些消息的 image_path 列表。
-  Future<List<String>> _listImagePaths(String sessionId, {String? whereClause, List<Object?>? whereArgs}) async {
-    final sql = StringBuffer('SELECT image_path FROM llm_messages WHERE session_id = ?');
+  Future<List<String>> _listImagePaths(String sessionId,
+      {String? whereClause, List<Object?>? whereArgs}) async {
+    final sql = StringBuffer(
+        'SELECT image_path FROM llm_messages WHERE session_id = ?');
     final args = <Object?>[sessionId];
     if (whereClause != null && whereClause.isNotEmpty) {
       sql.write(' AND $whereClause');

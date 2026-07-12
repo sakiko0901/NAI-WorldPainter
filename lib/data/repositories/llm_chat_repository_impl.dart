@@ -58,7 +58,8 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   Future<void> deleteAllSessions() => _local.deleteAllSessions();
 
   @override
-  Future<List<LlmMessage>> listMessages(String sessionId) => _local.listMessages(sessionId);
+  Future<List<LlmMessage>> listMessages(String sessionId) =>
+      _local.listMessages(sessionId);
 
   @override
   Future<int> saveUserMessage({
@@ -138,7 +139,8 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   /// 尝试从 assistant 回复中提取并下载图片。
   /// 成功：返回去掉 markdown 图片标记的文本和本地文件路径。
   /// 失败：返回原文本，imagePath 为 null（不中断流程）。
-  Future<_AssistantImageResult> _tryExtractAndDownloadAssistantImage(String text) async {
+  Future<_AssistantImageResult> _tryExtractAndDownloadAssistantImage(
+      String text) async {
     final url = ImageUtils.extractImageUrlFromMarkdown(text);
     if (url == null) return _AssistantImageResult(text, null);
     try {
@@ -150,10 +152,12 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
         await _dio.download(url, filePath);
       }
       // 剥离 markdown 图片标记
-      final cleaned = text.replaceAllMapped(
-        RegExp(r'!\[image\]\([^)]+\)'),
-        (_) => '',
-      ).trim();
+      final cleaned = text
+          .replaceAllMapped(
+            RegExp(r'!\[image\]\([^)]+\)'),
+            (_) => '',
+          )
+          .trim();
       return _AssistantImageResult(cleaned, filePath);
     } catch (_) {
       return _AssistantImageResult(text, null);

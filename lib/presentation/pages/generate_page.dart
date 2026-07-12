@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -312,6 +313,11 @@ class _GeneratePageState extends State<GeneratePage> {
   late final TextEditingController _inpaintNegativeController =
       TextEditingController();
   final GlobalKey _maskPreviewKey = GlobalKey();
+  final GlobalKey _resultSectionKey = GlobalKey();
+  int _knownResultCount = 0;
+  String? _shownGenerationError;
+  bool _wasGenerating = false;
+  bool _userScrolledDuringGeneration = false;
 
   void _syncPromptControllers() {
     _promptController.text = _vm.prompt;
@@ -337,7 +343,42 @@ class _GeneratePageState extends State<GeneratePage> {
         FocusManager.instance.primaryFocus?.context?.widget is! EditableText) {
       _inpaintNegativeController.text = _vm.inpaintNegativePrompt;
     }
+
+    final resultArrived = _vm.sessionResults.length > _knownResultCount;
+    final generationStarted = _vm.isGenerating && !_wasGenerating;
+    if (generationStarted) {
+      _userScrolledDuringGeneration = false;
+    }
+    _knownResultCount = _vm.sessionResults.length;
+    _wasGenerating = _vm.isGenerating;
+
+    final error = _vm.errorMessage;
+    if (error != null && error.isNotEmpty && error != _shownGenerationError) {
+      _shownGenerationError = error;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) showFloatingToast(context, error);
+      });
+    } else if (error == null) {
+      _shownGenerationError = null;
+    }
+
     if (mounted) setState(() {});
+    if (resultArrived && !_userScrolledDuringGeneration) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _revealLatestResult());
+    }
+  }
+
+  Future<void> _revealLatestResult() async {
+    if (!mounted || _userScrolledDuringGeneration) return;
+    final resultContext = _resultSectionKey.currentContext;
+    if (resultContext == null) return;
+    await Scrollable.ensureVisible(
+      resultContext,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
   }
 
   final List<_MaskStroke> _maskStrokes = [];
@@ -705,58 +746,67 @@ class _GeneratePageState extends State<GeneratePage> {
       ),
       body: Stack(
         children: [
-          ListView(
-            controller: _scrollController,
-            physics:
-                _isDrawingMask ? const NeverScrollableScrollPhysics() : null,
-            padding: EdgeInsets.only(
-              top: MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
-              bottom: 120 + MediaQuery.paddingOf(context).bottom, // 给底部悬浮栏留出空间
-              left: 16,
-              right: 16,
+          NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (_vm.isGenerating &&
+                  notification is UserScrollNotification &&
+                  notification.direction != ScrollDirection.idle) {
+                _userScrolledDuringGeneration = true;
+              }
+              return false;
+            },
+            child: ListView(
+              controller: _scrollController,
+              physics:
+                  _isDrawingMask ? const NeverScrollableScrollPhysics() : null,
+              padding: EdgeInsets.only(
+                top: MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
+                bottom:
+                    120 + MediaQuery.paddingOf(context).bottom, // 给底部悬浮栏留出空间
+                left: 16,
+                right: 16,
+              ),
+              children: [
+                _buildModeSection(),
+                SizedBox(height: 16),
+
+                // 提示词区域
+                _vm.generationMode == GenerationMode.inpainting
+                    ? _buildInpaintPromptSection()
+                    : _buildPromptSection(),
+                SizedBox(height: 16),
+
+                if (_vm.generationMode == GenerationMode.inpainting) ...[
+                  _buildInpaintingSection(),
+                  SizedBox(height: 16),
+                ],
+
+                // GPT / Nano 文生图参考图（可选）
+                if (_vm.isNonNovelAiProvider &&
+                    _vm.generationMode == GenerationMode.textToImage) ...[
+                  _buildGptReferenceImageSection(),
+                  SizedBox(height: 16),
+                ],
+
+                // 模型与基础参数
+                _buildModelSection(),
+                SizedBox(height: 16),
+
+                if (!_vm.isNonNovelAiProvider &&
+                    _vm.generationMode == GenerationMode.textToImage) ...[
+                  // 角色控制
+                  _CharacterControlSection(vm: _vm),
+                  SizedBox(height: 16),
+                  if (_vm.isIkunEndpoint) ...[
+                    _CharacterReferenceSection(vm: _vm),
+                    SizedBox(height: 16),
+                  ],
+                ],
+
+                // 最新结果卡片
+                _buildResultSection(),
+              ],
             ),
-            children: [
-              _buildModeSection(),
-              SizedBox(height: 16),
-
-              // 提示词区域
-              _vm.generationMode == GenerationMode.inpainting
-                  ? _buildInpaintPromptSection()
-                  : _buildPromptSection(),
-              SizedBox(height: 16),
-
-              if (_vm.generationMode == GenerationMode.inpainting) ...[
-                _buildInpaintingSection(),
-                SizedBox(height: 16),
-              ],
-
-              // GPT / Nano 文生图参考图（可选）
-              if (_vm.isNonNovelAiProvider &&
-                  _vm.generationMode == GenerationMode.textToImage) ...[
-                _buildGptReferenceImageSection(),
-                SizedBox(height: 16),
-              ],
-
-              // 模型与基础参数
-              _buildModelSection(),
-              SizedBox(height: 16),
-
-              // 高级参数 — 仅 NovelAI
-              if (!_vm.isNonNovelAiProvider) ...[
-                _buildAdvancedSection(),
-                SizedBox(height: 16),
-              ],
-
-              if (!_vm.isNonNovelAiProvider &&
-                  _vm.generationMode == GenerationMode.textToImage) ...[
-                // 角色控制
-                _CharacterControlSection(vm: _vm),
-                SizedBox(height: 16),
-              ],
-
-              // 最新结果卡片
-              _buildResultSection(),
-            ],
           ),
 
           // 悬浮底部生成栏
@@ -1540,7 +1590,8 @@ class _GeneratePageState extends State<GeneratePage> {
                     width: 44,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                      color: theme.colorScheme.onSurfaceVariant
+                          .withValues(alpha: 0.35),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),
@@ -1611,10 +1662,16 @@ class _GeneratePageState extends State<GeneratePage> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          color: Theme.of(context)
+              .colorScheme
+              .surfaceContainerHighest
+              .withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
+            color: Theme.of(context)
+                .colorScheme
+                .outlineVariant
+                .withValues(alpha: 0.3),
           ),
         ),
         child: InkWell(
@@ -1690,7 +1747,10 @@ class _GeneratePageState extends State<GeneratePage> {
             icon: Icon(
               CupertinoIcons.arrow_up_left_arrow_down_right,
               size: 15,
-              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.45),
             ),
           ),
         ),
@@ -2129,6 +2189,17 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ),
         ],
+        if (_vm.is7877Endpoint)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              '7877 渠道固定 28 步，仅支持普通尺寸；高级参数请从左上角进入。',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         SizedBox(height: 20),
         Row(
           children: [
@@ -2185,121 +2256,6 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  Widget _buildAdvancedSection() {
-    return _PremiumAccordion(
-      title: '高级参数',
-      icon: CupertinoIcons.slider_horizontal_3,
-      initiallyExpanded: false,
-      children: [
-        _PremiumSlider(
-          label: '引导比例 (CFG Scale)',
-          value: _vm.scale,
-          min: 1.0,
-          max: 10.0,
-          divisions: 18,
-          onChanged: _vm.updateScale,
-        ),
-        SizedBox(height: 20),
-        _PremiumSlider(
-          label: 'Prompt Guidance Rescale',
-          value: _vm.cfgRescale,
-          min: 0.0,
-          max: 1.0,
-          divisions: 10,
-          onChanged: _vm.updateCfgRescale,
-        ),
-        SizedBox(height: 20),
-        Text('采样算法',
-            style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        SizedBox(height: 8),
-        _dropdownShell(
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              isExpanded: true,
-              borderRadius: BorderRadius.circular(22),
-              value: _vm.selectedSampler,
-              icon: Icon(CupertinoIcons.chevron_down, size: 16),
-              dropdownColor: _dropdownColor(context),
-              style: _dropdownTextStyle(context),
-              items: ApiConstants.supportedSamplers
-                  .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) _vm.updateSelectedSampler(v);
-              },
-            ),
-          ),
-        ),
-        SizedBox(height: 20),
-        Text('噪声调度',
-            style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        SizedBox(height: 8),
-        _dropdownShell(
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              isExpanded: true,
-              borderRadius: BorderRadius.circular(22),
-              value: _vm.selectedNoiseSchedule,
-              icon: Icon(CupertinoIcons.chevron_down, size: 16),
-              dropdownColor: _dropdownColor(context),
-              style: _dropdownTextStyle(context),
-              items: ApiConstants.supportedNoiseSchedules
-                  .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) _vm.updateSelectedNoiseSchedule(v);
-              },
-            ),
-          ),
-        ),
-        SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                initialValue: _vm.seed?.toString(),
-                keyboardType: TextInputType.number,
-                style: TextStyle(fontSize: 14),
-                decoration: const InputDecoration(
-                  labelText: 'Seed (留空随机)',
-                  labelStyle: TextStyle(fontSize: 12),
-                ),
-                onChanged: (v) {
-                  if (v.trim().isEmpty) {
-                    _vm.updateSeed(null);
-                  } else {
-                    final parsed = int.tryParse(v.trim());
-                    if (parsed != null) _vm.updateSeed(parsed);
-                  }
-                },
-              ),
-            ),
-            SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: IconButton(
-                onPressed: () {
-                  final random =
-                      DateTime.now().microsecondsSinceEpoch % 0xFFFFFFFF;
-                  _vm.updateSeed(random);
-                },
-                icon: Icon(CupertinoIcons.shuffle, size: 20),
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   Widget _buildResultSection() {
     final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
     if (displayTask == null && _vm.errorMessage == null)
@@ -2310,187 +2266,191 @@ class _GeneratePageState extends State<GeneratePage> {
     final headerLabel =
         results.length > 1 ? '本次结果 (${results.length})' : '最新结果';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 8, bottom: 8),
-          child: Text(headerLabel,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardTheme.color,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-                color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+    return KeyedSubtree(
+      key: _resultSectionKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 8, bottom: 8),
+            child: Text(headerLabel,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_vm.errorMessage != null)
-                Text(_vm.errorMessage!,
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                        fontSize: 13))
-              else if (displayTask != null) ...[
-                if (displayTask.imagePath != null &&
-                    File(displayTask.imagePath!).existsSync())
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: GestureDetector(
-                      onTap: () => _openImagePreview(
-                        context,
-                        imagePath: displayTask.imagePath,
-                        imageUrl: displayTask.imageUrl,
+          Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardTheme.color,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_vm.errorMessage != null)
+                  Text(_vm.errorMessage!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 13))
+                else if (displayTask != null) ...[
+                  if (displayTask.imagePath != null &&
+                      File(displayTask.imagePath!).existsSync())
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: GestureDetector(
+                        onTap: () => _openImagePreview(
+                          context,
+                          imagePath: displayTask.imagePath,
+                          imageUrl: displayTask.imageUrl,
+                        ),
+                        child: Image.file(File(displayTask.imagePath!),
+                            fit: BoxFit.cover),
                       ),
-                      child: Image.file(File(displayTask.imagePath!),
-                          fit: BoxFit.cover),
-                    ),
-                  )
-                else if (displayTask.imageUrl != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: GestureDetector(
-                      onTap: () => _openImagePreview(
-                        context,
-                        imagePath: displayTask.imagePath,
-                        imageUrl: displayTask.imageUrl,
+                    )
+                  else if (displayTask.imageUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: GestureDetector(
+                        onTap: () => _openImagePreview(
+                          context,
+                          imagePath: displayTask.imagePath,
+                          imageUrl: displayTask.imageUrl,
+                        ),
+                        child: Image.network(displayTask.imageUrl!,
+                            fit: BoxFit.cover),
                       ),
-                      child: Image.network(displayTask.imageUrl!,
-                          fit: BoxFit.cover),
                     ),
-                  ),
-                if (showStrip) ...[
-                  SizedBox(height: 12),
-                  SizedBox(
-                    height: 72,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 4),
-                      itemCount: results.length,
-                      separatorBuilder: (_, __) => SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final t = results[index];
-                        final isSelected = t.taskId ==
-                            (_vm.selectedResultTaskId ??
-                                _vm.lastCompletedTask?.taskId);
-                        Widget thumb;
-                        if (t.imagePath != null &&
-                            File(t.imagePath!).existsSync()) {
-                          thumb = Image.file(File(t.imagePath!),
-                              fit: BoxFit.cover, width: 64, height: 64);
-                        } else if (t.imageUrl != null) {
-                          thumb = Image.network(t.imageUrl!,
-                              fit: BoxFit.cover, width: 64, height: 64);
-                        } else {
-                          thumb = Container(
-                            width: 64,
-                            height: 64,
-                            color: Colors.black26,
-                            child: Icon(CupertinoIcons.photo,
-                                size: 24,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant
-                                    .withValues(alpha: 0.25)),
-                          );
-                        }
-                        return GestureDetector(
-                          onTap: () => _vm.selectResult(t.taskId),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            width: 64,
-                            height: 64,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: isSelected
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Colors.white.withValues(alpha: 0.15),
-                                width: isSelected ? 2 : 1,
+                  if (showStrip) ...[
+                    SizedBox(height: 12),
+                    SizedBox(
+                      height: 72,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 4),
+                        itemCount: results.length,
+                        separatorBuilder: (_, __) => SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final t = results[index];
+                          final isSelected = t.taskId ==
+                              (_vm.selectedResultTaskId ??
+                                  _vm.lastCompletedTask?.taskId);
+                          Widget thumb;
+                          if (t.imagePath != null &&
+                              File(t.imagePath!).existsSync()) {
+                            thumb = Image.file(File(t.imagePath!),
+                                fit: BoxFit.cover, width: 64, height: 64);
+                          } else if (t.imageUrl != null) {
+                            thumb = Image.network(t.imageUrl!,
+                                fit: BoxFit.cover, width: 64, height: 64);
+                          } else {
+                            thumb = Container(
+                              width: 64,
+                              height: 64,
+                              color: Colors.black26,
+                              child: Icon(CupertinoIcons.photo,
+                                  size: 24,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withValues(alpha: 0.25)),
+                            );
+                          }
+                          return GestureDetector(
+                            onTap: () => _vm.selectResult(t.taskId),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Colors.white.withValues(alpha: 0.15),
+                                  width: isSelected ? 2 : 1,
+                                ),
+                                boxShadow: isSelected
+                                    ? [
+                                        BoxShadow(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                              .withValues(alpha: 0.35),
+                                          blurRadius: 10,
+                                          spreadRadius: 0,
+                                        ),
+                                      ]
+                                    : null,
                               ),
-                              boxShadow: isSelected
-                                  ? [
-                                      BoxShadow(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .primary
-                                            .withValues(alpha: 0.35),
-                                        blurRadius: 10,
-                                        spreadRadius: 0,
-                                      ),
-                                    ]
-                                  : null,
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  thumb,
-                                  Positioned(
-                                    right: 2,
-                                    bottom: 2,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 5, vertical: 1),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black
-                                            .withValues(alpha: 0.55),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        '${index + 1}',
-                                        style: TextStyle(
-                                            fontSize: 10,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurface,
-                                            fontWeight: FontWeight.bold),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    thumb,
+                                    Positioned(
+                                      right: 2,
+                                      bottom: 2,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.55),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          '${index + 1}',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface,
+                                              fontWeight: FontWeight.bold),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        );
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  SizedBox(height: 16),
+                  SizedBox(
+                    height: 44,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        final filePath = await _vm.saveImage(displayTask);
+                        if (!context.mounted || filePath == null) return;
+                        _showToast('已保存到相册');
                       },
+                      icon: Icon(CupertinoIcons.square_arrow_down, size: 18),
+                      label: Text('保存到相册',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black.withValues(alpha: 0.3),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                      ),
                     ),
                   ),
                 ],
-                SizedBox(height: 16),
-                SizedBox(
-                  height: 44,
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      final filePath = await _vm.saveImage(displayTask);
-                      if (!context.mounted || filePath == null) return;
-                      _showToast('已保存到相册');
-                    },
-                    icon: Icon(CupertinoIcons.square_arrow_down, size: 18),
-                    label: Text('保存到相册',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black.withValues(alpha: 0.3),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                  ),
-                ),
               ],
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2826,6 +2786,180 @@ class _PremiumSlider extends StatelessWidget {
   }
 }
 
+class _CharacterReferenceSection extends StatelessWidget {
+  final GenerationViewModel vm;
+
+  const _CharacterReferenceSection({required this.vm});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _PremiumAccordion(
+      title: '氛围转移与角色精细参考',
+      icon: CupertinoIcons.photo_on_rectangle,
+      initiallyExpanded: false,
+      children: [
+        const Text(
+          '氛围转移',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '参考图会影响整张图的画风与视觉特征，不会绑定到某个角色。',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.5,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final image = await ImagePicker().pickImage(
+              source: ImageSource.gallery,
+            );
+            if (image != null) await vm.addVibeReference(image.path);
+          },
+          icon: const Icon(CupertinoIcons.add, size: 17),
+          label: Text(
+            vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加参考图',
+          ),
+        ),
+        for (final entry in vm.vibeReferences.asMap().entries)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(entry.value.path),
+                    width: 64,
+                    height: 64,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      width: 64,
+                      height: 64,
+                      child: Icon(CupertinoIcons.exclamationmark_triangle),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _referenceSlider(
+                        context,
+                        label: '参考强度',
+                        value: entry.value.strength,
+                        onChanged: (value) => vm.updateVibeReference(
+                          entry.key,
+                          entry.value.copyWith(strength: value),
+                        ),
+                      ),
+                      _referenceSlider(
+                        context,
+                        label: '信息提取',
+                        value: entry.value.informationExtracted,
+                        onChanged: (value) => vm.updateVibeReference(
+                          entry.key,
+                          entry.value.copyWith(informationExtracted: value),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: '删除参考图',
+                  onPressed: () => vm.removeVibeReference(entry.key),
+                  icon: const Icon(CupertinoIcons.trash, size: 17),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                CupertinoIcons.lock_fill,
+                size: 17,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '角色精细参考',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '当前网关 API 暂未提供角色与参考图的绑定协议。',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.5,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _referenceSlider(
+    BuildContext context, {
+    required String label,
+    required double value,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 58,
+          child: Text(label, style: const TextStyle(fontSize: 11)),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.clamp(0.0, 1.0),
+            min: 0,
+            max: 1,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 30,
+          child: Text(
+            value.toStringAsFixed(1),
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _CharacterControlSection extends StatefulWidget {
   final GenerationViewModel vm;
 
@@ -3069,7 +3203,8 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                           required title,
                           required initialValue,
                           required onSubmitted,
-                        }) => showModalBottomSheet<void>(
+                        }) =>
+                            showModalBottomSheet<void>(
                           context: context,
                           isScrollControlled: true,
                           backgroundColor: Colors.transparent,
@@ -3086,8 +3221,10 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                   maxHeight:
                                       MediaQuery.sizeOf(ctx).height * 0.88,
                                 ),
-                                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                                margin:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                padding:
+                                    const EdgeInsets.fromLTRB(18, 12, 18, 18),
                                 decoration: BoxDecoration(
                                   color: theme.colorScheme.surface,
                                   borderRadius: BorderRadius.circular(28),
@@ -3104,7 +3241,8 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                         width: 44,
                                         height: 5,
                                         decoration: BoxDecoration(
-                                          color: theme.colorScheme.onSurfaceVariant
+                                          color: theme
+                                              .colorScheme.onSurfaceVariant
                                               .withValues(alpha: 0.35),
                                           borderRadius:
                                               BorderRadius.circular(99),
@@ -3119,13 +3257,16 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                               style: TextStyle(
                                                 fontSize: 20,
                                                 fontWeight: FontWeight.w800,
-                                                color: theme.colorScheme.onSurface,
+                                                color:
+                                                    theme.colorScheme.onSurface,
                                               ),
                                             ),
                                           ),
                                           IconButton(
-                                            onPressed: () => Navigator.of(ctx).pop(),
-                                            icon: const Icon(CupertinoIcons.xmark),
+                                            onPressed: () =>
+                                                Navigator.of(ctx).pop(),
+                                            icon: const Icon(
+                                                CupertinoIcons.xmark),
                                           ),
                                         ],
                                       ),
@@ -3137,7 +3278,8 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                           minLines: null,
                                           maxLines: null,
                                           expands: true,
-                                          textAlignVertical: TextAlignVertical.top,
+                                          textAlignVertical:
+                                              TextAlignVertical.top,
                                           style: const TextStyle(
                                             fontSize: 15,
                                             height: 1.6,
@@ -3419,7 +3561,8 @@ class _CharacterCardState extends State<_CharacterCard> {
                                       .withValues(alpha: 0.55)),
                               filled: true,
                               fillColor: Colors.black.withValues(alpha: 0.2),
-                              contentPadding: const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                              contentPadding:
+                                  const EdgeInsets.fromLTRB(12, 12, 36, 12),
                             ),
                             onChanged: (value) => widget.onChanged(
                                 widget.character.copyWith(prompt: value)),
@@ -3440,11 +3583,15 @@ class _CharacterCardState extends State<_CharacterCard> {
                               tooltip: '放大编辑',
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              constraints: const BoxConstraints(
+                                  minWidth: 28, minHeight: 28),
                               icon: Icon(
                                 CupertinoIcons.arrow_up_left_arrow_down_right,
                                 size: 15,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.45),
                               ),
                             ),
                           ),
@@ -3467,7 +3614,8 @@ class _CharacterCardState extends State<_CharacterCard> {
                                       .withValues(alpha: 0.55)),
                               filled: true,
                               fillColor: Colors.black.withValues(alpha: 0.2),
-                              contentPadding: const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                              contentPadding:
+                                  const EdgeInsets.fromLTRB(12, 12, 36, 12),
                             ),
                             onChanged: (value) =>
                                 widget.onChanged(widget.character.copyWith(
@@ -3492,11 +3640,15 @@ class _CharacterCardState extends State<_CharacterCard> {
                               tooltip: '放大编辑',
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              constraints: const BoxConstraints(
+                                  minWidth: 28, minHeight: 28),
                               icon: Icon(
                                 CupertinoIcons.arrow_up_left_arrow_down_right,
                                 size: 15,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.45),
                               ),
                             ),
                           ),
@@ -3511,7 +3663,6 @@ class _CharacterCardState extends State<_CharacterCard> {
                     ],
                   ),
                 ),
-                // 排序控制栏
                 Container(
                   color: Colors.black.withValues(alpha: 0.1),
                   padding:

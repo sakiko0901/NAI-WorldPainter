@@ -44,15 +44,19 @@ class _PixivQueuePageState extends State<PixivQueuePage> {
         title: const Text('Pixiv 上传队列'),
         actions: [
           IconButton(
-            icon: Icon(_vm.isPaused ? CupertinoIcons.play_fill : CupertinoIcons.pause_fill),
+            icon: Icon(_vm.isPaused
+                ? CupertinoIcons.play_fill
+                : CupertinoIcons.pause_fill),
             tooltip: _vm.isPaused ? '继续' : '暂停',
             onPressed: () {
               if (_vm.isPaused) {
                 _vm.resume();
-                showFloatingToast(context, '队列已继续', icon: CupertinoIcons.play_fill);
+                showFloatingToast(context, '队列已继续',
+                    icon: CupertinoIcons.play_fill);
               } else {
                 _vm.pause();
-                showFloatingToast(context, '队列已暂停', icon: CupertinoIcons.pause_fill);
+                showFloatingToast(context, '队列已暂停',
+                    icon: CupertinoIcons.pause_fill);
               }
             },
           ),
@@ -61,15 +65,15 @@ class _PixivQueuePageState extends State<PixivQueuePage> {
             tooltip: '清除已完成 / 失败 / 取消',
             onPressed: () {
               _vm.clearFinished();
-              showFloatingToast(context, '已清理完成项', icon: CupertinoIcons.checkmark_circle);
+              showFloatingToast(context, '已清理完成项',
+                  icon: CupertinoIcons.checkmark_circle);
             },
           ),
         ],
       ),
       body: Column(
         children: [
-          if (cd != null)
-            _CooldownBar(isDark: isDark, remaining: cd),
+          if (cd != null) _CooldownBar(isDark: isDark, remaining: cd),
           if (_vm.isPaused)
             Container(
               width: double.infinity,
@@ -128,7 +132,8 @@ class _CooldownBar extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text('正在冷却中，剩余 ${_fmt(remaining)}',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: primary)),
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600, color: primary)),
           ),
         ],
       ),
@@ -146,8 +151,12 @@ class _EmptyHint extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(CupertinoIcons.tray, size: 48,
-              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+          Icon(CupertinoIcons.tray,
+              size: 48,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.5)),
           const SizedBox(height: 10),
           Text('队列为空',
               style: TextStyle(
@@ -157,7 +166,10 @@ class _EmptyHint extends StatelessWidget {
           Text('在「上传到 Pixiv」页点击「加入队列」即可批量任务',
               style: TextStyle(
                   fontSize: 11,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant
+                      .withValues(alpha: 0.7))),
         ],
       ),
     );
@@ -207,7 +219,9 @@ class _TaskCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2),
                 ),
               ),
               const SizedBox(width: 6),
@@ -237,7 +251,8 @@ class _TaskCard extends StatelessWidget {
               if (task.isR18) ...[
                 const SizedBox(width: 10),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(4),
@@ -252,7 +267,8 @@ class _TaskCard extends StatelessWidget {
               if (task.stripMetadata) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                   decoration: BoxDecoration(
                     color: Colors.amber.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(4),
@@ -266,13 +282,13 @@ class _TaskCard extends StatelessWidget {
               ],
             ],
           ),
-          if (task.status == PixivUploadStatus.completed && task.illustId != null) ...[
+          if (task.status == PixivUploadStatus.completed &&
+              task.illustId != null) ...[
             const SizedBox(height: 8),
             Row(
               children: [
                 Icon(CupertinoIcons.checkmark_seal_fill,
-                    size: 13,
-                    color: Theme.of(context).colorScheme.primary),
+                    size: 13, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 4),
                 Text('PID: ${task.illustId}',
                     style: TextStyle(
@@ -310,12 +326,16 @@ class _TaskCard extends StatelessWidget {
               Text(_formatTime(task.createdAt),
                   style: TextStyle(
                       fontSize: 10,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: 0.7))),
               const Spacer(),
               if (canCancel)
                 TextButton.icon(
                   style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                     minimumSize: const Size(0, 28),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -326,7 +346,8 @@ class _TaskCard extends StatelessWidget {
               if (finished)
                 TextButton.icon(
                   style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                     minimumSize: const Size(0, 28),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -357,12 +378,36 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color, icon) = switch (status) {
-      PixivUploadStatus.pending => ('等待', Colors.blueGrey, CupertinoIcons.hourglass),
-      PixivUploadStatus.uploading => ('上传中', Colors.blueAccent, CupertinoIcons.cloud_upload),
-      PixivUploadStatus.cooldown => ('冷却中', const Color(0xFFFFB020), CupertinoIcons.time),
-      PixivUploadStatus.completed => ('完成', Colors.green, CupertinoIcons.checkmark_circle_fill),
-      PixivUploadStatus.failed => ('失败', Colors.redAccent, CupertinoIcons.exclamationmark_circle),
-      PixivUploadStatus.canceled => ('已取消', Colors.grey, CupertinoIcons.xmark_circle),
+      PixivUploadStatus.pending => (
+          '等待',
+          Colors.blueGrey,
+          CupertinoIcons.hourglass
+        ),
+      PixivUploadStatus.uploading => (
+          '上传中',
+          Colors.blueAccent,
+          CupertinoIcons.cloud_upload
+        ),
+      PixivUploadStatus.cooldown => (
+          '冷却中',
+          const Color(0xFFFFB020),
+          CupertinoIcons.time
+        ),
+      PixivUploadStatus.completed => (
+          '完成',
+          Colors.green,
+          CupertinoIcons.checkmark_circle_fill
+        ),
+      PixivUploadStatus.failed => (
+          '失败',
+          Colors.redAccent,
+          CupertinoIcons.exclamationmark_circle
+        ),
+      PixivUploadStatus.canceled => (
+          '已取消',
+          Colors.grey,
+          CupertinoIcons.xmark_circle
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

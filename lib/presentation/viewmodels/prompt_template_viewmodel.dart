@@ -20,9 +20,10 @@ class PromptTemplateViewModel extends ChangeNotifier {
       result = result.where((t) => t.category == _selectedCategory).toList();
     }
     if (_searchQuery.isNotEmpty) {
-      result = result.where((t) =>
-        t.name.contains(_searchQuery) || t.content.contains(_searchQuery)
-      ).toList();
+      result = result
+          .where((t) =>
+              t.name.contains(_searchQuery) || t.content.contains(_searchQuery))
+          .toList();
     }
     return result;
   }

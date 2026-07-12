@@ -38,7 +38,9 @@ class PromptMemoryModel {
             : DateTime.fromMillisecondsSinceEpoch(row['last_hit_at'] as int),
         weight: (row['weight'] as num?)?.toDouble() ?? 1.0,
         supersededBy: row['superseded_by'] as int?,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
       );
 }

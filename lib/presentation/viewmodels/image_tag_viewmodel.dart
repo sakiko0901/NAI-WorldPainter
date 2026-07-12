@@ -39,14 +39,18 @@ class ImageTagViewModel extends ChangeNotifier {
     final prefs = sl<SharedPreferences>();
     imagePath = prefs.getString(AppConstants.keyImageTagImagePath);
     final modeIndex = prefs.getInt(AppConstants.keyImageTagMode) ?? 0;
-    mode = modeIndex == 1 ? TagAnalysisMode.wdTagger : TagAnalysisMode.naiMetadata;
-    generalThreshold = prefs.getDouble(AppConstants.keyImageTagGeneralThreshold) ?? 0.35;
-    characterThreshold = prefs.getDouble(AppConstants.keyImageTagCharacterThreshold) ?? 0.85;
+    mode =
+        modeIndex == 1 ? TagAnalysisMode.wdTagger : TagAnalysisMode.naiMetadata;
+    generalThreshold =
+        prefs.getDouble(AppConstants.keyImageTagGeneralThreshold) ?? 0.35;
+    characterThreshold =
+        prefs.getDouble(AppConstants.keyImageTagCharacterThreshold) ?? 0.85;
 
     final resultJson = prefs.getString(AppConstants.keyImageTagResultJson);
     if (resultJson != null) {
       try {
-        result = ImageTagResult.fromJson(jsonDecode(resultJson) as Map<String, dynamic>);
+        result = ImageTagResult.fromJson(
+            jsonDecode(resultJson) as Map<String, dynamic>);
       } catch (_) {
         result = null;
       }
@@ -111,10 +115,12 @@ class ImageTagViewModel extends ChangeNotifier {
           characterThreshold: characterThreshold,
         );
         final generalTags = wdResult.generalTags.entries
-            .map((e) => TagEntry(tag: e.key, confidence: e.value, selected: true))
+            .map((e) =>
+                TagEntry(tag: e.key, confidence: e.value, selected: true))
             .toList();
         final characterTags = wdResult.characterTags.entries
-            .map((e) => TagEntry(tag: e.key, confidence: e.value, selected: true))
+            .map((e) =>
+                TagEntry(tag: e.key, confidence: e.value, selected: true))
             .toList();
         result = ImageTagResult(
           source: TagSource.wdTagger,
@@ -133,20 +139,24 @@ class ImageTagViewModel extends ChangeNotifier {
   }
 
   // ── 标签选择 ──
-  Future<void> toggleTag(TagSource source, {int? generalIndex, int? characterIndex, int? negativeIndex}) async {
+  Future<void> toggleTag(TagSource source,
+      {int? generalIndex, int? characterIndex, int? negativeIndex}) async {
     if (result == null) return;
     List<TagEntry> newGeneral = List.from(result!.general);
     List<TagEntry> newCharacter = List.from(result!.character);
     List<TagEntry> newNegative = List.from(result!.negativeEntries);
 
     if (generalIndex != null && generalIndex < newGeneral.length) {
-      newGeneral[generalIndex] = newGeneral[generalIndex].copyWith(selected: !newGeneral[generalIndex].selected);
+      newGeneral[generalIndex] = newGeneral[generalIndex]
+          .copyWith(selected: !newGeneral[generalIndex].selected);
     }
     if (characterIndex != null && characterIndex < newCharacter.length) {
-      newCharacter[characterIndex] = newCharacter[characterIndex].copyWith(selected: !newCharacter[characterIndex].selected);
+      newCharacter[characterIndex] = newCharacter[characterIndex]
+          .copyWith(selected: !newCharacter[characterIndex].selected);
     }
     if (negativeIndex != null && negativeIndex < newNegative.length) {
-      newNegative[negativeIndex] = newNegative[negativeIndex].copyWith(selected: !newNegative[negativeIndex].selected);
+      newNegative[negativeIndex] = newNegative[negativeIndex]
+          .copyWith(selected: !newNegative[negativeIndex].selected);
     }
 
     result = result!.copyWithTagSelections(
@@ -171,7 +181,9 @@ class ImageTagViewModel extends ChangeNotifier {
   Future<void> invertGeneral() async {
     if (result == null) return;
     result = result!.copyWithTagSelections(
-      general: result!.general.map((e) => e.copyWith(selected: !e.selected)).toList(),
+      general: result!.general
+          .map((e) => e.copyWith(selected: !e.selected))
+          .toList(),
     );
     await _saveCache();
     notifyListeners();
@@ -180,7 +192,9 @@ class ImageTagViewModel extends ChangeNotifier {
   Future<void> selectAllNegative() async {
     if (result == null) return;
     result = result!.copyWithTagSelections(
-      negativeEntries: result!.negativeEntries.map((e) => e.copyWith(selected: true)).toList(),
+      negativeEntries: result!.negativeEntries
+          .map((e) => e.copyWith(selected: true))
+          .toList(),
     );
     await _saveCache();
     notifyListeners();
@@ -189,7 +203,9 @@ class ImageTagViewModel extends ChangeNotifier {
   Future<void> invertNegative() async {
     if (result == null) return;
     result = result!.copyWithTagSelections(
-      negativeEntries: result!.negativeEntries.map((e) => e.copyWith(selected: !e.selected)).toList(),
+      negativeEntries: result!.negativeEntries
+          .map((e) => e.copyWith(selected: !e.selected))
+          .toList(),
     );
     await _saveCache();
     notifyListeners();
@@ -290,9 +306,11 @@ class ImageTagViewModel extends ChangeNotifier {
     if (imagePath != null) {
       await prefs.setString(AppConstants.keyImageTagImagePath, imagePath!);
     }
-    await prefs.setInt(AppConstants.keyImageTagMode, mode == TagAnalysisMode.wdTagger ? 1 : 0);
+    await prefs.setInt(
+        AppConstants.keyImageTagMode, mode == TagAnalysisMode.wdTagger ? 1 : 0);
     if (result != null) {
-      await prefs.setString(AppConstants.keyImageTagResultJson, jsonEncode(result!.toJson()));
+      await prefs.setString(
+          AppConstants.keyImageTagResultJson, jsonEncode(result!.toJson()));
     } else {
       await prefs.remove(AppConstants.keyImageTagResultJson);
     }

@@ -38,6 +38,5 @@ class InpaintModeGuardError implements Exception {
   final String target;
   InpaintModeGuardError(this.target);
   @override
-  String toString() =>
-      '当前不是局部重绘模式，禁止写入 $target 框。如需修改局部重绘提示词，请先让用户切换到局部重绘模式。';
+  String toString() => '当前不是局部重绘模式，禁止写入 $target 框。如需修改局部重绘提示词，请先让用户切换到局部重绘模式。';
 }

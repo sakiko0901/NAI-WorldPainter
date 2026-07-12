@@ -18,7 +18,8 @@ class PresetRepositoryImpl implements PresetRepository {
 
   @override
   Future<Preset?> getPreset(int id) async {
-    final rows = await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     return PresetModel.fromDb(rows.first).toEntity();
   }
@@ -33,7 +34,8 @@ class PresetRepositoryImpl implements PresetRepository {
   @override
   Future<Preset> updatePreset(Preset preset) async {
     final model = PresetModel.fromEntity(preset);
-    await _db.update(_table, model.toDb(), where: 'id = ?', whereArgs: [preset.id]);
+    await _db
+        .update(_table, model.toDb(), where: 'id = ?', whereArgs: [preset.id]);
     return preset;
   }
 
@@ -57,7 +59,8 @@ class PresetRepositoryImpl implements PresetRepository {
   Future<void> initBuiltinPresets() async {
     // 检查是否已有内置预设
     final count = Sqflite.firstIntValue(
-      await _db.rawQuery('SELECT COUNT(*) as count FROM $_table WHERE is_builtin = 1'),
+      await _db.rawQuery(
+          'SELECT COUNT(*) as count FROM $_table WHERE is_builtin = 1'),
     );
     if (count != null && count > 0) return;
 
@@ -67,8 +70,10 @@ class PresetRepositoryImpl implements PresetRepository {
         name: '二次元标准',
         category: '二次元',
         model: 'nai-diffusion-4-curated-preview',
-        prompt: 'masterpiece, best quality, amazing quality, very aesthetic, absurdres',
-        negativePrompt: 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
+        prompt:
+            'masterpiece, best quality, amazing quality, very aesthetic, absurdres',
+        negativePrompt:
+            'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
         width: 832,
         height: 1216,
         scale: 5.0,
@@ -83,8 +88,10 @@ class PresetRepositoryImpl implements PresetRepository {
         name: '二次元风景',
         category: '风景',
         model: 'nai-diffusion-4-curated-preview',
-        prompt: 'masterpiece, best quality, amazing quality, very aesthetic, absurdres, scenery, landscape, no humans',
-        negativePrompt: 'lowres, worst quality, low quality, normal quality, jpeg artifacts, blurry, humans, person',
+        prompt:
+            'masterpiece, best quality, amazing quality, very aesthetic, absurdres, scenery, landscape, no humans',
+        negativePrompt:
+            'lowres, worst quality, low quality, normal quality, jpeg artifacts, blurry, humans, person',
         width: 1216,
         height: 832,
         scale: 5.0,
@@ -99,8 +106,10 @@ class PresetRepositoryImpl implements PresetRepository {
         name: '二次元角色',
         category: '角色',
         model: 'nai-diffusion-4-curated-preview',
-        prompt: 'masterpiece, best quality, amazing quality, very aesthetic, absurdres, 1girl, solo',
-        negativePrompt: 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
+        prompt:
+            'masterpiece, best quality, amazing quality, very aesthetic, absurdres, 1girl, solo',
+        negativePrompt:
+            'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
         width: 832,
         height: 1216,
         scale: 5.0,
@@ -115,8 +124,10 @@ class PresetRepositoryImpl implements PresetRepository {
         name: 'Furry 标准',
         category: 'Furry',
         model: 'nai-diffusion-furry-3',
-        prompt: 'masterpiece, best quality, amazing quality, very aesthetic, absurdres, furry',
-        negativePrompt: 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
+        prompt:
+            'masterpiece, best quality, amazing quality, very aesthetic, absurdres, furry',
+        negativePrompt:
+            'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry',
         width: 832,
         height: 1216,
         scale: 5.0,
@@ -131,8 +142,10 @@ class PresetRepositoryImpl implements PresetRepository {
         name: '写实风格',
         category: '写实',
         model: 'nai-diffusion-4-curated-preview',
-        prompt: 'masterpiece, best quality, amazing quality, very aesthetic, absurdres, photorealistic, realistic',
-        negativePrompt: 'lowres, worst quality, low quality, normal quality, jpeg artifacts, blurry, anime, cartoon, illustration, painting, drawing',
+        prompt:
+            'masterpiece, best quality, amazing quality, very aesthetic, absurdres, photorealistic, realistic',
+        negativePrompt:
+            'lowres, worst quality, low quality, normal quality, jpeg artifacts, blurry, anime, cartoon, illustration, painting, drawing',
         width: 1024,
         height: 1024,
         scale: 5.0,

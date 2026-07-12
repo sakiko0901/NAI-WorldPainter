@@ -2,7 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
-import 'package:nai_huishi/presentation/widgets/floating_toast.dart' show showFloatingToast;
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
+    show showFloatingToast;
 
 class LlmProviderEditPage extends StatefulWidget {
   final LlmChatViewModel vm;
@@ -135,7 +136,8 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
                           isDense: true,
                           prefixText: '${i + 1}. ',
                           prefixStyle: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 12,
                           ),
                         ),

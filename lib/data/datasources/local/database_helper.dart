@@ -23,6 +23,7 @@ class DatabaseHelper {
       version: AppConstants.dbVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: _onOpen,
     );
   }
 
@@ -32,6 +33,8 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id TEXT UNIQUE NOT NULL,
         model TEXT NOT NULL,
+        endpoint_id TEXT,
+        protocol TEXT,
         prompt TEXT NOT NULL,
         negative_prompt TEXT,
         width INTEGER NOT NULL,
@@ -40,6 +43,8 @@ class DatabaseHelper {
         cfg_rescale REAL NOT NULL,
         sampler TEXT NOT NULL,
         noise_schedule TEXT NOT NULL,
+        steps INTEGER NOT NULL DEFAULT 28,
+        use_coords INTEGER NOT NULL DEFAULT 1,
         seed INTEGER,
         characters TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -89,11 +94,15 @@ class DatabaseHelper {
     ''');
 
     // 索引
-    await db.execute('CREATE INDEX idx_history_status ON generation_history(status)');
-    await db.execute('CREATE INDEX idx_history_created ON generation_history(created_at)');
-    await db.execute('CREATE INDEX idx_history_favorite ON generation_history(is_favorite)');
+    await db.execute(
+        'CREATE INDEX idx_history_status ON generation_history(status)');
+    await db.execute(
+        'CREATE INDEX idx_history_created ON generation_history(created_at)');
+    await db.execute(
+        'CREATE INDEX idx_history_favorite ON generation_history(is_favorite)');
     await db.execute('CREATE INDEX idx_presets_category ON presets(category)');
-    await db.execute('CREATE INDEX idx_templates_category ON prompt_templates(category)');
+    await db.execute(
+        'CREATE INDEX idx_templates_category ON prompt_templates(category)');
 
     await _createLlmTables(db);
     await _createPromptAssistantTables(db);
@@ -121,8 +130,10 @@ class DatabaseHelper {
         FOREIGN KEY (session_id) REFERENCES llm_sessions(id) ON DELETE CASCADE
       )
     ''');
-    await db.execute('CREATE INDEX idx_llm_messages_session ON llm_messages(session_id, created_at)');
-    await db.execute('CREATE INDEX idx_llm_sessions_updated ON llm_sessions(updated_at)');
+    await db.execute(
+        'CREATE INDEX idx_llm_messages_session ON llm_messages(session_id, created_at)');
+    await db.execute(
+        'CREATE INDEX idx_llm_sessions_updated ON llm_sessions(updated_at)');
   }
 
   Future<void> _createPromptAssistantTables(Database db) async {
@@ -143,10 +154,14 @@ class DatabaseHelper {
         updated_at INTEGER NOT NULL
       )
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_trigger ON prompt_memories(trigger)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_updated ON prompt_memories(updated_at)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_prompt_memories_trigger ON prompt_memories(trigger)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_prompt_memories_updated ON prompt_memories(updated_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
     await _createPromptMemoriesFts(db);
 
     await db.execute('''
@@ -159,7 +174,8 @@ class DatabaseHelper {
         updated_at INTEGER NOT NULL
       )
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_style_presets_updated ON style_presets(updated_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_style_presets_updated ON style_presets(updated_at)');
   }
 
   /// FTS5 外部内容表 + 触发器同步。trigger/content 入索引，支持 BM25 检索。
@@ -208,8 +224,10 @@ class DatabaseHelper {
         updated_at INTEGER NOT NULL
       )
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_artist_prompts_tag ON artist_prompts(tag)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_artist_prompts_updated ON artist_prompts(updated_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_artist_prompts_tag ON artist_prompts(tag)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_artist_prompts_updated ON artist_prompts(updated_at)');
 
     await db.execute('''
       CREATE TABLE IF NOT EXISTS artist_prompt_categories (
@@ -230,7 +248,8 @@ class DatabaseHelper {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute('ALTER TABLE generation_history ADD COLUMN seed INTEGER');
+      await db
+          .execute('ALTER TABLE generation_history ADD COLUMN seed INTEGER');
       await db.execute('ALTER TABLE presets ADD COLUMN seed INTEGER');
     }
     if (oldVersion < 3) {
@@ -247,13 +266,20 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE llm_messages ADD COLUMN image_path TEXT');
     }
     if (oldVersion < 8) {
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN scope TEXT NOT NULL DEFAULT \'user\'');
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0');
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN last_hit_at INTEGER');
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN weight REAL NOT NULL DEFAULT 1.0');
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN superseded_by INTEGER');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
+      await db.execute(
+          'ALTER TABLE prompt_memories ADD COLUMN scope TEXT NOT NULL DEFAULT \'user\'');
+      await db.execute(
+          'ALTER TABLE prompt_memories ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE prompt_memories ADD COLUMN last_hit_at INTEGER');
+      await db.execute(
+          'ALTER TABLE prompt_memories ADD COLUMN weight REAL NOT NULL DEFAULT 1.0');
+      await db.execute(
+          'ALTER TABLE prompt_memories ADD COLUMN superseded_by INTEGER');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_prompt_memories_source ON prompt_memories(source)');
       await _createPromptMemoriesFts(db);
       // 老数据重建索引（FTS 创建成功才执行）
       try {
@@ -267,6 +293,34 @@ class DatabaseHelper {
       // Agent 化：llm_messages 加 tool_calls 列保存工具调用历史；prompt_memories 加 embedding 列（向量记忆预留）
       await db.execute('ALTER TABLE llm_messages ADD COLUMN tool_calls TEXT');
       await db.execute('ALTER TABLE prompt_memories ADD COLUMN embedding BLOB');
+    }
+    if (oldVersion < 10) {
+      await _ensureGenerationHistoryColumns(db);
+    }
+    if (oldVersion < 11) {
+      await _ensureGenerationHistoryColumns(db);
+    }
+  }
+
+  Future<void> _onOpen(Database db) => _ensureGenerationHistoryColumns(db);
+
+  Future<void> _ensureGenerationHistoryColumns(Database db) async {
+    final table = await db.rawQuery('PRAGMA table_info(generation_history)');
+    if (table.isEmpty) return;
+
+    final columns = table.map((column) => column['name'] as String).toSet();
+    final definitions = <String, String>{
+      'endpoint_id': 'TEXT',
+      'protocol': 'TEXT',
+      'steps': 'INTEGER NOT NULL DEFAULT 28',
+      'use_coords': 'INTEGER NOT NULL DEFAULT 1',
+    };
+    for (final entry in definitions.entries) {
+      if (!columns.contains(entry.key)) {
+        await db.execute(
+          'ALTER TABLE generation_history ADD COLUMN ${entry.key} ${entry.value}',
+        );
+      }
     }
   }
 }

@@ -17,7 +17,8 @@ class ApiConfigPage extends StatefulWidget {
   State<ApiConfigPage> createState() => _ApiConfigPageState();
 }
 
-class _ApiConfigPageState extends State<ApiConfigPage> with SingleTickerProviderStateMixin {
+class _ApiConfigPageState extends State<ApiConfigPage>
+    with SingleTickerProviderStateMixin {
   late final SettingsViewModel _vm;
   late final TabController _tabController;
   bool _loading = true;
@@ -121,20 +122,35 @@ class _ProviderTabState extends State<_ProviderTab> {
             decoration: BoxDecoration(
               color: Theme.of(context).cardTheme.color,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06)),
+              border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.06)),
             ),
             child: Column(
               children: [
-                Icon(CupertinoIcons.cube_box, size: 36, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.25)),
+                Icon(CupertinoIcons.cube_box,
+                    size: 36,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withValues(alpha: 0.25)),
                 SizedBox(height: 12),
                 Text(
                   '还没有配置任何中转站',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
                 SizedBox(height: 4),
                 Text(
                   '点击下方按钮添加',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5), fontSize: 12),
+                  style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: 0.5),
+                      fontSize: 12),
                 ),
               ],
             ),
@@ -147,12 +163,14 @@ class _ProviderTabState extends State<_ProviderTab> {
               isActive: ep.id == activeId,
               activeModel: activeModel,
             ),
-        SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () => _showEditDialog(context, provider, null),
-          icon: Icon(CupertinoIcons.add_circled, size: 18),
-          label: Text('添加中转站'),
-        ),
+        if (provider != ImageProviderType.novelAi) ...[
+          SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _showEditDialog(context, provider, null),
+            icon: Icon(CupertinoIcons.add_circled, size: 18),
+            label: Text('添加中转站'),
+          ),
+        ],
       ],
     );
   }
@@ -197,7 +215,8 @@ class _EndpointCardState extends State<_EndpointCard> {
       final sw = Stopwatch()..start();
       await dio.get(
         '$url/v1/models',
-        options: Options(headers: {'Authorization': 'Bearer ${widget.endpoint.apiKey}'}),
+        options: Options(
+            headers: {'Authorization': 'Bearer ${widget.endpoint.apiKey}'}),
       );
       sw.stop();
       setState(() {
@@ -262,7 +281,10 @@ class _EndpointCardState extends State<_EndpointCard> {
                       shape: BoxShape.circle,
                       color: widget.isActive
                           ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+                          : Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: 0.25),
                     ),
                   ),
                   SizedBox(width: 12),
@@ -282,7 +304,8 @@ class _EndpointCardState extends State<_EndpointCard> {
                           ep.baseUrl.isEmpty ? '未填写 Base URL' : ep.baseUrl,
                           style: TextStyle(
                             fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -292,12 +315,22 @@ class _EndpointCardState extends State<_EndpointCard> {
                   ),
                   Text(
                     '${ep.models.length} 模型',
-                    style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: 0.5)),
                   ),
                   Icon(
-                    _expanded ? CupertinoIcons.chevron_up : CupertinoIcons.chevron_down,
+                    _expanded
+                        ? CupertinoIcons.chevron_up
+                        : CupertinoIcons.chevron_down,
                     size: 16,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withValues(alpha: 0.5),
                   ),
                   SizedBox(width: 4),
                 ],
@@ -305,7 +338,12 @@ class _EndpointCardState extends State<_EndpointCard> {
             ),
           ),
           if (_expanded) ...[
-            Divider(height: 1, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.12)),
+            Divider(
+                height: 1,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.12)),
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -314,28 +352,41 @@ class _EndpointCardState extends State<_EndpointCard> {
                   if (ep.models.isEmpty)
                     Text(
                       '尚未添加模型，点击「编辑」添加',
-                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: 0.5)),
                     )
                   else
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: ep.models.map((m) {
-                        final isActiveModel = widget.isActive && widget.activeModel == m;
+                        final isActiveModel =
+                            widget.isActive && widget.activeModel == m;
                         return InkWell(
                           borderRadius: BorderRadius.circular(20),
                           onTap: () => _setActive(m),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
                             decoration: BoxDecoration(
                               color: isActiveModel
-                                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withValues(alpha: 0.25)
                                   : Theme.of(context).colorScheme.surface,
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(
                                 color: isActiveModel
                                     ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08),
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.08),
                               ),
                             ),
                             child: Row(
@@ -345,13 +396,18 @@ class _EndpointCardState extends State<_EndpointCard> {
                                   Icon(
                                     CupertinoIcons.checkmark_alt,
                                     size: 12,
-                                    color: Theme.of(context).colorScheme.onSurface,
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
                                   ),
                                   SizedBox(width: 4),
                                 ],
                                 Text(
                                   m,
-                                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface),
                                 ),
                               ],
                             ),
@@ -368,47 +424,57 @@ class _EndpointCardState extends State<_EndpointCard> {
                             ? SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : Icon(CupertinoIcons.wifi, size: 14),
                         label: Text(_isTesting ? '测试中…' : '测试连接'),
                       ),
                       SizedBox(width: 8),
                       OutlinedButton.icon(
-                        onPressed: () => _showEditDialog(context, widget.provider, ep),
+                        onPressed: () =>
+                            _showEditDialog(context, widget.provider, ep),
                         icon: Icon(CupertinoIcons.pencil, size: 14),
                         label: Text('编辑'),
                       ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: () async {
-                          final ok = await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: Text('删除中转站'),
-                              content: Text('确定要删除「${ep.name}」吗？该操作不可撤销。'),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: Text('取消'),
-                                ),
-                                FilledButton(
-                                  style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: Text('删除'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (ok == true) {
-                            await sl<SettingsViewModel>().removeEndpoint(widget.provider, ep.id);
-                            if (context.mounted) {
-                              showFloatingToast(context, '已删除');
+                      if (widget.provider != ImageProviderType.novelAi) ...[
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () async {
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text('删除中转站'),
+                                content: Text('确定要删除「${ep.name}」吗？该操作不可撤销。'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: Text('取消'),
+                                  ),
+                                  FilledButton(
+                                    style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.redAccent),
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: Text('删除'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (ok == true) {
+                              await sl<SettingsViewModel>()
+                                  .removeEndpoint(widget.provider, ep.id);
+                              if (context.mounted) {
+                                showFloatingToast(context, '已删除');
+                              }
                             }
-                          }
-                        },
-                        icon: Icon(CupertinoIcons.trash, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
+                          },
+                          icon: Icon(CupertinoIcons.trash,
+                              size: 18,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant),
+                        ),
+                      ],
                     ],
                   ),
                   if (_latencyMs != null) ...[
@@ -419,7 +485,9 @@ class _EndpointCardState extends State<_EndpointCard> {
                             size: 14, color: Colors.greenAccent.shade400),
                         SizedBox(width: 6),
                         Text('延迟 ${_latencyMs}ms',
-                            style: TextStyle(fontSize: 12, color: Colors.greenAccent.shade400)),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.greenAccent.shade400)),
                       ],
                     ),
                   ],
@@ -427,7 +495,8 @@ class _EndpointCardState extends State<_EndpointCard> {
                     SizedBox(height: 8),
                     Text(
                       _testError!,
-                      style: TextStyle(fontSize: 12, color: Colors.orangeAccent),
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.orangeAccent),
                     ),
                   ],
                 ],
@@ -494,7 +563,10 @@ Future<void> _showEditDialog(
                       alignment: Alignment.centerLeft,
                       child: Text(
                         '模型列表',
-                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                     ),
                     SizedBox(height: 6),
@@ -536,7 +608,12 @@ Future<void> _showEditDialog(
                         padding: EdgeInsets.only(top: 4),
                         child: Text(
                           '尚未添加任何模型',
-                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: 0.5)),
                         ),
                       )
                     else
@@ -548,7 +625,9 @@ Future<void> _showEditDialog(
                             Chip(
                               label: Text(m, style: TextStyle(fontSize: 12)),
                               onDeleted: () => setState(() => models.remove(m)),
-                              deleteIconColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                              deleteIconColor: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
                         ],
                       ),

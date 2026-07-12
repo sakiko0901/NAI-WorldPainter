@@ -45,7 +45,9 @@ class PresetModel {
     List<CharacterSpec>? chars;
     if (row['characters'] != null && (row['characters'] as String).isNotEmpty) {
       final list = jsonDecode(row['characters'] as String) as List;
-      chars = list.map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>)).toList();
+      chars = list
+          .map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
 
     return PresetModel(

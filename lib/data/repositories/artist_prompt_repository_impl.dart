@@ -29,9 +29,12 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
 
   @override
   Future<List<String>> getCategories() async {
-    final rows = await _db.query(_categoriesTable, orderBy: 'name COLLATE NOCASE ASC');
+    final rows =
+        await _db.query(_categoriesTable, orderBy: 'name COLLATE NOCASE ASC');
     final categories = rows.map((row) => row['name'] as String).toList();
-    return categories.isEmpty ? ['二次元', '厚涂', '写实', '水墨', '黑白', 'R18'] : categories;
+    return categories.isEmpty
+        ? ['二次元', '厚涂', '写实', '水墨', '黑白', 'R18']
+        : categories;
   }
 
   @override
@@ -79,7 +82,8 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
   }
 
   @override
-  Future<void> delete(int id) => _db.delete(_artistsTable, where: 'id = ?', whereArgs: [id]);
+  Future<void> delete(int id) =>
+      _db.delete(_artistsTable, where: 'id = ?', whereArgs: [id]);
 
   @override
   Future<void> addCategory(String category) async {
@@ -101,7 +105,8 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
     for (final artist in artists) {
       if (!artist.categories.contains(name)) continue;
       final nextCategories = artist.categories.where((c) => c != name).toList();
-      await update(artist.copyWith(categories: nextCategories.isEmpty ? ['未分类'] : nextCategories));
+      await update(artist.copyWith(
+          categories: nextCategories.isEmpty ? ['未分类'] : nextCategories));
     }
   }
 
@@ -111,15 +116,17 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
     final categories = await getCategories();
     return {
       'version': 12,
-      'artists': artists.map((artist) => {
-            'id': artist.id,
-            'name': artist.name,
-            'tag': artist.tag,
-            'imageUrl': artist.imagePath,
-            'categories': artist.categories,
-            'danbooruCount': artist.danbooruCount,
-            'createdAt': artist.createdAt.millisecondsSinceEpoch,
-          }).toList(),
+      'artists': artists
+          .map((artist) => {
+                'id': artist.id,
+                'name': artist.name,
+                'tag': artist.tag,
+                'imageUrl': artist.imagePath,
+                'categories': artist.categories,
+                'danbooruCount': artist.danbooruCount,
+                'createdAt': artist.createdAt.millisecondsSinceEpoch,
+              })
+          .toList(),
       'categories': categories,
       'presets': const [],
     };
@@ -130,7 +137,8 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
     final rawArtists = data['artists'];
     final list = rawArtists is List ? rawArtists : const [];
     final existing = await getAll();
-    final existingTags = existing.map((artist) => artist.tag.toLowerCase()).toSet();
+    final existingTags =
+        existing.map((artist) => artist.tag.toLowerCase()).toSet();
     var added = 0;
 
     final rawCategories = data['categories'];
@@ -142,12 +150,17 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
 
     for (final item in list) {
       if (item is! Map) continue;
-      final tag = (item['tag'] ?? item['prompt'] ?? item['name'] ?? '').toString().trim();
+      final tag = (item['tag'] ?? item['prompt'] ?? item['name'] ?? '')
+          .toString()
+          .trim();
       if (tag.isEmpty || existingTags.contains(tag.toLowerCase())) continue;
       final name = (item['name'] ?? tag).toString().trim();
-      final imagePath = (item['imagePath'] ?? item['imageUrl'] ?? item['image'] ?? '').toString();
+      final imagePath =
+          (item['imagePath'] ?? item['imageUrl'] ?? item['image'] ?? '')
+              .toString();
       final categories = _readCategories(item);
-      final count = int.tryParse((item['danbooruCount'] ?? '0').toString()) ?? 0;
+      final count =
+          int.tryParse((item['danbooruCount'] ?? '0').toString()) ?? 0;
       await create(
         name: name,
         tag: tag,
@@ -204,7 +217,8 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
           tag: tag,
           imagePath: imagePath,
           categories: categories,
-          danbooruCount: int.tryParse((item['danbooruCount'] ?? '0').toString()) ?? 0,
+          danbooruCount:
+              int.tryParse((item['danbooruCount'] ?? '0').toString()) ?? 0,
           createdAt: createdAt,
           updatedAt: createdAt,
         )),
@@ -216,14 +230,20 @@ class ArtistPromptRepositoryImpl implements ArtistPromptRepository {
   List<String> _readCategories(Map item) {
     final rawCategories = item['categories'];
     if (rawCategories is List) {
-      return _normalizeCategories(rawCategories.map((e) => e.toString()).toList());
+      return _normalizeCategories(
+          rawCategories.map((e) => e.toString()).toList());
     }
     final category = item['category']?.toString();
-    return _normalizeCategories(category == null || category.isEmpty ? const [] : [category]);
+    return _normalizeCategories(
+        category == null || category.isEmpty ? const [] : [category]);
   }
 
   List<String> _normalizeCategories(List<String> categories) {
-    final result = categories.map((e) => e.trim()).where((e) => e.isNotEmpty && e != '全部').toSet().toList();
+    final result = categories
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty && e != '全部')
+        .toSet()
+        .toList();
     return result.isEmpty ? ['未分类'] : result;
   }
 

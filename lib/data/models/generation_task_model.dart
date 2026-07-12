@@ -5,6 +5,8 @@ class GenerationTaskModel {
   final int? id;
   final String taskId;
   final String model;
+  final String? endpointId;
+  final String? protocol;
   final String prompt;
   final String? negativePrompt;
   final int width;
@@ -13,6 +15,8 @@ class GenerationTaskModel {
   final double cfgRescale;
   final String sampler;
   final String noiseSchedule;
+  final int steps;
+  final bool useCoords;
   final int? seed;
   final List<CharacterSpec>? characters;
   final String status;
@@ -27,6 +31,8 @@ class GenerationTaskModel {
     this.id,
     required this.taskId,
     required this.model,
+    this.endpointId,
+    this.protocol,
     required this.prompt,
     this.negativePrompt,
     required this.width,
@@ -35,6 +41,8 @@ class GenerationTaskModel {
     required this.cfgRescale,
     required this.sampler,
     required this.noiseSchedule,
+    this.steps = 28,
+    this.useCoords = true,
     this.seed,
     this.characters,
     required this.status,
@@ -51,13 +59,17 @@ class GenerationTaskModel {
     List<CharacterSpec>? chars;
     if (row['characters'] != null && (row['characters'] as String).isNotEmpty) {
       final list = jsonDecode(row['characters'] as String) as List;
-      chars = list.map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>)).toList();
+      chars = list
+          .map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
 
     return GenerationTaskModel(
       id: row['id'] as int?,
       taskId: row['task_id'] as String,
       model: row['model'] as String,
+      endpointId: row['endpoint_id'] as String?,
+      protocol: row['protocol'] as String?,
       prompt: row['prompt'] as String,
       negativePrompt: row['negative_prompt'] as String?,
       width: row['width'] as int,
@@ -66,6 +78,8 @@ class GenerationTaskModel {
       cfgRescale: (row['cfg_rescale'] as num).toDouble(),
       sampler: row['sampler'] as String,
       noiseSchedule: row['noise_schedule'] as String,
+      steps: row['steps'] as int? ?? 28,
+      useCoords: (row['use_coords'] as int? ?? 1) == 1,
       seed: row['seed'] as int?,
       characters: chars,
       status: row['status'] as String,
@@ -86,6 +100,8 @@ class GenerationTaskModel {
       if (id != null) 'id': id,
       'task_id': taskId,
       'model': model,
+      'endpoint_id': endpointId,
+      'protocol': protocol,
       'prompt': prompt,
       'negative_prompt': negativePrompt,
       'width': width,
@@ -94,6 +110,8 @@ class GenerationTaskModel {
       'cfg_rescale': cfgRescale,
       'sampler': sampler,
       'noise_schedule': noiseSchedule,
+      'steps': steps,
+      'use_coords': useCoords ? 1 : 0,
       'seed': seed,
       'characters': characters != null
           ? jsonEncode(characters!.map((c) => c.toJson()).toList())
@@ -114,6 +132,8 @@ class GenerationTaskModel {
       id: entity.id,
       taskId: entity.taskId,
       model: entity.model,
+      endpointId: entity.endpointId,
+      protocol: entity.protocol,
       prompt: entity.prompt,
       negativePrompt: entity.negativePrompt,
       width: entity.width,
@@ -122,6 +142,8 @@ class GenerationTaskModel {
       cfgRescale: entity.cfgRescale,
       sampler: entity.sampler,
       noiseSchedule: entity.noiseSchedule,
+      steps: entity.steps,
+      useCoords: entity.useCoords,
       seed: entity.seed,
       characters: entity.characters,
       status: entity.status,
@@ -139,6 +161,8 @@ class GenerationTaskModel {
       id: id,
       taskId: taskId,
       model: model,
+      endpointId: endpointId,
+      protocol: protocol,
       prompt: prompt,
       negativePrompt: negativePrompt,
       width: width,
@@ -147,6 +171,8 @@ class GenerationTaskModel {
       cfgRescale: cfgRescale,
       sampler: sampler,
       noiseSchedule: noiseSchedule,
+      steps: steps,
+      useCoords: useCoords,
       seed: seed,
       characters: characters,
       status: status,

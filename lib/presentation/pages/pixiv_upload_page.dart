@@ -45,7 +45,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
 
   Future<void> _pickImages() async {
     if (_vm.imagePaths.length >= 4) {
-      showFloatingToast(context, '最多 4 张图片', icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, '最多 4 张图片',
+          icon: CupertinoIcons.exclamationmark_circle);
       return;
     }
     final picked = await _picker.pickMultiImage();
@@ -57,9 +58,11 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
     final id = await _vm.uploadNow();
     if (!mounted) return;
     if (id != null) {
-      showFloatingToast(context, '上传成功 PID: $id', icon: CupertinoIcons.checkmark_circle);
+      showFloatingToast(context, '上传成功 PID: $id',
+          icon: CupertinoIcons.checkmark_circle);
     } else if (_vm.error != null) {
-      showFloatingToast(context, _vm.error!, icon: CupertinoIcons.exclamationmark_circle);
+      showFloatingToast(context, _vm.error!,
+          icon: CupertinoIcons.exclamationmark_circle);
     }
   }
 
@@ -96,7 +99,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                     text: '请先在 Pixiv 设置中配置 Cookie 与 CSRF Token',
                     actionLabel: '前往设置',
                     onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(builder: (_) => const PixivSettingsPage()),
+                      CupertinoPageRoute(
+                          builder: (_) => const PixivSettingsPage()),
                     ),
                   ),
                 if (!settings.hasCredentials) const SizedBox(height: 14),
@@ -107,7 +111,9 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                       ? null
                       : Text('${_vm.imagePaths.length}/4',
                           style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                               fontSize: 12)),
                   child: _ImagesRow(
                     paths: _vm.imagePaths,
@@ -123,7 +129,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                       _vm.autoFillTitle();
                       _vm.autoFillCaption();
                       _vm.fetchSuggestedTags();
-                      showFloatingToast(context, '已自动填充', icon: CupertinoIcons.sparkles);
+                      showFloatingToast(context, '已自动填充',
+                          icon: CupertinoIcons.sparkles);
                     },
                   ),
                 ],
@@ -134,7 +141,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                   trailing: _IconBtn(
                     icon: CupertinoIcons.wand_stars,
                     label: '自动',
-                    onTap: _vm.detectedPrompt == null ? null : _vm.autoFillTitle,
+                    onTap:
+                        _vm.detectedPrompt == null ? null : _vm.autoFillTitle,
                   ),
                   child: TextField(
                     controller: _vm.titleCtrl,
@@ -172,7 +180,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                   trailing: _IconBtn(
                     icon: CupertinoIcons.tag_solid,
                     label: 'Pixiv 推荐',
-                    onTap: _vm.imagePaths.isEmpty ? null : _vm.fetchSuggestedTags,
+                    onTap:
+                        _vm.imagePaths.isEmpty ? null : _vm.fetchSuggestedTags,
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -203,7 +212,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                               onSubmitted: (v) {
                                 if (_vm.tags.length >= 10) {
                                   showFloatingToast(context, '标签最多 10 个',
-                                      icon: CupertinoIcons.exclamationmark_circle);
+                                      icon: CupertinoIcons
+                                          .exclamationmark_circle);
                                   return;
                                 }
                                 _vm.addTag(v);
@@ -254,7 +264,8 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: _vm.imagePaths.isEmpty || _vm.titleCtrl.text.trim().isEmpty
+                        onPressed: _vm.imagePaths.isEmpty ||
+                                _vm.titleCtrl.text.trim().isEmpty
                             ? null
                             : _doEnqueue,
                         icon: const Icon(CupertinoIcons.tray_arrow_down),
@@ -264,12 +275,15 @@ class _PixivUploadPageState extends State<PixivUploadPage> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: _vm.canUpload && !_vm.isUploading ? _doUpload : null,
+                        onPressed: _vm.canUpload && !_vm.isUploading
+                            ? _doUpload
+                            : null,
                         icon: _vm.isUploading
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2))
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
                             : const Icon(CupertinoIcons.cloud_upload),
                         label: Text(_vm.isUploading ? '上传中...' : '立即上传'),
                       ),
@@ -351,11 +365,13 @@ class _WarningCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFFB020).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFB020).withValues(alpha: 0.3)),
+        border:
+            Border.all(color: const Color(0xFFFFB020).withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          const Icon(CupertinoIcons.exclamationmark_triangle, color: Color(0xFFFFB020)),
+          const Icon(CupertinoIcons.exclamationmark_triangle,
+              color: Color(0xFFFFB020)),
           const SizedBox(width: 10),
           Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
           TextButton(onPressed: onTap, child: Text(actionLabel)),
@@ -384,8 +400,7 @@ class _NaiBadge extends StatelessWidget {
           Icon(CupertinoIcons.sparkles, color: primary, size: 18),
           const SizedBox(width: 8),
           const Expanded(
-            child: Text('已检测到 NovelAI 元数据',
-                style: TextStyle(fontSize: 13)),
+            child: Text('已检测到 NovelAI 元数据', style: TextStyle(fontSize: 13)),
           ),
           TextButton(onPressed: onAutoFill, child: const Text('一键自动填充')),
         ],
@@ -517,7 +532,9 @@ class _TagChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          Text(label,
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
           const SizedBox(width: 4),
           GestureDetector(
             onTap: onDeleted,
@@ -554,7 +571,8 @@ class _SwitchRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text(subtitle,
                     style: TextStyle(

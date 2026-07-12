@@ -10,8 +10,7 @@ class WritePromptTool extends AgentTool {
   String get name => 'write_prompt';
 
   @override
-  String get description =>
-      '把生成的提示词写入指定的提示词框。target 取值：'
+  String get description => '把生成的提示词写入指定的提示词框。target 取值：'
       'positive（正向主提示词）、negative（负向主提示词）、'
       'inpaint_positive（局部重绘正向）、inpaint_negative（局部重绘负向）、'
       'character_1 ~ character_6（多角色各自的 prompt 框）、'
@@ -58,7 +57,8 @@ class WritePromptTool extends AgentTool {
 
   /// 校验 target 名称合法（4 个主框 + character_N + character_N_uc）。
   static bool _isValidTarget(String t) {
-    if (const {'positive', 'negative', 'inpaint_positive', 'inpaint_negative'}.contains(t)) {
+    if (const {'positive', 'negative', 'inpaint_positive', 'inpaint_negative'}
+        .contains(t)) {
       return true;
     }
     return RegExp(r'^character_([1-6])(_uc)?$').hasMatch(t);

@@ -13,11 +13,15 @@ class WdTaggerModel {
 
   static const presets = [
     WdTaggerModel(repo: 'SmilingWolf/wd-swinv2-tagger-v3', label: 'SwinV2 v3'),
-    WdTaggerModel(repo: 'SmilingWolf/wd-convnext-tagger-v3', label: 'ConvNext v3'),
+    WdTaggerModel(
+        repo: 'SmilingWolf/wd-convnext-tagger-v3', label: 'ConvNext v3'),
     WdTaggerModel(repo: 'SmilingWolf/wd-vit-tagger-v3', label: 'ViT v3'),
     WdTaggerModel(repo: 'SmilingWolf/wd-v1-4-moat-tagger-v2', label: 'MOAT v2'),
-    WdTaggerModel(repo: 'SmilingWolf/wd-v1-4-swinv2-tagger-v2', label: 'SwinV2 v2'),
-    WdTaggerModel(repo: 'SmilingWolf/wd-v1-4-convnextv2-tagger-v2', label: 'ConvNextV2 v2'),
+    WdTaggerModel(
+        repo: 'SmilingWolf/wd-v1-4-swinv2-tagger-v2', label: 'SwinV2 v2'),
+    WdTaggerModel(
+        repo: 'SmilingWolf/wd-v1-4-convnextv2-tagger-v2',
+        label: 'ConvNextV2 v2'),
   ];
 }
 
@@ -67,8 +71,8 @@ class WdTaggerApiService {
     bool characterMcutEnabled = false,
   }) async {
     // 1. 上传图片到 Gradio 临时文件，得到 file path
-    final filePath = await _retryOn503(() => _uploadFile(imagePath),
-        label: '上传图片');
+    final filePath =
+        await _retryOn503(() => _uploadFile(imagePath), label: '上传图片');
 
     // 2. 提交任务
     final eventId = await _retryOn503(
@@ -111,9 +115,14 @@ class WdTaggerApiService {
   Future<T> _retryOn503<T>(Future<T> Function() fn, {String label = ''}) async {
     const maxRetries = 8;
     const delays = [
-      Duration(seconds: 10), Duration(seconds: 15), Duration(seconds: 20),
-      Duration(seconds: 30), Duration(seconds: 30), Duration(seconds: 45),
-      Duration(seconds: 60), Duration(seconds: 60),
+      Duration(seconds: 10),
+      Duration(seconds: 15),
+      Duration(seconds: 20),
+      Duration(seconds: 30),
+      Duration(seconds: 30),
+      Duration(seconds: 45),
+      Duration(seconds: 60),
+      Duration(seconds: 60),
     ];
 
     for (int i = 0; i < maxRetries; i++) {
@@ -124,7 +133,8 @@ class WdTaggerApiService {
         if (status == 503 || status == 502 || status == 429) {
           if (i < maxRetries - 1) {
             final delay = delays[i];
-            debugPrint('[WD-Tagger] $label 收到 $status，${delay.inSeconds}s 后重试 (${i + 1}/$maxRetries)');
+            debugPrint(
+                '[WD-Tagger] $label 收到 $status，${delay.inSeconds}s 后重试 (${i + 1}/$maxRetries)');
             await Future.delayed(delay);
             continue;
           }
@@ -137,7 +147,8 @@ class WdTaggerApiService {
         if (msg.contains('Queue is full') || msg.contains('队列已满')) {
           if (i < maxRetries - 1) {
             final delay = delays[i];
-            debugPrint('[WD-Tagger] $label 队列已满，${delay.inSeconds}s 后重试 (${i + 1}/$maxRetries)');
+            debugPrint(
+                '[WD-Tagger] $label 队列已满，${delay.inSeconds}s 后重试 (${i + 1}/$maxRetries)');
             await Future.delayed(delay);
             continue;
           }

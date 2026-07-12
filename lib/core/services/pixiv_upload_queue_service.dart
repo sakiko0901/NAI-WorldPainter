@@ -104,8 +104,10 @@ class PixivUploadQueueService {
     final settings = _settings.load();
 
     // mark uploading
-    _update(id, (t) => t.copyWith(
-        status: PixivUploadStatus.uploading, clearError: true));
+    _update(
+        id,
+        (t) =>
+            t.copyWith(status: PixivUploadStatus.uploading, clearError: true));
 
     PixivUploadTask? current = _findById(id);
     if (current == null) return;
@@ -122,9 +124,10 @@ class PixivUploadQueueService {
         imagesToUpload = cloaked;
       } catch (e) {
         debugPrint('[PixivQueue] 隐写失败: $e');
-        _update(id, (t) => t.copyWith(
-            status: PixivUploadStatus.failed,
-            error: '隐写擦除失败: $e'));
+        _update(
+            id,
+            (t) => t.copyWith(
+                status: PixivUploadStatus.failed, error: '隐写擦除失败: $e'));
         return;
       }
     }
@@ -146,30 +149,38 @@ class PixivUploadQueueService {
           createdAt: replaced.createdAt,
         ),
       );
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.cooldown,
-          illustId: illustId,
-          completedAt: DateTime.now(),
-          clearError: true));
+      _update(
+          id,
+          (t) => t.copyWith(
+              status: PixivUploadStatus.cooldown,
+              illustId: illustId,
+              completedAt: DateTime.now(),
+              clearError: true));
       await _doCooldown(id, settings.cooldownMinutes);
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.completed, clearCooldown: true));
+      _update(
+          id,
+          (t) => t.copyWith(
+              status: PixivUploadStatus.completed, clearCooldown: true));
     } on PixivCooldownException catch (e) {
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.failed,
-          error: '投稿冷却：${e.message}'));
+      _update(
+          id,
+          (t) => t.copyWith(
+              status: PixivUploadStatus.failed, error: '投稿冷却：${e.message}'));
     } on PixivAuthException catch (e) {
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.failed,
-          error: '鉴权失败：${e.message}'));
+      _update(
+          id,
+          (t) => t.copyWith(
+              status: PixivUploadStatus.failed, error: '鉴权失败：${e.message}'));
     } on PixivUploadException catch (e) {
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.failed,
-          error: e.message));
+      _update(
+          id,
+          (t) =>
+              t.copyWith(status: PixivUploadStatus.failed, error: e.message));
     } catch (e) {
-      _update(id, (t) => t.copyWith(
-          status: PixivUploadStatus.failed,
-          error: '上传异常: $e'));
+      _update(
+          id,
+          (t) =>
+              t.copyWith(status: PixivUploadStatus.failed, error: '上传异常: $e'));
     }
   }
 

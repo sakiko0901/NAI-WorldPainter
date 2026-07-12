@@ -64,7 +64,8 @@ class PixivSettings extends Equatable {
     );
   }
 
-  bool get hasCredentials => cookie.trim().isNotEmpty && csrfToken.trim().isNotEmpty;
+  bool get hasCredentials =>
+      cookie.trim().isNotEmpty && csrfToken.trim().isNotEmpty;
 
   @override
   List<Object?> get props => [

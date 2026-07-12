@@ -37,8 +37,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
   }
 
   Future<void> _showEditor([PromptMemory? memory]) async {
-    final triggerController = TextEditingController(text: memory?.trigger ?? '');
-    final contentController = TextEditingController(text: memory?.content ?? '');
+    final triggerController =
+        TextEditingController(text: memory?.trigger ?? '');
+    final contentController =
+        TextEditingController(text: memory?.content ?? '');
     var type = memory?.type ?? PromptMemoryType.other;
 
     await showCupertinoDialog<void>(
@@ -66,14 +68,27 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                   value: type,
                   isExpanded: true,
                   items: const [
-                    DropdownMenuItem(value: PromptMemoryType.characterName, child: Text('人名')),
-                    DropdownMenuItem(value: PromptMemoryType.characterFeature, child: Text('人物特征')),
-                    DropdownMenuItem(value: PromptMemoryType.style, child: Text('画风')),
-                    DropdownMenuItem(value: PromptMemoryType.fact, child: Text('事实(agent)')),
-                    DropdownMenuItem(value: PromptMemoryType.preference, child: Text('偏好(agent)')),
-                    DropdownMenuItem(value: PromptMemoryType.observation, child: Text('观察(agent)')),
-                    DropdownMenuItem(value: PromptMemoryType.decision, child: Text('决策(agent)')),
-                    DropdownMenuItem(value: PromptMemoryType.other, child: Text('其他')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.characterName,
+                        child: Text('人名')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.characterFeature,
+                        child: Text('人物特征')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.style, child: Text('画风')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.fact, child: Text('事实(agent)')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.preference,
+                        child: Text('偏好(agent)')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.observation,
+                        child: Text('观察(agent)')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.decision,
+                        child: Text('决策(agent)')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.other, child: Text('其他')),
                   ],
                   onChanged: (v) {
                     if (v != null) setDialogState(() => type = v);
@@ -165,7 +180,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(existing.content,
@@ -177,7 +195,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(newMemory.content,
@@ -249,10 +270,16 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                   value: type,
                   isExpanded: true,
                   items: const [
-                    DropdownMenuItem(value: PromptMemoryType.characterName, child: Text('人名')),
-                    DropdownMenuItem(value: PromptMemoryType.characterFeature, child: Text('人物特征')),
-                    DropdownMenuItem(value: PromptMemoryType.style, child: Text('画风')),
-                    DropdownMenuItem(value: PromptMemoryType.other, child: Text('其他')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.characterName,
+                        child: Text('人名')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.characterFeature,
+                        child: Text('人物特征')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.style, child: Text('画风')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.other, child: Text('其他')),
                   ],
                   onChanged: (v) {
                     if (v != null) setDialogState(() => type = v);
@@ -405,7 +432,9 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                     ? Center(
                         child: Text('暂无记忆',
                             style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant)),
                       )
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -415,15 +444,22 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                           final isSuperseded = memory.supersededBy != null;
                           return Card(
                             color: isSuperseded
-                                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.04)
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.04)
                                 : null,
                             child: ListTile(
                               title: Text(
                                 memory.trigger,
                                 style: TextStyle(
-                                  decoration: isSuperseded ? TextDecoration.lineThrough : null,
+                                  decoration: isSuperseded
+                                      ? TextDecoration.lineThrough
+                                      : null,
                                   color: isSuperseded
-                                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
                                       : null,
                                 ),
                               ),
@@ -438,8 +474,11 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                               ),
                               onTap: () => _showEditor(memory),
                               trailing: IconButton(
-                                icon: Icon(CupertinoIcons.delete, color: Colors.redAccent),
-                                onPressed: memory.id == null ? null : () => _vm.delete(memory.id!),
+                                icon: Icon(CupertinoIcons.delete,
+                                    color: Colors.redAccent),
+                                onPressed: memory.id == null
+                                    ? null
+                                    : () => _vm.delete(memory.id!),
                               ),
                             ),
                           );
@@ -459,14 +498,16 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
       decoration: BoxDecoration(
         color: theme.colorScheme.primary.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+        border:
+            Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(CupertinoIcons.clock, size: 16, color: theme.colorScheme.primary),
+              Icon(CupertinoIcons.clock,
+                  size: 16, color: theme.colorScheme.primary),
               SizedBox(width: 6),
               Text(
                 '待确认候选（${_vm.pendingCount}）',
@@ -490,7 +531,8 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(m.trigger,
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                            style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w500)),
                         Text(m.content,
                             style: TextStyle(
                                 fontSize: 12,

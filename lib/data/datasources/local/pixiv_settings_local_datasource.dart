@@ -22,7 +22,8 @@ class PixivSettingsLocalDatasource {
           List<String>.from(AppConstants.defaultPixivTags),
       r18Default: _prefs.getBool(AppConstants.keyPixivR18Default) ?? false,
       allowTagEdit: _prefs.getBool(AppConstants.keyPixivAllowTagEdit) ?? true,
-      stripMetadata: _prefs.getBool(AppConstants.keyPixivStripMetadata) ?? false,
+      stripMetadata:
+          _prefs.getBool(AppConstants.keyPixivStripMetadata) ?? false,
       suggestTagsEnabled:
           _prefs.getBool(AppConstants.keyPixivSuggestTagsEnabled) ?? true,
       cooldownMinutes: _prefs.getInt(AppConstants.keyPixivCooldownMinutes) ??
@@ -47,8 +48,10 @@ class PixivSettingsLocalDatasource {
     await _prefs.setBool(AppConstants.keyPixivStripMetadata, s.stripMetadata);
     await _prefs.setBool(
         AppConstants.keyPixivSuggestTagsEnabled, s.suggestTagsEnabled);
-    await _prefs.setInt(AppConstants.keyPixivCooldownMinutes, s.cooldownMinutes);
-    await _prefs.setDouble(AppConstants.keyPixivRepTagsPercent, s.repTagsPercent);
+    await _prefs.setInt(
+        AppConstants.keyPixivCooldownMinutes, s.cooldownMinutes);
+    await _prefs.setDouble(
+        AppConstants.keyPixivRepTagsPercent, s.repTagsPercent);
     await _prefs.setString(AppConstants.keyPixivRepTagsFill, s.repTagsFill);
     await _prefs.setString(AppConstants.keyPixivJunkText, s.junkText);
   }
@@ -89,7 +92,8 @@ class PixivSettingsLocalDatasource {
       final list = jsonDecode(raw) as List;
       return list
           .whereType<Map>()
-          .map((e) => e.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')))
+          .map((e) =>
+              e.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')))
           .toList();
     } catch (_) {
       return const [];

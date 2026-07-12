@@ -57,8 +57,16 @@ abstract class SettingsRepository {
   Future<double> getCfgRescaleDraft();
   Future<void> setCfgRescaleDraft(double value);
 
+  Future<int> getStepsDraft();
+  Future<void> setStepsDraft(int value);
+
+  Future<bool> getStepsLocked();
+  Future<void> setStepsLocked(bool value);
+
   Future<List<CharacterSpec>> getCharactersDraft();
   Future<void> setCharactersDraft(List<CharacterSpec> value);
+  Future<List<CharacterReferenceImage>> getVibeReferencesDraft();
+  Future<void> setVibeReferencesDraft(List<CharacterReferenceImage> value);
 
   Future<String> getInpaintPromptDraft();
   Future<void> setInpaintPromptDraft(String value);

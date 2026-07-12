@@ -70,7 +70,8 @@ class AgentEvent {
     return AgentEvent(
       toolName: json['toolName'] as String? ?? '',
       toolCallId: json['toolCallId'] as String? ?? '',
-      arguments: (json['arguments'] as Map?)?.cast<String, dynamic>() ?? const {},
+      arguments:
+          (json['arguments'] as Map?)?.cast<String, dynamic>() ?? const {},
       status: json['status'] as String? ?? 'done',
       result: json['result'] is Map
           ? ToolResult.fromJson(json['result'] as Map<String, dynamic>)

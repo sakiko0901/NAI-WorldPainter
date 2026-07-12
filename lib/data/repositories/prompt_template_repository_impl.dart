@@ -12,13 +12,15 @@ class PromptTemplateRepositoryImpl implements PromptTemplateRepository {
 
   @override
   Future<List<PromptTemplate>> getAllTemplates() async {
-    final rows = await _db.query(_table, orderBy: 'use_count DESC, updated_at DESC');
+    final rows =
+        await _db.query(_table, orderBy: 'use_count DESC, updated_at DESC');
     return rows.map((r) => PromptTemplateModel.fromDb(r).toEntity()).toList();
   }
 
   @override
   Future<PromptTemplate?> getTemplate(int id) async {
-    final rows = await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await _db.query(_table, where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     return PromptTemplateModel.fromDb(rows.first).toEntity();
   }
@@ -33,7 +35,8 @@ class PromptTemplateRepositoryImpl implements PromptTemplateRepository {
   @override
   Future<PromptTemplate> updateTemplate(PromptTemplate template) async {
     final model = PromptTemplateModel.fromEntity(template);
-    await _db.update(_table, model.toDb(), where: 'id = ?', whereArgs: [template.id]);
+    await _db.update(_table, model.toDb(),
+        where: 'id = ?', whereArgs: [template.id]);
     return template;
   }
 

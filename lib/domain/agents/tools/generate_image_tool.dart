@@ -12,8 +12,7 @@ class GenerateImageTool extends AgentTool {
   String get name => 'generate_image';
 
   @override
-  String get description =>
-      '调用生图队列生成图像（需用户确认）。'
+  String get description => '调用生图队列生成图像（需用户确认）。'
       '默认使用 GenerationViewModel 当前配置（model/resolution/sampler/scale/seed 等）。'
       '可通过 prompt 参数临时覆盖正向提示词，通过 negative_prompt 覆盖负向，通过 batch_count 指定批量。'
       '生成完成后图像会显示在生图区，用户可继续操作。';

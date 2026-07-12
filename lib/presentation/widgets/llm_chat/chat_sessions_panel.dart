@@ -121,7 +121,8 @@ class _SessionsPanelState extends State<_SessionsPanel> {
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1C1C21) : Colors.white,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border.all(color: theme.colorScheme.onSurface.withValues(alpha: 0.08)),
+          border: Border.all(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.08)),
         ),
         child: SafeArea(
           top: false,
@@ -133,7 +134,8 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                   const Expanded(
                     child: Text(
                       '会话历史',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                     ),
                   ),
                   FilledButton.tonalIcon(
@@ -155,8 +157,10 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                   label: const Text('一键删除所有历史会话'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.redAccent,
-                    side: BorderSide(color: Colors.redAccent.withValues(alpha: 0.35)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    side: BorderSide(
+                        color: Colors.redAccent.withValues(alpha: 0.35)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
                   ),
                 ),
               ),
@@ -165,7 +169,11 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                 child: sessions.isEmpty
                     ? Padding(
                         padding: EdgeInsets.symmetric(vertical: 32),
-                        child: Text('还没有会话', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        child: Text('还没有会话',
+                            style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant)),
                       )
                     : ListView.separated(
                         shrinkWrap: true,
@@ -201,7 +209,8 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                                             .colorScheme
                                             .primary
                                             .withValues(alpha: 0.5)
-                                        : theme.colorScheme.onSurface.withValues(alpha: 0.06),
+                                        : theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.06),
                                   ),
                                 ),
                                 child: Row(
@@ -224,7 +233,9 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                                             _formatDate(session.updatedAt),
                                             style: TextStyle(
                                                 fontSize: 12,
-                                                color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant),
                                           ),
                                         ],
                                       ),
@@ -233,13 +244,13 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                                     // 避免 PopupMenuButton 的 context 层级问题
                                     Builder(
                                       builder: (btnCtx) => IconButton(
-                                        icon: Icon(
-                                            CupertinoIcons.ellipsis,
-                                            color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                        icon: Icon(CupertinoIcons.ellipsis,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant),
                                         onPressed: () async {
-                                          final RenderBox button =
-                                              btnCtx.findRenderObject()
-                                                  as RenderBox;
+                                          final RenderBox button = btnCtx
+                                              .findRenderObject() as RenderBox;
                                           final RenderBox overlay =
                                               Navigator.of(btnCtx)
                                                       .overlay!
@@ -253,8 +264,7 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                                                 button.size,
                                             Offset.zero & overlay.size,
                                           );
-                                          final value =
-                                              await showMenu<String>(
+                                          final value = await showMenu<String>(
                                             context: btnCtx,
                                             position: position,
                                             items: const [

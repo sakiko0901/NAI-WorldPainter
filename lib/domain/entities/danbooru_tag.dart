@@ -47,7 +47,11 @@ class DanbooruTag extends Equatable {
 
   bool get isNsfw {
     final n = nsfw.toLowerCase();
-    return n == 'questionable' || n == 'explicit' || n == 'r' || n == 'q' || n == 'e';
+    return n == 'questionable' ||
+        n == 'explicit' ||
+        n == 'r' ||
+        n == 'q' ||
+        n == 'e';
   }
 
   @override

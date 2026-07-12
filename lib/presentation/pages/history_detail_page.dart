@@ -56,7 +56,8 @@ class HistoryDetailPage extends StatelessWidget {
             return Center(
               child: CircularProgressIndicator(
                 value: progress.expectedTotalBytes != null
-                    ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                    ? progress.cumulativeBytesLoaded /
+                        progress.expectedTotalBytes!
                     : null,
               ),
             );
@@ -65,7 +66,8 @@ class HistoryDetailPage extends StatelessWidget {
         ),
       );
     } else {
-      imageWidget = Center(child: Icon(Icons.image_not_supported_outlined, size: 64));
+      imageWidget =
+          Center(child: Icon(Icons.image_not_supported_outlined, size: 64));
     }
 
     return Card(
@@ -139,7 +141,8 @@ class HistoryDetailPage extends StatelessWidget {
                       ),
                     ),
                     Expanded(
-                      child: SelectableText(p.$2, style: theme.textTheme.bodyMedium),
+                      child: SelectableText(p.$2,
+                          style: theme.textTheme.bodyMedium),
                     ),
                   ],
                 ),
@@ -180,12 +183,14 @@ class HistoryDetailPage extends StatelessWidget {
       if (task.imagePath != null && File(task.imagePath!).existsSync()) {
         final saved = await saveUseCase.saveToGallery(task.imagePath!);
         if (!context.mounted) return;
-        showFloatingToast(context, saved ? '已保存到相册' : '保存失败', icon: Icons.save_alt);
+        showFloatingToast(context, saved ? '已保存到相册' : '保存失败',
+            icon: Icons.save_alt);
       } else if (task.imageUrl != null) {
         final filePath = await saveUseCase.execute(task);
         final saved = await saveUseCase.saveToGallery(filePath);
         if (!context.mounted) return;
-        showFloatingToast(context, saved ? '已保存到相册' : '保存失败', icon: Icons.save_alt);
+        showFloatingToast(context, saved ? '已保存到相册' : '保存失败',
+            icon: Icons.save_alt);
       }
     } catch (e) {
       if (!context.mounted) return;

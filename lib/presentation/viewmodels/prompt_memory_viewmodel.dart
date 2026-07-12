@@ -100,7 +100,8 @@ class PromptMemoryViewModel extends ChangeNotifier {
   }
 
   /// 晋升 pending 候选为正式记忆
-  Future<void> promotePending(int id, {String? newContent, String? newTrigger}) async {
+  Future<void> promotePending(int id,
+      {String? newContent, String? newTrigger}) async {
     final pending = pendingMemories.where((m) => m.id == id).firstOrNull;
     if (pending == null) return;
     final trigger = (newTrigger ?? pending.trigger).trim();

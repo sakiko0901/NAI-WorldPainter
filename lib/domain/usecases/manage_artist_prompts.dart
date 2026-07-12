@@ -25,7 +25,8 @@ class ManageArtistPromptsUseCase {
   Future<ArtistPrompt> update(ArtistPrompt artist) => _repo.update(artist);
   Future<void> delete(int id) => _repo.delete(id);
   Future<void> addCategory(String category) => _repo.addCategory(category);
-  Future<void> deleteCategory(String category) => _repo.deleteCategory(category);
+  Future<void> deleteCategory(String category) =>
+      _repo.deleteCategory(category);
   Future<Map<String, dynamic>> exportData() => _repo.exportData();
   Future<int> importData(Map<String, dynamic> data) => _repo.importData(data);
 }

@@ -11,16 +11,19 @@ Dio createRobustDio() {
 
   dio.interceptors.add(InterceptorsWrapper(
     onRequest: (options, handler) {
-      debugPrint('[网络日志] >>> ${options.method} ${options.baseUrl}${options.path}');
+      debugPrint(
+          '[网络日志] >>> ${options.method} ${options.baseUrl}${options.path}');
       handler.next(options);
     },
     onResponse: (response, handler) {
-      debugPrint('[网络日志] <<< ${response.statusCode} ${response.requestOptions.baseUrl}${response.requestOptions.path}');
+      debugPrint(
+          '[网络日志] <<< ${response.statusCode} ${response.requestOptions.baseUrl}${response.requestOptions.path}');
       handler.next(response);
     },
     onError: (error, handler) {
       debugPrint('[网络日志] !!! ${error.type} ${error.message}');
-      debugPrint('[网络日志]   url: ${error.requestOptions.baseUrl}${error.requestOptions.path}');
+      debugPrint(
+          '[网络日志]   url: ${error.requestOptions.baseUrl}${error.requestOptions.path}');
       debugPrint('[网络日志]   status: ${error.response?.statusCode}');
       debugPrint('[网络日志]   response: ${error.response?.data}');
       handler.next(error);
@@ -39,7 +42,8 @@ HttpClientAdapter createRobustAdapter() {
       client.idleTimeout = const Duration(minutes: 15);
       client.connectionFactory = _createDohConnection;
       client.connectionTimeout = const Duration(seconds: 15);
-      client.badCertificateCallback = (X509Certificate cert, String host, int port) {
+      client.badCertificateCallback =
+          (X509Certificate cert, String host, int port) {
         debugPrint('[网络日志] badCertificate: host=$host port=$port');
         return true;
       };
@@ -73,14 +77,16 @@ Future<ConnectionTask<Socket>> _createDohConnection(
   final ipv4 = addresses.where((a) => a.type == InternetAddressType.IPv4);
   final ipv6 = addresses.where((a) => a.type == InternetAddressType.IPv6);
 
-  debugPrint('[网络日志] DoH结果: IPv4=${ipv4.map((a) => a.address).toList()} IPv6=${ipv6.map((a) => a.address).toList()}');
+  debugPrint(
+      '[网络日志] DoH结果: IPv4=${ipv4.map((a) => a.address).toList()} IPv6=${ipv6.map((a) => a.address).toList()}');
 
   final ordered = [...ipv4, ...ipv6];
 
   for (final addr in ordered) {
     try {
       debugPrint('[网络日志] 尝试连接: ${addr.address}:$port');
-      final socket = await _connectAndUpgrade(addr.address, port, isSecure, sniHost: host);
+      final socket =
+          await _connectAndUpgrade(addr.address, port, isSecure, sniHost: host);
       debugPrint('[网络日志] 连接成功: ${addr.address}:$port');
       return ConnectionTask.fromSocket(Future.value(socket), () {});
     } catch (e) {
@@ -93,7 +99,8 @@ Future<ConnectionTask<Socket>> _createDohConnection(
     final localAddresses = await InternetAddress.lookup(host);
     for (final addr in localAddresses) {
       try {
-        final socket = await _connectAndUpgrade(addr.address, port, isSecure, sniHost: host);
+        final socket = await _connectAndUpgrade(addr.address, port, isSecure,
+            sniHost: host);
         debugPrint('[网络日志] 本地DNS连接成功: ${addr.address}:$port');
         return ConnectionTask.fromSocket(Future.value(socket), () {});
       } catch (_) {}
@@ -106,8 +113,10 @@ Future<ConnectionTask<Socket>> _createDohConnection(
 }
 
 /// 建立 TCP 连接，如果是 https 则升级为 SecureSocket（带正确 SNI）
-Future<Socket> _connectAndUpgrade(String ip, int port, bool isSecure, {String? sniHost}) async {
-  final tcpSocket = await Socket.connect(ip, port, timeout: const Duration(seconds: 10));
+Future<Socket> _connectAndUpgrade(String ip, int port, bool isSecure,
+    {String? sniHost}) async {
+  final tcpSocket =
+      await Socket.connect(ip, port, timeout: const Duration(seconds: 10));
 
   if (!isSecure) return tcpSocket;
 
@@ -140,7 +149,8 @@ Future<List<InternetAddress>> _dohLookup(String domain) async {
       final resolved = await _queryDoh(server, domain);
       if (resolved.isNotEmpty) {
         results.addAll(resolved);
-        debugPrint('[网络日志] DoH成功: ${server.host} -> ${resolved.map((a) => a.address).toList()}');
+        debugPrint(
+            '[网络日志] DoH成功: ${server.host} -> ${resolved.map((a) => a.address).toList()}');
         return results;
       }
     } catch (e) {
@@ -151,7 +161,8 @@ Future<List<InternetAddress>> _dohLookup(String domain) async {
   return results;
 }
 
-Future<List<InternetAddress>> _queryDoh(_DohServer server, String domain) async {
+Future<List<InternetAddress>> _queryDoh(
+    _DohServer server, String domain) async {
   final results = <InternetAddress>[];
 
   try {

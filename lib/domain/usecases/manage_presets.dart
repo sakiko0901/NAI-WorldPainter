@@ -11,6 +11,7 @@ class ManagePresetsUseCase {
   Future<Preset> create(Preset preset) => _repo.createPreset(preset);
   Future<Preset> update(Preset preset) => _repo.updatePreset(preset);
   Future<void> delete(int id) => _repo.deletePreset(id);
-  Future<List<Preset>> getByCategory(String category) => _repo.getPresetsByCategory(category);
+  Future<List<Preset>> getByCategory(String category) =>
+      _repo.getPresetsByCategory(category);
   Future<void> initBuiltin() => _repo.initBuiltinPresets();
 }

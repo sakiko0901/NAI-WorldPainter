@@ -32,7 +32,8 @@ class HistoryRepositoryImpl implements HistoryRepository {
   }
 
   @override
-  Future<List<GenerationTask>> getHistory({int page = 0, int pageSize = 20}) async {
+  Future<List<GenerationTask>> getHistory(
+      {int page = 0, int pageSize = 20}) async {
     final offset = page * pageSize;
     final rows = await _db.query(
       _table,

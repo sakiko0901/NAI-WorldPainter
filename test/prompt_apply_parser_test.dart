@@ -4,7 +4,9 @@ import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_apply_parser.dar
 void main() {
   group('parseAppliedSegments', () {
     group('JSON code block', () {
-      test('parses positive/negative/characters with two roles, second role has no negative', () {
+      test(
+          'parses positive/negative/characters with two roles, second role has no negative',
+          () {
         const content = '''
 这是一些建议：
 
@@ -27,7 +29,8 @@ void main() {
         expect(result.characterPrompts[1], 'red hair, red eyes');
         expect(result.characterNegatives.length, 2);
         expect(result.characterNegatives[0], 'green hair');
-        expect(result.characterNegatives[1], ''); // No negative for second character
+        expect(result.characterNegatives[1],
+            ''); // No negative for second character
         expect(result.isEmpty, false);
       });
 
@@ -102,7 +105,9 @@ void main() {
     });
 
     group('fallback labelled code blocks', () {
-      test('parses labelled code blocks for positive, character1, character1 negative, negative', () {
+      test(
+          'parses labelled code blocks for positive, character1, character1 negative, negative',
+          () {
         const content = '''
 正向：
 ```

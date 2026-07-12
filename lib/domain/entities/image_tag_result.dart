@@ -84,7 +84,10 @@ class ImageTagResult extends Equatable {
 
   factory ImageTagResult.fromJson(Map<String, dynamic> json) {
     List<TagEntry> parseList(List<dynamic>? list) =>
-        list?.map((e) => TagEntryJson.fromJson(e as Map<String, dynamic>)).toList() ?? [];
+        list
+            ?.map((e) => TagEntryJson.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        [];
 
     return ImageTagResult(
       source: TagSource.values[json['source'] as int? ?? 0],
@@ -100,7 +103,15 @@ class ImageTagResult extends Equatable {
   }
 
   @override
-  List<Object?> get props => [source, general, character, negativePrompt, negativeEntries, characters, metadata];
+  List<Object?> get props => [
+        source,
+        general,
+        character,
+        negativePrompt,
+        negativeEntries,
+        characters,
+        metadata
+      ];
 }
 
 extension TagEntryJson on TagEntry {

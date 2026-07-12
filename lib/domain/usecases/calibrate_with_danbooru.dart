@@ -45,7 +45,8 @@ class CalibrateWithDanbooruUseCase {
     int searchTopN = 6,
   }) async {
     final llmTokens = _splitTags(llmPositive);
-    final llmCoreTags = llmTokens.map(_stripWeights).where((t) => t.isNotEmpty).toList();
+    final llmCoreTags =
+        llmTokens.map(_stripWeights).where((t) => t.isNotEmpty).toList();
 
     // 并发触发 search + related
     final searchFuture = _api
@@ -182,7 +183,8 @@ class CalibrateWithDanbooruUseCase {
     int depth = 0; // 兼容 {} [] () 嵌套
     for (final ch in text.split('')) {
       if (ch == '{' || ch == '[' || ch == '(') depth++;
-      if (ch == '}' || ch == ']' || ch == ')') depth = depth > 0 ? depth - 1 : 0;
+      if (ch == '}' || ch == ']' || ch == ')')
+        depth = depth > 0 ? depth - 1 : 0;
       if (ch == ',' && depth == 0) {
         final piece = buf.toString().trim();
         if (piece.isNotEmpty) parts.add(piece);

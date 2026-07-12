@@ -36,5 +36,6 @@ class StylePreset extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, title, prompt, imagePath, createdAt, updatedAt];
+  List<Object?> get props =>
+      [id, title, prompt, imagePath, createdAt, updatedAt];
 }

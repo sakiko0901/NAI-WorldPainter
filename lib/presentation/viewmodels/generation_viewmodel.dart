@@ -7,6 +7,7 @@ import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/core/services/background_keepalive_service.dart';
 import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
+import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/entities/preset.dart';
@@ -21,17 +22,23 @@ class ImageModelOption {
   final String modelId;
   final String displayName;
   final ImageProviderType provider;
+
   /// 该模型属于哪个 endpoint。NovelAI 没有 endpoint 概念时为空。
   final String? endpointId;
+
   /// endpoint 的展示名（用于在下拉里前缀显示），NovelAI 时为空。
   final String? endpointName;
+  final String? protocol;
+  final String actualModel;
 
   const ImageModelOption({
     required this.modelId,
     required this.displayName,
     required this.provider,
+    required this.actualModel,
     this.endpointId,
     this.endpointName,
+    this.protocol,
   });
 }
 
@@ -57,6 +64,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String negativePrompt = '';
   String inpaintPrompt = '';
   String inpaintNegativePrompt = '';
+
   /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
   /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
   int _promptVersion = 0;
@@ -70,12 +78,28 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String selectedNoiseSchedule = 'native';
   int? seed;
   int? appliedSeed;
+  int steps = ApiConstants.defaultSteps;
+  bool isStepsLocked = false;
   List<NaiModel> models = [];
+
+  ImageModelOption? get currentModelOption => imageModelOptions
+      .where((option) => option.modelId == selectedModel)
+      .firstOrNull;
+
+  bool get isIkunEndpoint =>
+      currentModelOption?.protocol ==
+      AppConstants.novelAiImageGenerationsProtocol;
+
+  bool get is7877Endpoint =>
+      currentModelOption?.protocol ==
+      AppConstants.novelAiChatCompletionsProtocol;
+
   List<ImageModelOption> imageModelOptions = [];
 
   /// 当前选中模型所属的供应商
   ImageProviderType get currentProvider {
-    final opt = imageModelOptions.where((o) => o.modelId == selectedModel).toList();
+    final opt =
+        imageModelOptions.where((o) => o.modelId == selectedModel).toList();
     if (opt.isNotEmpty) return opt.first.provider;
     return ImageProviderType.novelAi;
   }
@@ -87,12 +111,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   List<String> get availableResolutions {
     if (isGptProvider) return ApiConstants.gptSupportedSizes;
     if (isNanoProvider) return ApiConstants.nanoSupportedSizes;
+    if (isIkunEndpoint) return ApiConstants.ikunSupportedResolutions;
     return ApiConstants.supportedResolutions.keys.toList();
   }
 
   String resolutionLabel(String value) {
     if (isGptProvider) return ApiConstants.gptSizeLabels[value] ?? value;
     if (isNanoProvider) return ApiConstants.nanoSizeLabels[value] ?? value;
+    if (isIkunEndpoint) return ApiConstants.ikunSizeLabels[value] ?? value;
     switch (value) {
       case '832x1216':
         return '纵向 832×1216';
@@ -105,16 +131,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
-  String nanoImageSizeLabel(String value) => ApiConstants.nanoImageSizeLabels[value] ?? value;
+  String nanoImageSizeLabel(String value) =>
+      ApiConstants.nanoImageSizeLabels[value] ?? value;
 
   String get _defaultResolutionForCurrentProvider {
     if (isGptProvider) return ApiConstants.gptSupportedSizes.first;
     if (isNanoProvider) return ApiConstants.nanoSupportedSizes.first;
     return ApiConstants.defaultResolution;
   }
+
   QueueState? queueState;
   GenerationTask? lastCompletedTask;
-  bool get isGenerating => _generateInFlight || (queueState?.isProcessing ?? false);
+  bool get isGenerating =>
+      _generateInFlight || (queueState?.isProcessing ?? false);
   int get pendingCount => queueState?.pendingCount ?? 0;
   String? errorMessage;
 
@@ -129,14 +158,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
     return null;
   }
+
   // 当前批次还需要发送的任务数（用于"批量生成中"提示）
   int _batchRemaining = 0;
   int get batchRemaining => _batchRemaining;
+
   /// 用户是否在缩略图条上手动选过某张。手动选过后，新到达的结果不再自动跟随。
   bool _userPickedResult = false;
+
   /// generate() 重入守卫：从按下"生成"到批次全部完成期间一直为 true，
   /// 比 queueState.isProcessing 更早置位、更晚置位，杜绝任何并发批次。
   bool _generateInFlight = false;
+
   /// 批量取消标志：用户在生成中再次点击"生成"按钮时设为 true，
   /// 当前正在生成的图跑完后，循环 break，剩余张数不再生成。
   bool _cancelBatch = false;
@@ -147,9 +180,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String? maskImagePath;
   double inpaintStrength = 1.0;
   List<String> gptImagePaths = []; // GPT 图生图参考图列表（最多16张）
+  List<CharacterReferenceImage> vibeReferences = [];
 
   StreamSubscription? _queueSub;
   StreamSubscription? _taskSub;
+  final Map<String, Future<void>> _taskProcessing = {};
+  final Set<String> _processedTaskIds = {};
 
   void _init() {
     _loadDefaults();
@@ -157,17 +193,28 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> _loadDefaults() async {
-    selectedModel = await _manageSettings.getSelectedModelDraft() ?? await _manageSettings.getDefaultModel() ?? '';
+    selectedModel = await _manageSettings.getSelectedModelDraft() ??
+        await _manageSettings.getDefaultModel() ??
+        '';
     selectedResolution = await _manageSettings.getSelectedResolutionDraft();
     selectedSampler = await _manageSettings.getSelectedSamplerDraft();
     scale = await _manageSettings.getScaleDraft();
     cfgRescale = await _manageSettings.getCfgRescaleDraft();
-    selectedNoiseSchedule = await _manageSettings.getSelectedNoiseScheduleDraft();
+    steps = await _manageSettings.getStepsDraft();
+    isStepsLocked = await _manageSettings.getStepsLocked();
+    if (isStepsLocked && steps != ApiConstants.defaultSteps) {
+      steps = ApiConstants.defaultSteps;
+      await _manageSettings.setStepsDraft(steps);
+    }
+    selectedNoiseSchedule =
+        await _manageSettings.getSelectedNoiseScheduleDraft();
     prompt = await _manageSettings.getPromptDraft();
     negativePrompt = await _manageSettings.getNegativePromptDraft();
     inpaintPrompt = await _manageSettings.getInpaintPromptDraft();
-    inpaintNegativePrompt = await _manageSettings.getInpaintNegativePromptDraft();
+    inpaintNegativePrompt =
+        await _manageSettings.getInpaintNegativePromptDraft();
     characters = await _manageSettings.getCharactersDraft();
+    vibeReferences = await _manageSettings.getVibeReferencesDraft();
     batchCount = await _manageSettings.getBatchCount();
 
     notifyListeners();
@@ -179,70 +226,111 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       notifyListeners();
     });
 
-    _taskSub = _queue.taskStream.listen((task) async {
-      if (task.status == 'success') {
-        try {
-          final filePath = await _saveImage.execute(task);
-          final completed = task.copyWith(imagePath: filePath);
+    _taskSub = _queue.taskStream.listen(_onQueueTask);
+  }
+
+  Future<void> _onQueueTask(GenerationTask task) async {
+    if (!_isFinalTask(task)) return;
+    await _applyCompletedTask(task);
+  }
+
+  bool _isFinalTask(GenerationTask task) =>
+      task.status == AppConstants.taskSuccess ||
+      task.status == AppConstants.taskFailed;
+
+  Future<void> _applyCompletedTask(GenerationTask task) {
+    if (_processedTaskIds.contains(task.taskId)) return Future.value();
+    return _taskProcessing.putIfAbsent(task.taskId, () async {
+      await Future<void>.value();
+      if (_processedTaskIds.contains(task.taskId)) return;
+      try {
+        if (task.status == AppConstants.taskSuccess) {
+          GenerationTask completed;
+          try {
+            final filePath = await _saveImage.execute(task);
+            completed = task.copyWith(imagePath: filePath);
+          } catch (_) {
+            completed = task;
+          }
           lastCompletedTask = completed;
-          sessionResults = [...sessionResults, completed];
+          if (!sessionResults.any((result) => result.taskId == task.taskId)) {
+            sessionResults = [...sessionResults, completed];
+          }
           // 自动跟随到最新结果，除非用户已手动锁定某张
           if (!_userPickedResult) {
             selectedResultTaskId = completed.taskId;
           }
-        } catch (_) {
-          lastCompletedTask = task;
-          sessionResults = [...sessionResults, task];
-          if (!_userPickedResult) {
-            selectedResultTaskId = task.taskId;
-          }
+          errorMessage = null;
+        } else {
+          errorMessage = task.errorMessage;
         }
-        errorMessage = null;
-      } else if (task.status == 'failed') {
-        errorMessage = task.errorMessage;
+        _processedTaskIds.add(task.taskId);
+        notifyListeners();
+      } finally {
+        _taskProcessing.remove(task.taskId);
       }
-      notifyListeners();
     });
+  }
+
+  ImageModelOption _endpointModelOption({
+    required String prefix,
+    required ApiEndpoint endpoint,
+    required String model,
+    required ImageProviderType provider,
+  }) {
+    return ImageModelOption(
+      modelId: '$prefix:${endpoint.id}:$model',
+      displayName: model,
+      provider: provider,
+      actualModel: model,
+      endpointId: endpoint.id,
+      endpointName: endpoint.name,
+      protocol: endpoint.protocol,
+    );
   }
 
   Future<void> loadModels() async {
     final options = <ImageModelOption>[];
 
-    // NovelAI — 优先用 active endpoint 中维护的模型列表；
-    // 若无，再尝试远程 fetchModels（现有 NovelAI 网关行为）
-    final novelEndpoint = await _manageSettings.getActiveEndpoint(ImageProviderType.novelAi);
-    final naiManualModels = novelEndpoint?.models ?? const <String>[];
-    if (naiManualModels.isNotEmpty) {
-      for (final m in naiManualModels) {
-        options.add(ImageModelOption(
-          modelId: m,
-          displayName: m,
+    // NovelAI — 聚合全部固定槽位，每个选项保留 endpoint、协议和真实模型。
+    final novelEndpoints =
+        await _manageSettings.getEndpoints(ImageProviderType.novelAi);
+    for (final ep in novelEndpoints) {
+      for (final model in ep.models) {
+        options.add(_endpointModelOption(
+          prefix: 'nai',
+          endpoint: ep,
+          model: model,
           provider: ImageProviderType.novelAi,
         ));
       }
-    } else {
+    }
+    if (novelEndpoints.isEmpty) {
       try {
         models = await sl<GenerationRepository>().fetchModels();
-        for (final m in models) {
+        for (final model in models) {
           options.add(ImageModelOption(
-            modelId: m.id,
-            displayName: m.name,
+            modelId: model.id,
+            displayName: model.name,
             provider: ImageProviderType.novelAi,
+            actualModel: model.id,
           ));
         }
       } catch (_) {
-        // NovelAI 未配置或拉取失败，跳过
+        // NovelAI 未配置或拉取失败，跳过。
       }
     }
 
     // GPT — 列出所有已配置 endpoint 的所有模型，每条带上 endpointId
-    final gptEndpoints = await _manageSettings.getEndpoints(ImageProviderType.gpt);
+    final gptEndpoints =
+        await _manageSettings.getEndpoints(ImageProviderType.gpt);
     for (final ep in gptEndpoints) {
       for (final m in ep.models) {
         options.add(ImageModelOption(
           modelId: 'gpt:${ep.id}:$m',
           displayName: m,
           provider: ImageProviderType.gpt,
+          actualModel: m,
           endpointId: ep.id,
           endpointName: ep.name,
         ));
@@ -256,18 +344,21 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           modelId: 'gpt:$legacy',
           displayName: legacy,
           provider: ImageProviderType.gpt,
+          actualModel: legacy,
         ));
       }
     }
 
     // Nano Banana — 同上
-    final nanoEndpoints = await _manageSettings.getEndpoints(ImageProviderType.nanoBanana);
+    final nanoEndpoints =
+        await _manageSettings.getEndpoints(ImageProviderType.nanoBanana);
     for (final ep in nanoEndpoints) {
       for (final m in ep.models) {
         options.add(ImageModelOption(
           modelId: 'nano:${ep.id}:$m',
           displayName: m,
           provider: ImageProviderType.nanoBanana,
+          actualModel: m,
           endpointId: ep.id,
           endpointName: ep.name,
         ));
@@ -280,6 +371,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           modelId: 'nano:$legacy',
           displayName: legacy,
           provider: ImageProviderType.nanoBanana,
+          actualModel: legacy,
         ));
       }
     }
@@ -287,10 +379,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     imageModelOptions = options;
     // 去重：DropdownButton 要求 value 唯一
     final seen = <String>{};
-    imageModelOptions = imageModelOptions.where((opt) => seen.add(opt.modelId)).toList();
+    imageModelOptions =
+        imageModelOptions.where((opt) => seen.add(opt.modelId)).toList();
 
-    if (selectedModel.isNotEmpty && !imageModelOptions.any((opt) => opt.modelId == selectedModel)) {
-      selectedModel = imageModelOptions.isNotEmpty ? imageModelOptions.first.modelId : '';
+    if (selectedModel.isNotEmpty &&
+        !imageModelOptions.any((opt) => opt.modelId == selectedModel)) {
+      selectedModel =
+          imageModelOptions.isNotEmpty ? imageModelOptions.first.modelId : '';
       await _manageSettings.setSelectedModelDraft(selectedModel);
     }
     if (selectedModel.isEmpty && options.isNotEmpty) {
@@ -352,6 +447,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   set characters(List<CharacterSpec> v) {
     _characters = v;
   }
+
   List<CharacterSpec> _characters = const [];
 
   @override
@@ -377,9 +473,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       }
       // 补齐角色列表到 idx+1 个
       while (_characters.length <= idx) {
-        _characters = [..._characters, const CharacterSpec(
-          prompt: '', uc: null, centerX: 0.5, centerY: 0.5,
-        )];
+        _characters = [
+          ..._characters,
+          const CharacterSpec(
+            prompt: '',
+            uc: null,
+            centerX: 0.5,
+            centerY: 0.5,
+          )
+        ];
       }
       if (isUc) {
         final current = _characters[idx].uc ?? '';
@@ -417,9 +519,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
             : trimmed);
         break;
       case 'inpaint_negative':
-        await updateInpaintNegativePrompt(append && inpaintNegativePrompt.isNotEmpty
-            ? _mergePrompt(inpaintNegativePrompt, trimmed)
-            : trimmed);
+        await updateInpaintNegativePrompt(
+            append && inpaintNegativePrompt.isNotEmpty
+                ? _mergePrompt(inpaintNegativePrompt, trimmed)
+                : trimmed);
         break;
       default:
         throw ArgumentError('unknown target: $target');
@@ -482,9 +585,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   void replaceCharacterPrompt(int index, String value) {
     if (index < 0) return;
     while (characters.length <= index) {
-      characters = [...characters, const CharacterSpec(
-        prompt: '', uc: null, centerX: 0.5, centerY: 0.5,
-      )];
+      characters = [
+        ...characters,
+        const CharacterSpec(
+          prompt: '',
+          uc: null,
+          centerX: 0.5,
+          centerY: 0.5,
+        )
+      ];
     }
     updateCharacter(index, characters[index].copyWith(prompt: value.trim()));
   }
@@ -493,9 +602,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   void replaceCharacterNegative(int index, String value) {
     if (index < 0) return;
     while (characters.length <= index) {
-      characters = [...characters, const CharacterSpec(
-        prompt: '', uc: null, centerX: 0.5, centerY: 0.5,
-      )];
+      characters = [
+        ...characters,
+        const CharacterSpec(
+          prompt: '',
+          uc: null,
+          centerX: 0.5,
+          centerY: 0.5,
+        )
+      ];
     }
     updateCharacter(index, characters[index].copyWith(uc: value.trim()));
   }
@@ -619,12 +734,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     selectedModel = value;
     await _manageSettings.setSelectedModelDraft(value);
     // 切换到选中模型对应的 endpoint，提交时 _resolveCreds 会读 active endpoint
-    final opt = imageModelOptions
-        .where((o) => o.modelId == value)
-        .toList();
+    final opt = imageModelOptions.where((o) => o.modelId == value).toList();
     if (opt.isNotEmpty && opt.first.endpointId != null) {
-      await _manageSettings.setActiveEndpointId(opt.first.provider, opt.first.endpointId);
+      await _manageSettings.setActiveEndpointId(
+          opt.first.provider, opt.first.endpointId);
     }
+    if (is7877Endpoint) steps = ApiConstants.defaultSteps;
     await _ensureResolutionForCurrentProvider();
     // Nano Banana 不支持局部重绘，自动回退至文生图
     if (isNanoProvider && generationMode == GenerationMode.inpainting) {
@@ -653,15 +768,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedSampler(String value) async {
-    selectedSampler = value;
-    await _manageSettings.setSelectedSamplerDraft(value);
+    selectedSampler = isIkunEndpoint && value == 'ddim' ? 'ddim_v3' : value;
     notifyListeners();
+    await _manageSettings.setSelectedSamplerDraft(selectedSampler);
   }
 
   Future<void> updateSelectedNoiseSchedule(String value) async {
-    selectedNoiseSchedule = value;
-    await _manageSettings.setSelectedNoiseScheduleDraft(value);
+    selectedNoiseSchedule =
+        isIkunEndpoint && value == 'polyexponential' ? 'exponential' : value;
     notifyListeners();
+    await _manageSettings.setSelectedNoiseScheduleDraft(selectedNoiseSchedule);
   }
 
   Future<void> updateScale(double value) async {
@@ -673,6 +789,52 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   Future<void> updateCfgRescale(double value) async {
     cfgRescale = value;
     await _manageSettings.setCfgRescaleDraft(value);
+    notifyListeners();
+  }
+
+  Future<void> updateSteps(int value) async {
+    steps = is7877Endpoint ? ApiConstants.defaultSteps : value.clamp(1, 50);
+    await _manageSettings.setStepsDraft(steps);
+    notifyListeners();
+  }
+
+  Future<void> toggleStepsLock() async {
+    isStepsLocked = !isStepsLocked;
+    if (isStepsLocked) {
+      steps = ApiConstants.defaultSteps;
+      await _manageSettings.setStepsDraft(steps);
+    }
+    await _manageSettings.setStepsLocked(isStepsLocked);
+    notifyListeners();
+  }
+
+  Future<void> addVibeReference(String path) async {
+    if (!isIkunEndpoint) return;
+    vibeReferences = [
+      ...vibeReferences,
+      CharacterReferenceImage(path: path),
+    ];
+    await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    notifyListeners();
+  }
+
+  Future<void> updateVibeReference(
+    int index,
+    CharacterReferenceImage reference,
+  ) async {
+    if (index < 0 || index >= vibeReferences.length) return;
+    final references = [...vibeReferences];
+    references[index] = reference;
+    vibeReferences = references;
+    await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    notifyListeners();
+  }
+
+  Future<void> removeVibeReference(int index) async {
+    if (index < 0 || index >= vibeReferences.length) return;
+    final references = [...vibeReferences]..removeAt(index);
+    vibeReferences = references;
+    await _manageSettings.setVibeReferencesDraft(vibeReferences);
     notifyListeners();
   }
 
@@ -752,6 +914,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _generateInFlight = true;
     try {
       await _generateInner();
+    } catch (e) {
+      errorMessage = '生成失败: $e';
+      notifyListeners();
     } finally {
       _generateInFlight = false;
       _batchRemaining = 0;
@@ -770,8 +935,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   Future<void> _generateInner() async {
     // 局部重绘使用独立提示词
-    final effectivePrompt = generationMode == GenerationMode.inpainting ? inpaintPrompt : prompt;
-    final effectiveNegativePrompt = generationMode == GenerationMode.inpainting ? inpaintNegativePrompt : negativePrompt;
+    final effectivePrompt =
+        generationMode == GenerationMode.inpainting ? inpaintPrompt : prompt;
+    final effectiveNegativePrompt = generationMode == GenerationMode.inpainting
+        ? inpaintNegativePrompt
+        : negativePrompt;
 
     if (effectivePrompt.isEmpty) {
       errorMessage = '请输入提示词';
@@ -780,6 +948,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     final res = _parseResolution(selectedResolution);
+    if (isIkunEndpoint && (res.$1 > 1600 || res.$2 > 1600)) {
+      errorMessage =
+          'ikun 服务端限制单边最大 1600，当前尺寸 ${res.$1}×${res.$2} 无法提交；API 文档不支持 1920 壁纸尺寸。';
+      notifyListeners();
+      return;
+    }
     final enabledCharacters = characters.where((c) => c.enabled).toList();
 
     if (generationMode == GenerationMode.inpainting) {
@@ -796,36 +970,67 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     // 解析实际模型 ID（去掉 gpt: / nano: 前缀）
-    final actualModelId = _resolveActualModelId(selectedModel);
-    final provider = currentProvider;
+    final selectedOption = imageModelOptions
+        .where((option) => option.modelId == selectedModel)
+        .firstOrNull;
+    final actualModelId =
+        selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final provider = selectedOption?.provider ?? currentProvider;
+
+    final taskSampler = isIkunEndpoint && selectedSampler == 'ddim'
+        ? 'ddim_v3'
+        : selectedSampler;
+    final taskNoiseSchedule =
+        isIkunEndpoint && selectedNoiseSchedule == 'polyexponential'
+            ? 'exponential'
+            : selectedNoiseSchedule;
 
     final task = GenerationTask(
       taskId: const Uuid().v4(),
       model: actualModelId,
+      endpointId: selectedOption?.endpointId,
+      protocol: selectedOption?.protocol,
       prompt: effectivePrompt,
-      negativePrompt: (provider == ImageProviderType.gpt || provider == ImageProviderType.nanoBanana || effectiveNegativePrompt.isEmpty) ? null : effectiveNegativePrompt,
+      negativePrompt: (provider == ImageProviderType.gpt ||
+              provider == ImageProviderType.nanoBanana ||
+              effectiveNegativePrompt.isEmpty)
+          ? null
+          : effectiveNegativePrompt,
       width: res.$1,
       height: res.$2,
       size: selectedResolution,
       scale: scale,
       cfgRescale: cfgRescale,
-      sampler: selectedSampler,
-      noiseSchedule: selectedNoiseSchedule,
+      sampler: taskSampler,
+      noiseSchedule: taskNoiseSchedule,
+      steps: is7877Endpoint ? ApiConstants.defaultSteps : steps.clamp(1, 50),
+      useCoords: enabledCharacters.any(
+        (character) => character.centerX != null && character.centerY != null,
+      ),
       seed: seed,
-      characters: generationMode == GenerationMode.textToImage && enabledCharacters.isNotEmpty ? enabledCharacters : null,
+      characters: generationMode == GenerationMode.textToImage &&
+              enabledCharacters.isNotEmpty
+          ? enabledCharacters
+          : null,
+      vibeReferences: isIkunEndpoint ? vibeReferences : const [],
       status: 'pending',
       createdAt: DateTime.now(),
       mode: generationMode,
-      sourceImagePath: generationMode == GenerationMode.inpainting
-          ? sourceImagePath
-          : null,
+      sourceImagePath:
+          generationMode == GenerationMode.inpainting ? sourceImagePath : null,
       maskImagePath: maskImagePath,
-      gptImagePaths: (provider == ImageProviderType.gpt || provider == ImageProviderType.nanoBanana) && gptImagePaths.isNotEmpty
+      gptImagePaths: (provider == ImageProviderType.gpt ||
+                  provider == ImageProviderType.nanoBanana) &&
+              gptImagePaths.isNotEmpty
           ? gptImagePaths
           : null,
-      nanoImageSize: provider == ImageProviderType.nanoBanana ? selectedNanoImageSize : null,
-      inpaintStrength: generationMode == GenerationMode.inpainting ? inpaintStrength : null,
-      responseFormat: generationMode == GenerationMode.inpainting ? 'url' : null,
+      nanoImageSize: provider == ImageProviderType.nanoBanana
+          ? selectedNanoImageSize
+          : null,
+      inpaintStrength:
+          generationMode == GenerationMode.inpainting ? inpaintStrength : null,
+      responseFormat:
+          generationMode == GenerationMode.inpainting ? 'url' : null,
       providerType: provider,
     );
 
@@ -855,12 +1060,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           seed: useSeed,
         );
         if (count > 1) {
-          await BackgroundKeepAliveService.instance.updateNotification('批量生成 ${i + 1}/$count');
+          await BackgroundKeepAliveService.instance
+              .updateNotification('批量生成 ${i + 1}/$count');
         }
-        // 先订阅再 enqueue，避免任务完成事件早于订阅丢失
+        // 先订阅再 enqueue，避免任务完成事件早于订阅丢失。
+        // 主流程直接接收最终任务，不依赖长期监听器的调度顺序。
         final waitFuture = _awaitTaskComplete(taskI.taskId);
-        await _generateImage.execute(_queue, taskI);
-        await waitFuture;
+        try {
+          await _generateImage.execute(_queue, taskI);
+        } catch (_) {
+          waitFuture.ignore();
+          rethrow;
+        }
+        final completedTask = await waitFuture;
+        await _applyCompletedTask(completedTask);
         _batchRemaining = count - i - 1;
         notifyListeners();
         if (i < count - 1) {
@@ -872,19 +1085,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
-  /// 监听队列直到指定 taskId 进入 success/failed
-  Future<void> _awaitTaskComplete(String taskId) async {
-    final completer = Completer<void>();
-    StreamSubscription? sub;
-    sub = _queue.taskStream.listen((t) {
-      if (t.taskId != taskId) return;
-      if (t.status == AppConstants.taskSuccess || t.status == AppConstants.taskFailed) {
-        if (!completer.isCompleted) completer.complete();
-        sub?.cancel();
-      }
-    });
-    return completer.future;
-  }
+  /// 独立订阅队列，返回指定 taskId 的最终成功/失败任务。
+  Future<GenerationTask> _awaitTaskComplete(String taskId) => _queue.taskStream
+      .firstWhere((task) => task.taskId == taskId && _isFinalTask(task));
 
   Future<void> updateBatchCount(int value) async {
     final v = value.clamp(1, 15);
@@ -920,7 +1123,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
-  Future<void> _saveCharactersDraft() => _manageSettings.setCharactersDraft(characters);
+  Future<void> _saveCharactersDraft() =>
+      _manageSettings.setCharactersDraft(characters);
 
   void addCharacter() {
     if (characters.length >= 6) {
@@ -929,11 +1133,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
 
-    characters = [...characters, const CharacterSpec(
-      prompt: '',
-      centerX: 0.5,
-      centerY: 0.5,
-    )];
+    characters = [
+      ...characters,
+      const CharacterSpec(
+        prompt: '',
+        centerX: 0.5,
+        centerY: 0.5,
+      )
+    ];
     errorMessage = null;
     _saveCharactersDraft();
     notifyListeners();
@@ -981,7 +1188,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   void toggleCharacterEnabled(int index) {
     if (index < 0 || index >= characters.length) return;
-    updateCharacter(index, characters[index].copyWith(enabled: !characters[index].enabled));
+    updateCharacter(
+        index, characters[index].copyWith(enabled: !characters[index].enabled));
   }
 
   void setCharacterPositionAuto(int index) {
@@ -1006,11 +1214,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         break;
       }
     }
-    selectedModel = matched ?? switch (task.providerType) {
-      ImageProviderType.gpt => 'gpt:${task.model}',
-      ImageProviderType.nanoBanana => 'nano:${task.model}',
-      ImageProviderType.novelAi => task.model,
-    };
+    selectedModel = matched ??
+        switch (task.providerType) {
+          ImageProviderType.gpt => 'gpt:${task.model}',
+          ImageProviderType.nanoBanana => 'nano:${task.model}',
+          ImageProviderType.novelAi => task.model,
+        };
     selectedResolution = task.size ?? '${task.width}x${task.height}';
     scale = task.scale;
     cfgRescale = task.cfgRescale;
@@ -1032,7 +1241,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       inpaintPrompt = task.prompt;
       inpaintNegativePrompt = task.negativePrompt ?? '';
       await _manageSettings.setInpaintPromptDraft(inpaintPrompt);
-      await _manageSettings.setInpaintNegativePromptDraft(inpaintNegativePrompt);
+      await _manageSettings
+          .setInpaintNegativePromptDraft(inpaintNegativePrompt);
     } else {
       generationMode = GenerationMode.textToImage;
       prompt = task.prompt;
@@ -1102,6 +1312,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           modelId: '',
           displayName: '',
           provider: ImageProviderType.novelAi,
+          actualModel: '',
         ),
       );
       if (opt.endpointId != null && opt.endpointId!.isNotEmpty) {

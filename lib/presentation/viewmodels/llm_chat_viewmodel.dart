@@ -204,7 +204,8 @@ class LlmChatViewModel extends ChangeNotifier {
       // 后台持久化清空后的 binding（不阻塞 UI）
       Future.wait([
         _manageSettings.setLlmRoleBinding(LlmProfileRole.main, _mainBinding),
-        _manageSettings.setLlmRoleBinding(LlmProfileRole.vision, _visionBinding),
+        _manageSettings.setLlmRoleBinding(
+            LlmProfileRole.vision, _visionBinding),
       ]);
     }
   }
@@ -225,7 +226,8 @@ class LlmChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setRoleBinding(LlmProfileRole role, LlmRoleBinding binding) async {
+  Future<void> setRoleBinding(
+      LlmProfileRole role, LlmRoleBinding binding) async {
     switch (role) {
       case LlmProfileRole.main:
         _mainBinding = binding;
@@ -241,7 +243,8 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   Future<void> setSystemPrompt(String value) async {
-    final v = value.trim().isEmpty ? AppConstants.defaultLlmSystemPrompt : value;
+    final v =
+        value.trim().isEmpty ? AppConstants.defaultLlmSystemPrompt : value;
     await _manageSettings.setLlmSystemPrompt(v);
     _systemPrompt = v;
     notifyListeners();
@@ -371,7 +374,8 @@ class LlmChatViewModel extends ChangeNotifier {
       createdAt: DateTime.now(),
       imageBase64: imageBase64,
     );
-    final placeholderCreatedAt = DateTime.now().add(const Duration(milliseconds: 1));
+    final placeholderCreatedAt =
+        DateTime.now().add(const Duration(milliseconds: 1));
     var placeholder = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.assistant,
@@ -429,7 +433,8 @@ class LlmChatViewModel extends ChangeNotifier {
             .join('\n\n---\n\n');
         payload.add({
           'role': 'system',
-          'content': '## 参考知识库（命中关键词）\n以下内容是从知识库中匹配到的相关提示词参考：\n\n$knowledgeText',
+          'content':
+              '## 参考知识库（命中关键词）\n以下内容是从知识库中匹配到的相关提示词参考：\n\n$knowledgeText',
         });
       }
 
@@ -484,7 +489,8 @@ class LlmChatViewModel extends ChangeNotifier {
 
       // 实时更新 placeholder timeline
       void onEvent(AgentEvent event) {
-        final newTimeline = List<AgentEvent>.from(placeholder.agentTimeline ?? const []);
+        final newTimeline =
+            List<AgentEvent>.from(placeholder.agentTimeline ?? const []);
         // 同一 toolCallId 的事件替换最后一条
         if (newTimeline.isNotEmpty &&
             newTimeline.last.toolCallId == event.toolCallId) {
@@ -543,7 +549,8 @@ class LlmChatViewModel extends ChangeNotifier {
           ? (result.failed ? '（执行失败）' : '（Agent 未给出文本回复）')
           : result.finalContent;
 
-      final toolCallsJson = timeline.isNotEmpty ? AgentEvent.toJsonList(timeline) : null;
+      final toolCallsJson =
+          timeline.isNotEmpty ? AgentEvent.toJsonList(timeline) : null;
 
       final saved = await _manageChat.saveAgentRunResult(
         sessionId: sessionId,
@@ -600,7 +607,8 @@ class LlmChatViewModel extends ChangeNotifier {
   static dynamic _apiServiceSingleton;
   static ToolRegistry? _toolRegistrySingleton;
   static set apiServiceSingleton(dynamic s) => _apiServiceSingleton = s;
-  static set toolRegistrySingleton(ToolRegistry r) => _toolRegistrySingleton = r;
+  static set toolRegistrySingleton(ToolRegistry r) =>
+      _toolRegistrySingleton = r;
 
   /// 重试：从指定用户消息处重新发送
   Future<void> retryFromIndex(int messageIndex) async {
@@ -634,7 +642,8 @@ class LlmChatViewModel extends ChangeNotifier {
     File? tempFile;
     try {
       final tempDir = await getTemporaryDirectory();
-      tempFile = File('${tempDir.path}/agent_img_${DateTime.now().millisecondsSinceEpoch}.png');
+      tempFile = File(
+          '${tempDir.path}/agent_img_${DateTime.now().millisecondsSinceEpoch}.png');
       await tempFile.writeAsBytes(base64Decode(imageBase64));
 
       final wdResult = await _analyzeImageTags.analyze(

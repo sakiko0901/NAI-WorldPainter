@@ -1,18 +1,28 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/api_config_page.dart';
 import 'package:nai_huishi/presentation/pages/artist_prompt_manager_page.dart';
 import 'package:nai_huishi/presentation/pages/danbooru_tag_search_page.dart';
+import 'package:nai_huishi/presentation/pages/director_tools_page.dart';
 import 'package:nai_huishi/presentation/pages/image_enhance_page.dart';
 import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
 import 'package:nai_huishi/presentation/pages/pixiv_upload_page.dart';
+import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 
 class SettingsPage extends StatefulWidget {
   final VoidCallback? onNavigateToGenerate;
+  final AppearanceMode appearanceMode;
+  final ValueChanged<AppearanceMode> onAppearanceChanged;
 
-  const SettingsPage({super.key, this.onNavigateToGenerate});
+  const SettingsPage({
+    super.key,
+    this.onNavigateToGenerate,
+    required this.appearanceMode,
+    required this.onAppearanceChanged,
+  });
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -86,7 +96,17 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: 'Danbooru 查词',
                   subtitle: '直接搜索真实 Danbooru 标签',
                   onTap: () => Navigator.of(context).push(
-                    CupertinoPageRoute(builder: (_) => const DanbooruTagSearchPage()),
+                    CupertinoPageRoute(
+                        builder: (_) => const DanbooruTagSearchPage()),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.video_camera_solid,
+                  title: '导演工具',
+                  subtitle: '镜头、构图与连续画面控制',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                        builder: (_) => const DirectorToolsPage()),
                   ),
                 ),
                 _SettingsTile(
@@ -94,7 +114,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: '画师串管理',
                   subtitle: '分类管理画师、调权重并生成 NAI 画师串',
                   onTap: () => Navigator.of(context).push(
-                    CupertinoPageRoute(builder: (_) => const ArtistPromptManagerPage()),
+                    CupertinoPageRoute(
+                        builder: (_) => const ArtistPromptManagerPage()),
                   ),
                 ),
                 _SettingsTile(
@@ -102,7 +123,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: '图像增强',
                   subtitle: '本地超分放大，Real-ESRGAN / RealCUGAN',
                   onTap: () => Navigator.of(context).push(
-                    CupertinoPageRoute(builder: (_) => const ImageEnhancePage()),
+                    CupertinoPageRoute(
+                        builder: (_) => const ImageEnhancePage()),
                   ),
                 ),
                 _SettingsTile(
@@ -110,9 +132,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: '图片解析',
                   subtitle: 'NAI 元数据提取 / WD-Tagger 智能识别',
                   onTap: () => Navigator.of(context).push(
-                    CupertinoPageRoute(builder: (_) => ImageTagPage(
-                      onNavigateToGenerate: widget.onNavigateToGenerate,
-                    )),
+                    CupertinoPageRoute(
+                        builder: (_) => ImageTagPage(
+                              onNavigateToGenerate: widget.onNavigateToGenerate,
+                            )),
                   ),
                 ),
               ],
@@ -127,6 +150,25 @@ class _SettingsPageState extends State<SettingsPage> {
                   subtitle: '把作品发布到 Pixiv，自动填充标题 / 标签 / 描述',
                   onTap: () => Navigator.of(context).push(
                     CupertinoPageRoute(builder: (_) => const PixivUploadPage()),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 18),
+            _SettingsGroup(
+              title: '主题与外观',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.paintbrush_fill,
+                  title: '主题与外观',
+                  subtitle: '亮色、暗色与咖啡纸主题',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => ThemeAppearancePage(
+                        appearanceMode: widget.appearanceMode,
+                        onAppearanceChanged: widget.onAppearanceChanged,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -168,7 +210,8 @@ class _SettingsGroup extends StatelessWidget {
                   if (i != children.length - 1)
                     Padding(
                       padding: const EdgeInsets.only(left: 86),
-                      child: Divider(height: 1, thickness: 0.7, color: dividerColor),
+                      child: Divider(
+                          height: 1, thickness: 0.7, color: dividerColor),
                     ),
                 ],
               ],
@@ -205,7 +248,8 @@ class _SettingsTile extends StatelessWidget {
               width: 30,
               height: 30,
               child: Center(
-                child: Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+                child: Icon(icon,
+                    size: 20, color: Theme.of(context).colorScheme.primary),
               ),
             ),
             SizedBox(width: 12),
@@ -226,7 +270,10 @@ class _SettingsTile extends StatelessWidget {
                 child: Icon(
                   CupertinoIcons.chevron_right,
                   size: 18,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.58),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant
+                      .withValues(alpha: 0.58),
                 ),
               ),
           ],

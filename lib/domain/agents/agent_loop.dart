@@ -107,8 +107,9 @@ class AgentLoop {
 
           // 副作用工具要确认
           if (tool.requireConfirmation) {
-            final confirmed = onRequireConfirmation?.call(tool, call.arguments) ??
-                Future.value(true);
+            final confirmed =
+                onRequireConfirmation?.call(tool, call.arguments) ??
+                    Future.value(true);
             final ok = await confirmed;
             if (!ok) {
               final updated = event.copyWith(
@@ -133,7 +134,8 @@ class AgentLoop {
 
           try {
             final result = await tool.call(call.arguments);
-            final done = running.copyWith(status: result.success ? 'done' : 'error', result: result);
+            final done = running.copyWith(
+                status: result.success ? 'done' : 'error', result: result);
             _replaceLast(timeline, done);
             onEvent?.call(done);
 
@@ -178,7 +180,8 @@ class AgentLoop {
         timeline,
       );
     } catch (e) {
-      return AgentResult.failure(e.toString().replaceFirst('AppException(null): ', ''), timeline);
+      return AgentResult.failure(
+          e.toString().replaceFirst('AppException(null): ', ''), timeline);
     }
   }
 

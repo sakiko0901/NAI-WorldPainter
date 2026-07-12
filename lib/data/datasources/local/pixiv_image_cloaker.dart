@@ -57,17 +57,15 @@ Uint8List _cloakIsolate(_CloakInput input) {
     throw StateError('PNG 解码失败');
   }
   // 2. 确保 RGBA
-  final rgba = decoded.numChannels == 4
-      ? decoded
-      : decoded.convert(numChannels: 4);
+  final rgba =
+      decoded.numChannels == 4 ? decoded : decoded.convert(numChannels: 4);
 
   // 3. 准备隐写 payload：
   //    serialize_metadata({}, [...]) → gzip(json.dumps({}))，
   //    在 SANP 中元数据被全清后 data 为空 dict，再 gzip 压。
   //    我们这里直接写 {"None": junkText} 或 {}（看 junkText 是否非空）。
-  final jsonStr = input.junkText.isEmpty
-      ? '{}'
-      : jsonEncode({'None': input.junkText});
+  final jsonStr =
+      input.junkText.isEmpty ? '{}' : jsonEncode({'None': input.junkText});
   final gz = gzip.encode(utf8.encode(jsonStr));
   final payload = Uint8List.fromList(gz);
 

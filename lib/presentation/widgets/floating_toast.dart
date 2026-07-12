@@ -12,8 +12,12 @@ void showFloatingToast(
   if (overlay == null) return;
 
   final isDark = Theme.of(context).brightness == Brightness.dark;
-  final bgColor = isDark ? Colors.black.withValues(alpha: 0.78) : Colors.black.withValues(alpha: 0.72);
-  final borderColor = isDark ? Colors.white.withValues(alpha: 0.08) : Colors.white.withValues(alpha: 0.12);
+  final bgColor = isDark
+      ? Colors.black.withValues(alpha: 0.78)
+      : Colors.black.withValues(alpha: 0.72);
+  final borderColor = isDark
+      ? Colors.white.withValues(alpha: 0.08)
+      : Colors.white.withValues(alpha: 0.12);
   final textColor = Colors.white;
   final iconColor = Colors.white;
 
@@ -30,7 +34,8 @@ void showFloatingToast(
             child: Material(
               color: Colors.transparent,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 decoration: BoxDecoration(
                   color: bgColor,
                   borderRadius: BorderRadius.circular(14),

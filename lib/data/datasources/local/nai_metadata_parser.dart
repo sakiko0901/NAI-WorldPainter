@@ -47,9 +47,14 @@ class NaiMetadataParser {
     final result = <String, String>{};
     // PNG 签名
     if (bytes.length < 8 ||
-        bytes[0] != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E ||
-        bytes[3] != 0x47 || bytes[4] != 0x0D || bytes[5] != 0x0A ||
-        bytes[6] != 0x1A || bytes[7] != 0x0A) {
+        bytes[0] != 0x89 ||
+        bytes[1] != 0x50 ||
+        bytes[2] != 0x4E ||
+        bytes[3] != 0x47 ||
+        bytes[4] != 0x0D ||
+        bytes[5] != 0x0A ||
+        bytes[6] != 0x1A ||
+        bytes[7] != 0x0A) {
       return result;
     }
 
@@ -59,7 +64,8 @@ class NaiMetadataParser {
           (bytes[pos + 1] << 16) |
           (bytes[pos + 2] << 8) |
           bytes[pos + 3];
-      final type = utf8.decode(bytes.sublist(pos + 4, pos + 8), allowMalformed: true);
+      final type =
+          utf8.decode(bytes.sublist(pos + 4, pos + 8), allowMalformed: true);
       final dataStart = pos + 8;
       final dataEnd = dataStart + length;
       if (dataEnd + 4 > bytes.length) break;
@@ -286,7 +292,10 @@ class NaiMetadataParser {
               }
             }
             characters.add(CharacterSpec(
-              prompt: cp, uc: cuc, centerX: cx, centerY: cy,
+              prompt: cp,
+              uc: cuc,
+              centerX: cx,
+              centerY: cy,
             ));
           }
         }
@@ -327,8 +336,14 @@ class NaiMetadataParser {
 
     final metadata = <String, dynamic>{};
     for (final key in [
-      'seed', 'steps', 'sampler', 'scale', 'cfg_rescale',
-      'noise_schedule', 'width', 'height',
+      'seed',
+      'steps',
+      'sampler',
+      'scale',
+      'cfg_rescale',
+      'noise_schedule',
+      'width',
+      'height',
     ]) {
       final v = comment[key] ?? json[key];
       if (v != null) metadata[key] = v;

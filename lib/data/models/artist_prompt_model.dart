@@ -20,7 +20,10 @@ class ArtistPromptModel {
     if (rawCategories != null && rawCategories.isNotEmpty) {
       final decoded = jsonDecode(rawCategories);
       if (decoded is List) {
-        categories = decoded.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+        categories = decoded
+            .map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList();
       }
     }
     if (categories.isEmpty) categories = const ['未分类'];

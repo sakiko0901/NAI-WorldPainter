@@ -21,7 +21,8 @@ class ImageUtils {
   /// 获取画师串封面存储目录
   static Future<Directory> getArtistPromptImageDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(appDir.path, AppConstants.artistPromptsDirName));
+    final dir =
+        Directory(p.join(appDir.path, AppConstants.artistPromptsDirName));
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -54,11 +55,15 @@ class ImageUtils {
       img.Image resized;
       if (decoded.width > maxDimension || decoded.height > maxDimension) {
         if (decoded.width >= decoded.height) {
-          final newHeight = (decoded.height * maxDimension / decoded.width).round();
-          resized = img.copyResize(decoded, width: maxDimension, height: newHeight);
+          final newHeight =
+              (decoded.height * maxDimension / decoded.width).round();
+          resized =
+              img.copyResize(decoded, width: maxDimension, height: newHeight);
         } else {
-          final newWidth = (decoded.width * maxDimension / decoded.height).round();
-          resized = img.copyResize(decoded, width: newWidth, height: maxDimension);
+          final newWidth =
+              (decoded.width * maxDimension / decoded.height).round();
+          resized =
+              img.copyResize(decoded, width: newWidth, height: maxDimension);
         }
       } else {
         resized = decoded;
@@ -79,7 +84,8 @@ class ImageUtils {
   }
 
   /// 保存 base64 图片到本地
-  static Future<String> saveBase64Image(String base64Data, String filename) async {
+  static Future<String> saveBase64Image(
+      String base64Data, String filename) async {
     final dir = await getImageDirectory();
     final filePath = p.join(dir.path, filename);
     final file = File(filePath);
@@ -89,7 +95,8 @@ class ImageUtils {
   }
 
   /// 从 URL 下载图片并保存到本地
-  static Future<String> downloadAndSaveImage(String url, String filename) async {
+  static Future<String> downloadAndSaveImage(
+      String url, String filename) async {
     final dir = await getImageDirectory();
     return p.join(dir.path, filename);
   }
