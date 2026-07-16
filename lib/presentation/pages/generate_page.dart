@@ -798,7 +798,10 @@ class _GeneratePageState extends State<GeneratePage> {
                   _CharacterControlSection(vm: _vm),
                   SizedBox(height: 16),
                   if (_vm.isIkunEndpoint) ...[
-                    _CharacterReferenceSection(vm: _vm),
+                    _CharacterReferenceSection(
+                      vm: _vm,
+                      onShowMessage: _showToast,
+                    ),
                     SizedBox(height: 16),
                   ],
                 ],
@@ -2786,132 +2789,395 @@ class _PremiumSlider extends StatelessWidget {
   }
 }
 
-class _CharacterReferenceSection extends StatelessWidget {
+class _CharacterReferenceSection extends StatefulWidget {
   final GenerationViewModel vm;
+  final ValueChanged<String> onShowMessage;
 
-  const _CharacterReferenceSection({required this.vm});
+  const _CharacterReferenceSection({
+    required this.vm,
+    required this.onShowMessage,
+  });
+
+  @override
+  State<_CharacterReferenceSection> createState() =>
+      _CharacterReferenceSectionState();
+}
+
+class _CharacterReferenceSectionState
+    extends State<_CharacterReferenceSection> {
+  int _mode = 0;
+
+  GenerationViewModel get vm => widget.vm;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return _PremiumAccordion(
-      title: '氛围转移与角色精细参考',
+      title: '氛围转移与精密参照图像',
       icon: CupertinoIcons.photo_on_rectangle,
       initiallyExpanded: false,
       children: [
-        const Text(
-          '氛围转移',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(
+              value: 0,
+              label: Text('氛围转移'),
+              icon: Icon(CupertinoIcons.photo),
+            ),
+            ButtonSegment(
+              value: 1,
+              label: Text('精密参照图像'),
+              icon: Icon(CupertinoIcons.person_crop_rectangle),
+            ),
+          ],
+          selected: {_mode},
+          onSelectionChanged: (value) => setState(() => _mode = value.first),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '参考图会影响整张图的画风与视觉特征，不会绑定到某个角色。',
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () async {
-            final image = await ImagePicker().pickImage(
-              source: ImageSource.gallery,
-            );
-            if (image != null) await vm.addVibeReference(image.path);
-          },
-          icon: const Icon(CupertinoIcons.add, size: 17),
-          label: Text(
-            vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加参考图',
-          ),
-        ),
-        for (final entry in vm.vibeReferences.asMap().entries)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    File(entry.value.path),
-                    width: 64,
-                    height: 64,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const SizedBox(
-                      width: 64,
-                      height: 64,
-                      child: Icon(CupertinoIcons.exclamationmark_triangle),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _referenceSlider(
-                        context,
-                        label: '参考强度',
-                        value: entry.value.strength,
-                        onChanged: (value) => vm.updateVibeReference(
-                          entry.key,
-                          entry.value.copyWith(strength: value),
-                        ),
-                      ),
-                      _referenceSlider(
-                        context,
-                        label: '信息提取',
-                        value: entry.value.informationExtracted,
-                        onChanged: (value) => vm.updateVibeReference(
-                          entry.key,
-                          entry.value.copyWith(informationExtracted: value),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: '删除参考图',
-                  onPressed: () => vm.removeVibeReference(entry.key),
-                  icon: const Icon(CupertinoIcons.trash, size: 17),
-                ),
-              ],
+        const SizedBox(height: 14),
+        if (_mode == 0) ...[
+          Text(
+            '最多使用一张全局参考图，影响整张图的画风与视觉特征。添加后会清除精密参照图像。',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final image =
+                  await ImagePicker().pickImage(source: ImageSource.gallery);
+              if (image == null) return;
+              final cleared = vm.preciseReferences.isNotEmpty;
+              await vm.setVibeReference(image.path);
+              if (cleared) widget.onShowMessage('已切换为氛围转移并清除精密参照图像');
+            },
+            icon: Icon(
+              vm.vibeReferences.isEmpty
+                  ? CupertinoIcons.photo
+                  : CupertinoIcons.arrow_2_circlepath,
+              size: 17,
+            ),
+            label: Text(
+              vm.vibeReferences.isEmpty ? '选择氛围参考图' : '替换氛围参考图',
             ),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                CupertinoIcons.lock_fill,
-                size: 17,
-                color: theme.colorScheme.onSurfaceVariant,
+          if (vm.vibeReferences.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _ReferenceImageCard(
+                image: vm.vibeReferences.first,
+                onReplace: () async {
+                  final picked = await ImagePicker()
+                      .pickImage(source: ImageSource.gallery);
+                  if (picked != null) await vm.setVibeReference(picked.path);
+                },
+                onUpdate: vm.updateVibeReference,
+                onDelete: vm.removeVibeReference,
               ),
+            ),
+        ] else ...[
+          Row(
+            children: [
+              Icon(CupertinoIcons.photo_on_rectangle,
+                  color: theme.colorScheme.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '角色精细参考',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 4),
+                    const Text('精密参照图像',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
                     Text(
-                      '当前网关 API 暂未提供角色与参考图的绑定协议。',
+                      '使用特定图像精密控制生成结果',
                       style: TextStyle(
                         fontSize: 12,
-                        height: 1.5,
                         color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: '导入参照图像',
+                onPressed: _addPreciseReference,
+                icon: const Icon(CupertinoIcons.arrow_up_square, size: 19),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '参照图与角色卡相互独立，仅支持 NovelAI V4.5；每张消耗 5 Anlas。',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          for (final entry in vm.preciseReferences.asMap().entries)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _PreciseReferenceCard(
+                image: entry.value,
+                onReplace: () => _replacePreciseReference(entry.key),
+                onUpdate: (reference) =>
+                    vm.updatePreciseReference(entry.key, reference),
+                onDelete: () => vm.removePreciseReference(entry.key),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _addPreciseReference() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+    final clearedVibe = vm.vibeReferences.isNotEmpty;
+    await vm.addPreciseReference(picked.path);
+    if (clearedVibe) widget.onShowMessage('已切换为精密参照图像并清除氛围图');
+  }
+
+  Future<void> _replacePreciseReference(int index) async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked != null) await vm.replacePreciseReference(index, picked.path);
+  }
+}
+
+String _characterLabel(int index, CharacterSpec character) {
+  final prompt = character.prompt.trim();
+  if (prompt.isEmpty) return '角色 ${index + 1}';
+  final summary = prompt.length > 18 ? '${prompt.substring(0, 18)}…' : prompt;
+  return '角色 ${index + 1} · $summary';
+}
+
+class _ReferenceImageCard extends StatelessWidget {
+  final CharacterReferenceImage image;
+  final VoidCallback onReplace;
+  final ValueChanged<CharacterReferenceImage> onUpdate;
+  final VoidCallback onDelete;
+
+  const _ReferenceImageCard({
+    required this.image,
+    required this.onReplace,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: onReplace,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(image.path),
+                    width: 82,
+                    height: 108,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 82,
+                      height: 108,
+                      color: theme.colorScheme.errorContainer,
+                      child: Icon(
+                        CupertinoIcons.exclamationmark_triangle,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  children: [
+                    _ReferenceSlider(
+                      label: '参考强度',
+                      value: image.strength,
+                      onChanged: (value) =>
+                          onUpdate(image.copyWith(strength: value)),
+                    ),
+                    _ReferenceSlider(
+                      label: '信息提取',
+                      value: image.informationExtracted,
+                      onChanged: (value) => onUpdate(
+                        image.copyWith(informationExtracted: value),
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton.icon(
+                          onPressed: onReplace,
+                          icon: const Icon(CupertinoIcons.arrow_2_circlepath,
+                              size: 15),
+                          label: const Text('替换'),
+                        ),
+                        IconButton(
+                          tooltip: '删除参考图',
+                          onPressed: onDelete,
+                          icon: const Icon(CupertinoIcons.trash, size: 17),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreciseReferenceCard extends StatelessWidget {
+  final PreciseReferenceImage image;
+  final VoidCallback onReplace;
+  final ValueChanged<PreciseReferenceImage> onUpdate;
+  final VoidCallback onDelete;
+
+  const _PreciseReferenceCard({
+    required this.image,
+    required this.onReplace,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton.filledTonal(
+                tooltip: '删除参照图像',
+                onPressed: onDelete,
+                icon: const Icon(CupertinoIcons.trash, size: 17),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('有效', style: TextStyle(fontWeight: FontWeight.w700)),
+                    SizedBox(width: 6),
+                    Icon(CupertinoIcons.check_mark, size: 16),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: image.referenceType,
+                  isExpanded: true,
+                  decoration: const InputDecoration(isDense: true),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'character&style',
+                      child: Text('角色与画风'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'character',
+                      child: Text('角色'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'style',
+                      child: Text('画风'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      onUpdate(image.copyWith(referenceType: value));
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: onReplace,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(image.path),
+                    width: 106,
+                    height: 160,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 106,
+                      height: 160,
+                      color: theme.colorScheme.errorContainer,
+                      child: Icon(
+                        CupertinoIcons.exclamationmark_triangle,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  children: [
+                    _PreciseReferenceSlider(
+                      label: '强度',
+                      value: image.strength,
+                      onChanged: (value) =>
+                          onUpdate(image.copyWith(strength: value)),
+                    ),
+                    const SizedBox(height: 12),
+                    _PreciseReferenceSlider(
+                      label: '忠实度',
+                      value: image.fidelity,
+                      onChanged: (value) =>
+                          onUpdate(image.copyWith(fidelity: value)),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: onReplace,
+                        icon: const Icon(CupertinoIcons.arrow_2_circlepath,
+                            size: 15),
+                        label: const Text('替换图片'),
                       ),
                     ),
                   ],
@@ -2919,45 +3185,78 @@ class _CharacterReferenceSection extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+}
 
-  Widget _referenceSlider(
-    BuildContext context, {
-    required String label,
-    required double value,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 58,
-          child: Text(label, style: const TextStyle(fontSize: 11)),
-        ),
-        Expanded(
-          child: Slider(
+class _PreciseReferenceSlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _PreciseReferenceSlider({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('$label: ${value.toStringAsFixed(1)}',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          Slider(
             value: value.clamp(0.0, 1.0),
             min: 0,
             max: 1,
             onChanged: onChanged,
           ),
-        ),
-        SizedBox(
-          width: 30,
-          child: Text(
-            value.toStringAsFixed(1),
-            textAlign: TextAlign.end,
-            style: TextStyle(
-              fontSize: 10,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ],
+      );
+}
+
+class _ReferenceSlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _ReferenceSlider({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          SizedBox(
+            width: 58,
+            child: Text(label, style: const TextStyle(fontSize: 11)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(0.0, 1.0),
+              min: 0,
+              max: 1,
+              onChanged: onChanged,
             ),
           ),
-        ),
-      ],
-    );
-  }
+          SizedBox(
+            width: 30,
+            child: Text(
+              value.toStringAsFixed(1),
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 10,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      );
 }
 
 class _CharacterControlSection extends StatefulWidget {
@@ -3536,6 +3835,8 @@ class _CharacterCardState extends State<_CharacterCard> {
                       _buildTabButton(1, 'UContent'),
                       SizedBox(width: 8),
                       _buildTabButton(2, 'Pos'),
+                      SizedBox(width: 8),
+                      _buildTabButton(3, 'Ref'),
                     ],
                   ),
                 ),
@@ -3722,7 +4023,7 @@ class _CharacterCardState extends State<_CharacterCard> {
           padding: const EdgeInsets.symmetric(vertical: 8),
           decoration: BoxDecoration(
             color: isSelected
-                ? Colors.white.withValues(alpha: 0.1)
+                ? Theme.of(context).colorScheme.primaryContainer
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
           ),
@@ -3733,7 +4034,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                 fontSize: 12,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 color: isSelected
-                    ? Colors.white
+                    ? Theme.of(context).colorScheme.onPrimaryContainer
                     : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),

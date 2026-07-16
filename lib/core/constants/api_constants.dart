@@ -7,9 +7,16 @@ class ApiConstants {
   // API 路径
   static const String chatCompletions = '/v1/chat/completions';
   static const String imageGenerations = '/v1/images/generations';
+  static const String imagePreciseReference = '/v1/images/precise-reference';
   static const String imageInpainting = '/v1/images/inpainting';
   static const String imageEdits = '/v1/images/edits';
   static const String imageAnnotate = '/v1/images/annotate';
+  static const String imageDirectorDeclutter = '/v1/images/director/declutter';
+  static const String imageDirectorBgRemover = '/v1/images/director/bg-remover';
+  static const String imageDirectorLineart = '/v1/images/director/lineart';
+  static const String imageDirectorSketch = '/v1/images/director/sketch';
+  static const String imageDirectorColorize = '/v1/images/director/colorize';
+  static const String imageDirectorEmotion = '/v1/images/director/emotion';
   static const String models = '/v1/models';
 
   // Nano Banana 支持的宽高比（用于 imageConfig.aspectRatio）

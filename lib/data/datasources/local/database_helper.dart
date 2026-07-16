@@ -47,6 +47,7 @@ class DatabaseHelper {
         use_coords INTEGER NOT NULL DEFAULT 1,
         seed INTEGER,
         characters TEXT,
+        precise_references TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         image_path TEXT,
         image_url TEXT,
@@ -300,6 +301,9 @@ class DatabaseHelper {
     if (oldVersion < 11) {
       await _ensureGenerationHistoryColumns(db);
     }
+    if (oldVersion < 12) {
+      await _ensureGenerationHistoryColumns(db);
+    }
   }
 
   Future<void> _onOpen(Database db) => _ensureGenerationHistoryColumns(db);
@@ -314,6 +318,7 @@ class DatabaseHelper {
       'protocol': 'TEXT',
       'steps': 'INTEGER NOT NULL DEFAULT 28',
       'use_coords': 'INTEGER NOT NULL DEFAULT 1',
+      'precise_references': 'TEXT',
     };
     for (final entry in definitions.entries) {
       if (!columns.contains(entry.key)) {

@@ -65,6 +65,7 @@ import 'package:nai_huishi/data/repositories/super_resolution_repository_impl.da
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/core/network/robust_http_adapter.dart';
 import 'package:nai_huishi/presentation/viewmodels/artist_prompt_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/director_tools_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/history_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
@@ -224,6 +225,11 @@ Future<void> configureDependencies() async {
       ));
   sl.registerFactory<SuperResolutionViewModel>(() => SuperResolutionViewModel(
         sl<UpscaleImageUseCase>(),
+        sl<SaveImageUseCase>(),
+      ));
+  sl.registerFactory<DirectorToolsViewModel>(() => DirectorToolsViewModel(
+        sl<NovelAiApiService>(),
+        sl<ManageSettingsUseCase>(),
         sl<SaveImageUseCase>(),
       ));
   sl.registerLazySingleton<HistoryViewModel>(

@@ -610,30 +610,55 @@ class LlmChatViewModel extends ChangeNotifier {
   static set toolRegistrySingleton(ToolRegistry r) =>
       _toolRegistrySingleton = r;
 
-  /// 重试：从指定用户消息处重新发送
+  Future<String?> _restoreMessageImage(LlmMessage message) async {
+    if (message.imageBase64 != null && message.imageBase64!.isNotEmpty) {
+      return message.imageBase64;
+    }
+    final path = message.imagePath;
+    if (path == null || path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        _errorMessage = '原图片文件已不存在，未删除历史消息。';
+        notifyListeners();
+        return null;
+      }
+      return base64Encode(await file.readAsBytes());
+    } catch (e) {
+      _errorMessage = '读取原图片失败，未删除历史消息：$e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// 重试：从指定用户消息处重新发送。
   Future<void> retryFromIndex(int messageIndex) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
-    if (msg.role != LlmMessageRole.user || msg.id == null) return;
-    final text = msg.content.replaceAll(RegExp(r'\n\[图片\]$'), '').trim();
-    if (text.isEmpty || _isSending) return;
+    if (msg.role != LlmMessageRole.user || msg.id == null || _isSending) return;
+    final imageBase64 = await _restoreMessageImage(msg);
+    if (msg.imagePath != null && imageBase64 == null) return;
+    final text = msg.content.replaceAll(RegExp(r'\n?\[图片\]$'), '').trim();
+    if (text.isEmpty && imageBase64 == null) return;
     await _manageChat.deleteMessagesFrom(msg.id!, _activeSessionId!);
     _messages = await _manageChat.listMessages(_activeSessionId!);
     notifyListeners();
-    await sendUserMessage(text);
+    await sendUserMessage(text, imageBase64: imageBase64);
   }
 
-  /// 编辑并重发
+  /// 编辑并重发，保留原消息附带的图片。
   Future<void> editAndResend(int messageIndex, String newText) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
-    if (msg.role != LlmMessageRole.user || msg.id == null) return;
+    if (msg.role != LlmMessageRole.user || msg.id == null || _isSending) return;
     final trimmed = newText.trim();
-    if (trimmed.isEmpty || _isSending) return;
+    final imageBase64 = await _restoreMessageImage(msg);
+    if (msg.imagePath != null && imageBase64 == null) return;
+    if (trimmed.isEmpty && imageBase64 == null) return;
     await _manageChat.deleteMessagesFrom(msg.id!, _activeSessionId!);
     _messages = await _manageChat.listMessages(_activeSessionId!);
     notifyListeners();
-    await sendUserMessage(trimmed);
+    await sendUserMessage(trimmed, imageBase64: imageBase64);
   }
 
   /// 自动跑 WD-Tagger 解析图片，返回 system 上下文文本（失败时返回空字符串，不阻断主流程）。

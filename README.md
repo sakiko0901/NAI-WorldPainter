@@ -1,51 +1,103 @@
 <div align="center">
 
-# NAI-WorldPainter
+# NAI-WorldPainter · 绘世
 
-> 一个基于 Flutter 的 NovelAI 图像生成 Android 客户端，集成 LLM 提示词助手、Agent 工具循环、Pixiv 上传队列、图片超分与打标等一体化创作工作流。
+### 面向 Android 的 NovelAI 一站式创作客户端
 
-![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)
-![Framework](https://img.shields.io/badge/Framework-Flutter-02569B?logo=flutter&logoColor=white)
-![Version](https://img.shields.io/badge/Version-1.2.2-FF6F61?style=flat)
-![Language](https://img.shields.io/badge/Language-Dart-0175C2?logo=dart&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
-![APK](https://img.shields.io/badge/APK-51MB-orange?style=flat)
+从自然语言提示词、精密参照与图像生成，到超分、打标和 Pixiv 发布，在一个应用中完成完整工作流。
+
+[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#系统要求)
+[![Framework](https://img.shields.io/badge/Flutter-3.x-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
+[![Version](https://img.shields.io/badge/Version-1.2.2-FF6F61?style=for-the-badge)](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest)
+[![License](https://img.shields.io/badge/License-MIT-8A63D2?style=for-the-badge)](LICENSE)
+
+<br>
+
+[**下载最新版 APK**](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest/download/app-release.apk)
+&nbsp;&nbsp;·&nbsp;&nbsp;
+[查看发布说明](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest)
+&nbsp;&nbsp;·&nbsp;&nbsp;
+[浏览功能](#功能亮点)
+
+> 当前提供 Android arm64-v8a Release APK，约 50 MB。
 
 </div>
 
 ---
 
-## 目录
+## 导航
 
-- [概览](#概览)
+- [功能亮点](#功能亮点)
 - [下载与安装](#下载与安装)
-- [架构](#架构)
+- [系统要求](#系统要求)
 - [功能清单](#功能清单)
+- [架构](#架构)
 - [资源目录](#资源目录)
 - [致谢](#致谢--credits)
 
-## 概览
+## 功能亮点
 
-**绘世** 把 NovelAI 图像生成的全链路——从提示词编排、生图、超分、打标到 Pixiv 上传——打包成一个 Android 原生应用。内置 LLM Agent 工具循环，让用户用大白话就能得到高质量 NAI 提示词；Danbooru 真实标签校准保证 LLM 不胡编；图片打标与超分形成完整的二次创作工作流。
+<table>
+<tr>
+<td width="50%" valign="top">
 
-| 维度 | 详情 |
-|---|---|
-| **平台** | Android（arm64-v8a / armeabi-v7a / x86_64） |
-| **版本** | 1.2.2+200000 |
-| **APK 大小** | ~51 MB |
-| **语言** | Dart 3.x |
-| **框架** | Flutter |
-| **架构** | Clean Architecture + ChangeNotifier + get_it |
+### NovelAI 专业生图
+多角色提示词、坐标控制、Vibe Transfer、独立 Precise Reference、涂改重绘、批量队列与完整高级参数。
+
+</td>
+<td width="50%" valign="top">
+
+### 大白话提示词 Agent
+用自然语言描述画面，Agent 自动检索真实 Danbooru tag、编排提示词并在确认后执行生图。
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 图片后期工作台
+集成 Director Tools、WD-Tagger、NAI 元数据解析，以及 Real-ESRGAN / RealCUGAN 本地超分。
+
+</td>
+<td width="50%" valign="top">
+
+### 完整发布工作流
+本地历史、提示词记忆、风格与艺术家预设，并支持 Pixiv 上传队列和自动标题、标签处理。
+
+</td>
+</tr>
+</table>
 
 ## 下载与安装
 
-可直接从本仓库下载最新构建：
+### 推荐：直接下载安装包
 
-```
-release/app-release.apk
-```
+<div align="center">
 
-安装时需在 Android 系统设置中允许"安装未知来源应用"。首次启动后到「设置 → API 配置」填入 NovelAI 网关地址与 API Key 即可开始使用。
+[![Download APK](https://img.shields.io/badge/下载-最新版_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest/download/app-release.apk)
+
+[所有版本与更新说明](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases)
+
+</div>
+
+1. 下载 `app-release.apk`。
+2. 在 Android 系统中允许浏览器或文件管理器“安装未知应用”。
+3. 安装并启动绘世。
+4. 打开「设置 → API 配置」，填写 NovelAI 兼容网关的 Base URL、API Key 与模型。
+
+> Android 若提示“文件可能有害”，这是侧载 APK 的通用提示。请仅从本仓库 Releases 下载，并核对发布者为 `cocophilia093-wq`。
+
+## 系统要求
+
+| 项目 | 要求 |
+|---|---|
+| **系统** | Android 设备 |
+| **架构** | arm64-v8a |
+| **版本** | 1.2.2+208011 |
+| **安装包** | 约 50 MB |
+| **网络** | 使用云端生图、LLM、打标及 Pixiv 功能时需要网络 |
+| **必要配置** | NovelAI 兼容网关 Base URL、API Key、可用模型 |
+| **可选配置** | OpenAI 兼容 LLM、Pixiv Cookie、代理等 |
 
 ## 架构
 
@@ -85,6 +137,8 @@ Clean Architecture 分层，每层职责清晰：
 - 正/负向提示词编辑，支持 NAI 权重语法 `{}` / `[]` / `()`
 - 本地涂改重绘（mask 画板），支持 inpaint 正/负向提示词
 - 模型选择（从配置的 NAI 兼容网关拉取可用模型列表）
+- Vibe Transfer 与独立 Precise Reference（参考类型、强度、忠实度）
+- 多角色提示词、负向提示词与坐标控制
 - 分辨率、采样器、噪声调度、CFG scale、seed 全可调
 - 单次批量 1–15 张
 - 预览、全屏查看、一键保存到相册
@@ -265,7 +319,15 @@ Clean Architecture 分层，每层职责清晰：
 | **LLM** | 端点、API Key、模型（与 §7 的 Provider 管理互补） |
 | **Nano Banana** | 独立的 Nano Banana 网关端点与 API Key |
 
-### 16. 主题与全局 UI
+### 16. Director Tools
+
+> 直接在应用内完成 NovelAI Director 图像处理。
+
+- 去杂物、背景移除、线稿化与草图化
+- 智能上色与表情调整
+- 支持源图预览、参数编辑、处理结果查看与保存
+
+### 17. 主题与全局 UI
 
 - 浅/深色主题切换（生成页左上角动画切换按钮，sun ↔ moon）
 - 持久化到 SharedPreferences

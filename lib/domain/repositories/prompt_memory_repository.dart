@@ -5,6 +5,12 @@ abstract class PromptMemoryRepository {
   Future<List<PromptMemory>> search(String query);
   Future<List<PromptMemory>> matchText(String text);
   Future<PromptMemory> save(PromptMemory memory);
+  Future<PromptMemory> promotePending(
+    int id, {
+    String? newTrigger,
+    String? newContent,
+    PromptMemoryType? newType,
+  });
   Future<void> delete(int id);
   Future<void> incrementHit(int id);
   Future<List<PromptMemory>> findConflicts(String trigger);

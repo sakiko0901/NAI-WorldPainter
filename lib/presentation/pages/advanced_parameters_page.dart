@@ -57,8 +57,10 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          _directorCard(isDark),
-          const SizedBox(height: 16),
+          if (!_vm.isIkunEndpoint && !_vm.is7877Endpoint) ...[
+            _directorCard(isDark),
+            const SizedBox(height: 16),
+          ],
           _card(
             isDark,
             children: [
@@ -175,8 +177,11 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
       );
 
   Widget _stepsControl() {
-    final isFixed = _vm.is7877Endpoint;
-    final value = isFixed ? ApiConstants.defaultSteps : _vm.steps;
+    final is7877 = _vm.is7877Endpoint;
+    final isIkun = _vm.isIkunEndpoint;
+    final isLocked = is7877 || (isIkun && _vm.isStepsLocked);
+    final value = isLocked ? ApiConstants.defaultSteps : _vm.steps;
+    final colors = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -186,10 +191,24 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
               child: Text('生成步数 (Steps)',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
             ),
+            if (isIkun)
+              IconButton(
+                tooltip: _vm.isStepsLocked ? '解除 28 步锁定' : '锁定为 28 步',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _vm.toggleStepsLock(),
+                icon: Icon(
+                  _vm.isStepsLocked
+                      ? CupertinoIcons.lock_fill
+                      : CupertinoIcons.lock_open,
+                  size: 18,
+                  color: _vm.isStepsLocked
+                      ? colors.primary
+                      : colors.onSurfaceVariant,
+                ),
+              ),
             Text('$value',
                 style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w700)),
+                    color: colors.primary, fontWeight: FontWeight.w700)),
           ],
         ),
         Slider(
@@ -197,15 +216,17 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
           min: 1,
           max: 50,
           divisions: 49,
-          onChanged: isFixed ? null : (next) => _vm.updateSteps(next.round()),
+          onChanged: isLocked ? null : (next) => _vm.updateSteps(next.round()),
         ),
-        if (isFixed)
+        if (is7877)
           Text(
             '7877 渠道固定为 28 步，不可修改。',
-            style: TextStyle(
-              fontSize: 12,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+          )
+        else if (isIkun && _vm.isStepsLocked)
+          Text(
+            '已锁定为 28 步。点击锁图标后可自由调整。',
+            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
           ),
       ],
     );

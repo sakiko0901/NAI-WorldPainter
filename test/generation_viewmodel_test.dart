@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -87,6 +88,169 @@ void main() {
 
     expect(viewModel.isGenerating, isFalse);
     expect(viewModel.errorMessage, contains('All connection attempts failed'));
+  });
+
+  test('ikun steps lock forces 28 and unlock restores editing', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    await viewModel.updateSteps(40);
+    expect(viewModel.steps, 40);
+    await viewModel.toggleStepsLock();
+    expect(viewModel.isStepsLocked, isTrue);
+    expect(viewModel.steps, 28);
+    await viewModel.updateSteps(45);
+    expect(viewModel.steps, 28);
+    await viewModel.toggleStepsLock();
+    await viewModel.updateSteps(45);
+    expect(viewModel.steps, 45);
+    expect(settings.savedStepsLocked, isFalse);
+  });
+
+  test('precise reference is replaced, updated, removed and saved', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'nai-diffusion-4-5-full',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    await viewModel.addPreciseReference('first.png');
+    await viewModel.updatePreciseReference(
+      0,
+      viewModel.preciseReferences.single.copyWith(
+        referenceType: 'character',
+        strength: 0.8,
+        fidelity: 0.4,
+      ),
+    );
+    await viewModel.replacePreciseReference(0, 'second.png');
+
+    final reference = viewModel.preciseReferences.single;
+    expect(reference.path, 'second.png');
+    expect(reference.referenceType, 'character');
+    expect(reference.strength, 0.8);
+    expect(reference.fidelity, 0.4);
+    expect(settings.savedPreciseReferences, viewModel.preciseReferences);
+
+    await viewModel.removePreciseReference(0);
+    expect(viewModel.preciseReferences, isEmpty);
+  });
+
+  test('vibe and precise references clear each other', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'nai-diffusion-4-5-full',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    await viewModel.setVibeReference('vibe.png');
+    await viewModel.addPreciseReference('precise.png');
+    expect(viewModel.vibeReferences, isEmpty);
+
+    await viewModel.setVibeReference('new-vibe.png');
+    expect(viewModel.preciseReferences, isEmpty);
+  });
+
+  test('vibe reference is replaced, updated, removed and saved', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    viewModel.setVibeReference('first.png');
+    expect(viewModel.vibeReferences, hasLength(1));
+    expect(viewModel.vibeReferences.single.path, 'first.png');
+
+    await viewModel.updateVibeReference(
+      viewModel.vibeReferences.single.copyWith(
+        strength: 0.8,
+        informationExtracted: 0.4,
+      ),
+    );
+    await viewModel.setVibeReference('second.png');
+
+    expect(viewModel.vibeReferences, hasLength(1));
+    expect(viewModel.vibeReferences.single.path, 'second.png');
+    expect(viewModel.vibeReferences.single.strength, 0.8);
+    expect(viewModel.vibeReferences.single.informationExtracted, 0.4);
+    expect(settings.savedVibeReferences, viewModel.vibeReferences);
+
+    await viewModel.removeVibeReference();
+
+    expect(viewModel.vibeReferences, isEmpty);
+    expect(settings.savedVibeReferences, isEmpty);
   });
 }
 
@@ -182,6 +346,37 @@ class _MemoryHistoryRepository implements HistoryRepository {
 }
 
 class _SettingsRepository implements SettingsRepository {
+  List<CharacterReferenceImage> savedVibeReferences = const [];
+  List<PreciseReferenceImage> savedPreciseReferences = const [];
+  List<CharacterSpec> savedCharacters = const [];
+  int savedSteps = 28;
+  bool savedStepsLocked = false;
+
+  @override
+  Future<void> setStepsDraft(int value) async => savedSteps = value;
+
+  @override
+  Future<void> setStepsLocked(bool value) async => savedStepsLocked = value;
+
+  @override
+  Future<void> setVibeReferencesDraft(
+    List<CharacterReferenceImage> value,
+  ) async {
+    savedVibeReferences = [...value];
+  }
+
+  @override
+  Future<void> setPreciseReferencesDraft(
+    List<PreciseReferenceImage> value,
+  ) async {
+    savedPreciseReferences = [...value];
+  }
+
+  @override
+  Future<void> setCharactersDraft(List<CharacterSpec> value) async {
+    savedCharacters = [...value];
+  }
+
   @override
   Future<String?> getSelectedModelDraft() async => 'model';
 
@@ -226,6 +421,10 @@ class _SettingsRepository implements SettingsRepository {
 
   @override
   Future<List<CharacterReferenceImage>> getVibeReferencesDraft() async =>
+      const [];
+
+  @override
+  Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async =>
       const [];
 
   @override

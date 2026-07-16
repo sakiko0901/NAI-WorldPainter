@@ -19,6 +19,7 @@ class GenerationTaskModel {
   final bool useCoords;
   final int? seed;
   final List<CharacterSpec>? characters;
+  final List<PreciseReferenceImage> preciseReferences;
   final String status;
   final String? imagePath;
   final String? imageUrl;
@@ -45,6 +46,7 @@ class GenerationTaskModel {
     this.useCoords = true,
     this.seed,
     this.characters,
+    this.preciseReferences = const [],
     required this.status,
     this.imagePath,
     this.imageUrl,
@@ -63,6 +65,15 @@ class GenerationTaskModel {
           .map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>))
           .toList();
     }
+    final preciseReferencesRaw = row['precise_references'] as String?;
+    final preciseReferences =
+        preciseReferencesRaw == null || preciseReferencesRaw.isEmpty
+            ? const <PreciseReferenceImage>[]
+            : (jsonDecode(preciseReferencesRaw) as List)
+                .map((e) => PreciseReferenceImage.fromJson(
+                      Map<String, dynamic>.from(e as Map),
+                    ))
+                .toList();
 
     return GenerationTaskModel(
       id: row['id'] as int?,
@@ -82,6 +93,7 @@ class GenerationTaskModel {
       useCoords: (row['use_coords'] as int? ?? 1) == 1,
       seed: row['seed'] as int?,
       characters: chars,
+      preciseReferences: preciseReferences,
       status: row['status'] as String,
       imagePath: row['image_path'] as String?,
       imageUrl: row['image_url'] as String?,
@@ -116,6 +128,9 @@ class GenerationTaskModel {
       'characters': characters != null
           ? jsonEncode(characters!.map((c) => c.toJson()).toList())
           : null,
+      'precise_references': preciseReferences.isEmpty
+          ? null
+          : jsonEncode(preciseReferences.map((r) => r.toJson()).toList()),
       'status': status,
       'image_path': imagePath,
       'image_url': imageUrl,
@@ -146,6 +161,7 @@ class GenerationTaskModel {
       useCoords: entity.useCoords,
       seed: entity.seed,
       characters: entity.characters,
+      preciseReferences: entity.preciseReferences,
       status: entity.status,
       imagePath: entity.imagePath,
       imageUrl: entity.imageUrl,
@@ -175,6 +191,7 @@ class GenerationTaskModel {
       useCoords: useCoords,
       seed: seed,
       characters: characters,
+      preciseReferences: preciseReferences,
       status: status,
       imagePath: imagePath,
       imageUrl: imageUrl,

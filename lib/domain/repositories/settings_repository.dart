@@ -67,6 +67,8 @@ abstract class SettingsRepository {
   Future<void> setCharactersDraft(List<CharacterSpec> value);
   Future<List<CharacterReferenceImage>> getVibeReferencesDraft();
   Future<void> setVibeReferencesDraft(List<CharacterReferenceImage> value);
+  Future<List<PreciseReferenceImage>> getPreciseReferencesDraft();
+  Future<void> setPreciseReferencesDraft(List<PreciseReferenceImage> value);
 
   Future<String> getInpaintPromptDraft();
   Future<void> setInpaintPromptDraft(String value);

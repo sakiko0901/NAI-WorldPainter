@@ -10,6 +10,18 @@ class ManagePromptMemoriesUseCase {
   Future<List<PromptMemory>> search(String query) => _repo.search(query);
   Future<List<PromptMemory>> matchText(String text) => _repo.matchText(text);
   Future<PromptMemory> save(PromptMemory memory) => _repo.save(memory);
+  Future<PromptMemory> promotePending(
+    int id, {
+    String? newTrigger,
+    String? newContent,
+    PromptMemoryType? newType,
+  }) =>
+      _repo.promotePending(
+        id,
+        newTrigger: newTrigger,
+        newContent: newContent,
+        newType: newType,
+      );
   Future<void> delete(int id) => _repo.delete(id);
   Future<void> incrementHit(int id) => _repo.incrementHit(id);
   Future<List<PromptMemory>> findConflicts(String trigger) =>

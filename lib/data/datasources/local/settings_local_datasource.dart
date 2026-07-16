@@ -163,6 +163,50 @@ class SettingsLocalDatasource {
     );
   }
 
+  Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async {
+    final raw = _prefs.getString(AppConstants.keyPreciseReferencesDraft);
+    if (raw != null) {
+      if (raw.isEmpty) return [];
+      final list = jsonDecode(raw) as List;
+      return list
+          .map((item) => PreciseReferenceImage.fromJson(
+                item as Map<String, dynamic>,
+              ))
+          .toList();
+    }
+
+    final characters = getCharactersDraft();
+    final migrated = <PreciseReferenceImage>[];
+    for (final character in characters) {
+      for (final reference in character.referenceImages) {
+        migrated.add(PreciseReferenceImage(
+          path: reference.path,
+          referenceType: 'character',
+          strength: reference.strength,
+          fidelity: reference.informationExtracted,
+        ));
+      }
+    }
+    await setPreciseReferencesDraft(migrated);
+    if (migrated.isNotEmpty) {
+      await setCharactersDraft(
+        characters
+            .map((character) => character.copyWith(referenceImages: const []))
+            .toList(),
+      );
+    }
+    return migrated;
+  }
+
+  Future<void> setPreciseReferencesDraft(
+    List<PreciseReferenceImage> value,
+  ) async {
+    await _prefs.setString(
+      AppConstants.keyPreciseReferencesDraft,
+      jsonEncode(value.map((reference) => reference.toJson()).toList()),
+    );
+  }
+
   // Inpaint Prompt Draft
   String getInpaintPromptDraft() =>
       _prefs.getString(AppConstants.keyInpaintPromptDraft) ?? '';

@@ -25,7 +25,12 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
 
   @override
   Future<List<PromptMemory>> getAll() async {
-    final rows = await _db.query(_table, orderBy: 'updated_at DESC');
+    final rows = await _db.query(
+      _table,
+      where: 'source != ?',
+      whereArgs: [PromptMemorySource.pendingLlmCandidate.name],
+      orderBy: 'updated_at DESC',
+    );
     return rows.map(PromptMemoryModel.fromDb).toList();
   }
 
@@ -47,12 +52,7 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
         _ftsAvailable = false;
       }
     }
-    // 降级：LIKE 检索
-    final like = '%$q%';
-    final rows = await _db.rawQuery(
-      'SELECT * FROM $_table WHERE "trigger" LIKE ? OR content LIKE ? ORDER BY updated_at DESC LIMIT 200',
-      [like, like],
-    );
+    final rows = await _likeSearch(q, limit: 200, retrievableOnly: false);
     return rows.map(PromptMemoryModel.fromDb).toList();
   }
 
@@ -74,52 +74,116 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
           ORDER BY bm25($_ftsTable) * m.weight ASC
           LIMIT 5
         ''', [_ftsQuery(q), PromptMemorySource.pendingLlmCandidate.name]);
-        return rows.map(PromptMemoryModel.fromDb).toList();
+        if (rows.isNotEmpty) {
+          return rows.map(PromptMemoryModel.fromDb).toList();
+        }
       } catch (_) {
         _ftsAvailable = false;
       }
     }
-    // 降级：LIKE 检索，按 weight ASC, updated_at DESC
-    final like = '%$q%';
-    final rows = await _db.rawQuery('''
-      SELECT * FROM $_table
-      WHERE ("trigger" LIKE ? OR content LIKE ?)
-        AND source != ?
-        AND superseded_by IS NULL
-      ORDER BY weight ASC, updated_at DESC
-      LIMIT 5
-    ''', [like, like, PromptMemorySource.pendingLlmCandidate.name]);
+    final rows = await _likeSearch(q, limit: 5, retrievableOnly: true);
     return rows.map(PromptMemoryModel.fromDb).toList();
   }
 
-  /// 把普通查询字符串转为 FTS5 MATCH 语法。
-  /// 策略：分词后每个 token 加前缀通配 *（支持中文/英文前缀匹配），空格分隔为 AND。
-  String _ftsQuery(String input) {
-    final tokens = input
+  List<String> _queryTokens(String input) {
+    final normalized = input
+        .toLowerCase()
+        .replaceAll('_', ' ')
+        .replaceAll(RegExp(r'[,，;；|/\\]+'), ' ')
+        .replaceAll(
+            RegExp(r'[^a-z0-9\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af\s]+'),
+            ' ');
+    final tokens = normalized
         .split(RegExp(r'\s+'))
-        .where((t) => t.trim().isNotEmpty)
-        .map((t) => '"${t.replaceAll('"', ' ')}"*')
+        .map((token) => token.trim())
+        .where((token) => token.isNotEmpty)
+        .toSet()
+        .toList();
+    return tokens;
+  }
+
+  /// FTS5 使用 OR 前缀查询：自然语言中只要命中别名或关键 tag 即可召回，
+  /// BM25 仍会把命中更多 token 的结果排在前面。
+  String _ftsQuery(String input) {
+    final tokens = _queryTokens(input)
+        .map((token) => '"${token.replaceAll('"', ' ')}"*')
         .toList();
     if (tokens.isEmpty) return '""';
-    return tokens.join(' ');
+    return tokens.join(' OR ');
   }
+
+  Future<List<Map<String, Object?>>> _likeSearch(
+    String input, {
+    required int limit,
+    required bool retrievableOnly,
+  }) async {
+    final tokens = _queryTokens(input);
+    if (tokens.isEmpty) return const [];
+    final tokenClauses = List.filled(
+      tokens.length,
+      '(LOWER("trigger") LIKE ? OR LOWER(content) LIKE ? OR LOWER(REPLACE("trigger", \'_\', \' \')) LIKE ? OR LOWER(REPLACE(content, \'_\', \' \')) LIKE ?)',
+    ).join(' OR ');
+    final args = <Object?>[];
+    for (final token in tokens) {
+      final like = '%$token%';
+      args.addAll([like, like, like, like]);
+    }
+    final filters =
+        retrievableOnly ? 'AND source != ? AND superseded_by IS NULL' : '';
+    if (retrievableOnly) {
+      args.add(PromptMemorySource.pendingLlmCandidate.name);
+    }
+    args.add(limit);
+    return _db.rawQuery('''
+      SELECT * FROM $_table
+      WHERE ($tokenClauses)
+        $filters
+      ORDER BY ${retrievableOnly ? 'weight ASC, ' : ''}updated_at DESC
+      LIMIT ?
+    ''', args);
+  }
+
+  String _normalizeTagContent(String input) {
+    final tags = input
+        .replaceAll('，', ',')
+        .split(RegExp(r'[,\n]+'))
+        .map((tag) => tag.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_'))
+        .where((tag) =>
+            tag.isNotEmpty && RegExp(r'^[a-z0-9_():.+\-]+$').hasMatch(tag))
+        .toSet();
+    return tags.join(', ');
+  }
+
+  bool _isTagMemory(PromptMemoryType type) =>
+      type == PromptMemoryType.characterName ||
+      type == PromptMemoryType.characterFeature ||
+      type == PromptMemoryType.style;
 
   @override
   Future<PromptMemory> save(PromptMemory memory) async {
     final now = DateTime.now();
+    final tagContent = _isTagMemory(memory.type)
+        ? _normalizeTagContent(memory.content)
+        : memory.content.trim();
+    if (_isTagMemory(memory.type) && tagContent.isEmpty) {
+      throw ArgumentError('提示词记忆 content 必须是英文 Danbooru tag');
+    }
     final normalized = memory.copyWith(
       trigger: memory.trigger.trim(),
-      content: memory.content.trim(),
+      content: tagContent,
       updatedAt: now,
     );
 
     if (normalized.id != null) {
-      await _db.update(
+      final affected = await _db.update(
         _table,
         PromptMemoryModel.toDb(normalized),
         where: 'id = ?',
         whereArgs: [normalized.id],
       );
+      if (affected == 0) {
+        throw StateError('记忆 ${normalized.id} 不存在，无法更新');
+      }
       return normalized;
     }
 
@@ -218,19 +282,60 @@ class PromptMemoryRepositoryImpl implements PromptMemoryRepository {
     return rows.map(PromptMemoryModel.fromDb).toList();
   }
 
-  /// 把 pending 候选晋升为正式记忆（参与检索）。
-  Future<void> promotePending(int id,
-      {String? newContent, String? newTrigger}) async {
-    final updates = <String, Object?>{
-      'source': PromptMemorySource.llmCandidate.name,
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
-    };
-    if (newContent != null && newContent.trim().isNotEmpty) {
-      updates['content'] = newContent.trim();
+  /// 把 pending 候选原地晋升为正式记忆（参与检索）。
+  @override
+  Future<PromptMemory> promotePending(
+    int id, {
+    String? newContent,
+    String? newTrigger,
+    PromptMemoryType? newType,
+  }) async {
+    final rows = await _db.query(
+      _table,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) throw StateError('候选记忆 $id 不存在');
+
+    final pending = PromptMemoryModel.fromDb(rows.single);
+    if (pending.source != PromptMemorySource.pendingLlmCandidate) {
+      throw StateError('记忆 $id 已不在待确认列表中');
     }
-    if (newTrigger != null && newTrigger.trim().isNotEmpty) {
-      updates['trigger'] = newTrigger.trim();
+
+    final type = newType ?? pending.type;
+    final trigger = (newTrigger ?? pending.trigger).trim();
+    final rawContent = (newContent ?? pending.content).trim();
+    final content =
+        _isTagMemory(type) ? _normalizeTagContent(rawContent) : rawContent;
+    if (trigger.isEmpty || content.isEmpty) {
+      if (_isTagMemory(type)) {
+        throw ArgumentError('请编辑为英文 Danbooru tag 后再确认');
+      }
+      throw ArgumentError('触发词和内容不能为空');
     }
-    await _db.update(_table, updates, where: 'id = ?', whereArgs: [id]);
+
+    final updatedAt = DateTime.now();
+    final affected = await _db.update(
+      _table,
+      {
+        'trigger': trigger,
+        'content': content,
+        'type': type.name,
+        'source': PromptMemorySource.llmCandidate.name,
+        'updated_at': updatedAt.millisecondsSinceEpoch,
+      },
+      where: 'id = ? AND source = ?',
+      whereArgs: [id, PromptMemorySource.pendingLlmCandidate.name],
+    );
+    if (affected != 1) throw StateError('候选记忆 $id 晋升失败');
+
+    return pending.copyWith(
+      trigger: trigger,
+      content: content,
+      type: type,
+      source: PromptMemorySource.llmCandidate,
+      updatedAt: updatedAt,
+    );
   }
 }

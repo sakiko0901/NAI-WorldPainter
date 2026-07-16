@@ -6,7 +6,7 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 11;
+  static const int dbVersion = 12;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
@@ -38,6 +38,7 @@ class AppConstants {
   static const String keyStepsLocked = 'steps_locked';
   static const String keyCharactersDraft = 'characters_draft';
   static const String keyVibeReferencesDraft = 'vibe_references_draft';
+  static const String keyPreciseReferencesDraft = 'precise_references_draft';
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
   static const String keyInpaintNegativePromptDraft =
       'inpaint_negative_prompt_draft';
@@ -85,7 +86,7 @@ class AppConstants {
       '- `web_search`：用户问实时信息、角色最新设定、不确定的事实时调用。\n'
       '- `search_danbooru`：用户提及角色/画风/场景，需要找 Danbooru 真实 tag 时调用。返回真实存在的 tag 池，**不要凭空创造 tag**。单次检索返回最多 30 个 tag，足够覆盖一个角色的全部常见特征（发色/瞳色/服装等），不需要为每个细节单独搜。只有切换到不同角色/不同场景/不同画风时才需要再次调用。\n'
       '- `get_memories`：查询本地学习记忆库。用户曾纠正过的"触发词→正确内容"映射会命中。优先级高于 Danbooru 与模型常识。\n'
-      '- `save_memory`：用户明确纠正人名、角色特征、画风知识时调用。例如用户说"记住：纳西妲是青绿眼"。\n'
+      '- `save_memory`：用户明确纠正人名、角色特征、画风知识时调用。例如用户说"记住：纳西妲是青绿眼"。保存角色名、角色特征、画风时，content 必须是经 `search_danbooru` 确认存在的英文 Danbooru canonical tag，使用 lowercase 与 underscore 格式；trigger 可保留用户使用的中文或英文别名以便召回。\n'
       '- `generate_image` / `upscale_image` / `save_image` / `upload_to_pixiv`：用户明确要求时调用，会弹窗让用户确认。\n'
       '- `remove_character`：删除指定多角色格子（参数 index，1-based）。当用户不再需要某个角色、要从多角色场景改成单角色、或多角色格过多导致生图失败时调用。\n'
       '- `clear_characters`：清空全部多角色格子。当从多角色切换到单角色场景时调用（不影响 positive/negative 框）。\n'
@@ -114,7 +115,7 @@ class AppConstants {
       '\n'
       '### 四、负面提示词\n'
       '- 只在明确需要排除某样东西时才加负面 tag，不要堆砌。\n'
-      '- 基础负面：`lowres, worst quality, bad quality, jpeg artifacts, bad anatomy, extra digits, missing fingers, signature, watermark, username, error, fewer, scan, sketch, lineart, rough, text, cropped, blurry, monochrome, grayscale`。\n'
+      '- 基础负面：`lowres, worst quality, low quality, jpeg artifacts, text, watermark, signature, bad anatomy, bad hands, missing fingers, extra digit, fused fingers, deformed, disfigured, ugly, mutated, poorly drawn, bad proportions, extra limbs, missing limbs, cross-eyed, blank eyes, dead eyes, cartoon, 3d, realistic, messy lineart, flat colors, dull colors, monochrome, blurry, grainy, noise, bad perspective, long neck, cropped, out of frame, nsfw, clashing colors, neon colors, saturated colors, muscular, skinny, thick waist, overly sexualized, seductive pose, heavy makeup, mature appearance, black hair, brown hair, dark hair, no cat ears, no cat tail, school uniform, armor, weapon, modern clothing, messy background, cluttered, crowded, dark room, harsh shadows, neon lights, urban, futuristic, sci-fi, realistic proportions, tall, long legs, sharp features, angular face, gradient background, textured background, fan art, amateur, non-official style, dark, gloomy, horror, serious, dramatic`。\n'
       '\n'
       '### 五、多角色与互动\n'
       '- 2 人以上时，**必须**用 write_prompt 工具写入 character_1、character_2 等独立框，每角色单独一个 prompt 框，防止外貌动作混淆。\n'

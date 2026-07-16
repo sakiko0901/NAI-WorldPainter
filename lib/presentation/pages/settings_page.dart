@@ -103,7 +103,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 _SettingsTile(
                   icon: CupertinoIcons.video_camera_solid,
                   title: '导演工具',
-                  subtitle: '镜头、构图与连续画面控制',
+                  subtitle: '去杂物、背景移除、线稿、草图、上色与表情',
                   onTap: () => Navigator.of(context).push(
                     CupertinoPageRoute(
                         builder: (_) => const DirectorToolsPage()),

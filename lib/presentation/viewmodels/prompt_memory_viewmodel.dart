@@ -99,60 +99,39 @@ class PromptMemoryViewModel extends ChangeNotifier {
     await load();
   }
 
-  /// 晋升 pending 候选为正式记忆
-  Future<void> promotePending(int id,
-      {String? newContent, String? newTrigger}) async {
-    final pending = pendingMemories.where((m) => m.id == id).firstOrNull;
-    if (pending == null) return;
-    final trigger = (newTrigger ?? pending.trigger).trim();
-    final content = (newContent ?? pending.content).trim();
-
-    // 晋升时也检测冲突
-    final conflicts = await _useCase.findConflicts(trigger);
-    if (conflicts.isEmpty) {
-      await _useCase.save(pending.copyWith(
-        source: PromptMemorySource.llmCandidate,
-        trigger: trigger,
-        content: content,
-        updatedAt: DateTime.now(),
-      ));
-      await load();
-      return;
-    }
-    // 有冲突：把 pending 升级为新记忆，由 UI 弹窗处理
-    final newMemory = pending.copyWith(
-      source: PromptMemorySource.llmCandidate,
-      trigger: trigger,
-      content: content,
-    );
-    // 注意：此时 pending 仍在表中，UI 层若选 replace/merge 会在 resolveConflict 中
-    // 把新记忆保存为正式行（新 id），旧的 pending 行需要单独删除
-    // 简化处理：先删除 pending，再走 resolveConflict
-    await _useCase.delete(id);
-    final conflictsAfterDelete = await _useCase.findConflicts(trigger);
-    if (conflictsAfterDelete.isEmpty) {
-      await _useCase.save(newMemory);
-    } else {
-      // 把冲突信息暂存，由 UI 触发 resolveConflict
-      // 这里只能处理一个冲突，多冲突场景由 UI 提示
-      await _resolvePromoteWithConflict(
-        existing: conflictsAfterDelete.first,
-        newMemory: newMemory,
-      );
-    }
-    await load();
-  }
-
-  Future<void> _resolvePromoteWithConflict({
-    required PromptMemory existing,
-    required PromptMemory newMemory,
+  /// 晋升 pending 候选为正式记忆。
+  /// 策略：把同一条 pending 行原地 UPDATE 为 llmCandidate，保留原 id。
+  /// 不再“先删 pending 再 save”，避免 findConflicts 包含自身时落入空操作分支
+  /// （save 携带已不存在的 id → UPDATE 命中 0 行 → 候选消失且未晋升）。
+  /// 保存失败时设置 errorMessage 而非抛出，保证候选行不被删除，等待用户重试。
+  Future<bool> promotePending(
+    int id, {
+    String? newContent,
+    String? newTrigger,
+    PromptMemoryType? newType,
   }) async {
-    // 默认 coexist，UI 可后续手动调整
-    await resolveConflict(
-      strategy: MemoryConflictStrategy.coexist,
-      existing: existing,
-      newMemory: newMemory,
-    );
+    if (!pendingMemories.any((memory) => memory.id == id)) {
+      errorMessage = '候选记忆已不存在';
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      await _useCase.promotePending(
+        id,
+        newTrigger: newTrigger,
+        newContent: newContent,
+        newType: newType,
+      );
+      errorMessage = null;
+      await load();
+      return true;
+    } catch (e) {
+      final message = e is ArgumentError ? e.message : e;
+      errorMessage = '保存记忆失败: $message';
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> rejectPending(int id) async {

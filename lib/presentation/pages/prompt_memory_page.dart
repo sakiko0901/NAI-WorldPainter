@@ -4,6 +4,7 @@ import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 import 'package:nai_huishi/presentation/viewmodels/prompt_memory_viewmodel.dart';
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
 class PromptMemoryPage extends StatefulWidget {
   const PromptMemoryPage({super.key});
@@ -295,12 +296,27 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
             ),
             CupertinoDialogAction(
               onPressed: () async {
-                await _vm.promotePending(
+                final ok = await _vm.promotePending(
                   memory.id!,
                   newTrigger: triggerController.text,
                   newContent: contentController.text,
+                  newType: type,
                 );
-                if (ctx.mounted) Navigator.pop(ctx);
+                if (!ctx.mounted) return;
+                if (ok) {
+                  Navigator.pop(ctx);
+                  showFloatingToast(
+                    context,
+                    '候选记忆已确认',
+                    icon: CupertinoIcons.checkmark_circle_fill,
+                  );
+                } else {
+                  showFloatingToast(
+                    ctx,
+                    _vm.errorMessage ?? '确认失败',
+                    icon: CupertinoIcons.exclamationmark_circle,
+                  );
+                }
               },
               child: Text('确认晋升'),
             ),
@@ -543,7 +559,17 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                   IconButton(
                     icon: Icon(CupertinoIcons.checkmark_alt_circle,
                         size: 18, color: Colors.green),
-                    onPressed: () => _vm.promotePending(m.id!),
+                    onPressed: () async {
+                      final ok = await _vm.promotePending(m.id!);
+                      if (!mounted) return;
+                      showFloatingToast(
+                        context,
+                        ok ? '候选记忆已确认' : (_vm.errorMessage ?? '确认失败'),
+                        icon: ok
+                            ? CupertinoIcons.checkmark_circle_fill
+                            : CupertinoIcons.exclamationmark_circle,
+                      );
+                    },
                     tooltip: '确认晋升',
                   ),
                   IconButton(

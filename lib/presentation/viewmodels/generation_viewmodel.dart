@@ -181,6 +181,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   double inpaintStrength = 1.0;
   List<String> gptImagePaths = []; // GPT 图生图参考图列表（最多16张）
   List<CharacterReferenceImage> vibeReferences = [];
+  List<PreciseReferenceImage> preciseReferences = [];
 
   StreamSubscription? _queueSub;
   StreamSubscription? _taskSub;
@@ -213,8 +214,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     inpaintPrompt = await _manageSettings.getInpaintPromptDraft();
     inpaintNegativePrompt =
         await _manageSettings.getInpaintNegativePromptDraft();
-    characters = await _manageSettings.getCharactersDraft();
-    vibeReferences = await _manageSettings.getVibeReferencesDraft();
+    final savedCharacters = await _manageSettings.getCharactersDraft();
+    preciseReferences = await _manageSettings.getPreciseReferencesDraft();
+    characters = savedCharacters
+        .map((character) => character.copyWith(referenceImages: const []))
+        .toList();
+    if (savedCharacters
+        .any((character) => character.referenceImages.isNotEmpty)) {
+      await _saveCharactersDraft();
+    }
+    final savedVibeReferences = await _manageSettings.getVibeReferencesDraft();
+    vibeReferences = savedVibeReferences.take(1).toList();
+    if (savedVibeReferences.length > 1) {
+      await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    }
     batchCount = await _manageSettings.getBatchCount();
 
     notifyListeners();
@@ -739,7 +752,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       await _manageSettings.setActiveEndpointId(
           opt.first.provider, opt.first.endpointId);
     }
-    if (is7877Endpoint) steps = ApiConstants.defaultSteps;
+    if (is7877Endpoint || (isIkunEndpoint && isStepsLocked)) {
+      steps = ApiConstants.defaultSteps;
+      await _manageSettings.setStepsDraft(steps);
+    }
     await _ensureResolutionForCurrentProvider();
     // Nano Banana 不支持局部重绘，自动回退至文生图
     if (isNanoProvider && generationMode == GenerationMode.inpainting) {
@@ -793,14 +809,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSteps(int value) async {
-    steps = is7877Endpoint ? ApiConstants.defaultSteps : value.clamp(1, 50);
+    steps = is7877Endpoint || (isIkunEndpoint && isStepsLocked)
+        ? ApiConstants.defaultSteps
+        : value.clamp(1, 50);
     await _manageSettings.setStepsDraft(steps);
     notifyListeners();
   }
 
   Future<void> toggleStepsLock() async {
     isStepsLocked = !isStepsLocked;
-    if (isStepsLocked) {
+    if (isStepsLocked && isIkunEndpoint) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
@@ -808,32 +826,79 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
-  Future<void> addVibeReference(String path) async {
+  Future<void> setVibeReference(String path) async {
     if (!isIkunEndpoint) return;
+    final current = vibeReferences.isEmpty ? null : vibeReferences.first;
     vibeReferences = [
-      ...vibeReferences,
-      CharacterReferenceImage(path: path),
+      CharacterReferenceImage(
+        path: path,
+        strength: current?.strength ?? 0.6,
+        informationExtracted: current?.informationExtracted ?? 1.0,
+      ),
     ];
+    if (preciseReferences.isNotEmpty) {
+      preciseReferences = const [];
+      await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+    }
     await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    notifyListeners();
+  }
+
+  Future<void> addPreciseReference(String path) async {
+    if (!isIkunEndpoint) return;
+    preciseReferences = [
+      ...preciseReferences,
+      PreciseReferenceImage(path: path),
+    ];
+    if (vibeReferences.isNotEmpty) {
+      vibeReferences = const [];
+      await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    }
+    await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+    notifyListeners();
+  }
+
+  Future<void> replacePreciseReference(int index, String path) async {
+    if (index < 0 || index >= preciseReferences.length) return;
+    final list = [...preciseReferences];
+    list[index] = list[index].copyWith(path: path);
+    preciseReferences = list;
+    await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+    notifyListeners();
+  }
+
+  Future<void> updatePreciseReference(
+    int index,
+    PreciseReferenceImage reference,
+  ) async {
+    if (index < 0 || index >= preciseReferences.length) return;
+    final list = [...preciseReferences];
+    list[index] = reference;
+    preciseReferences = list;
+    await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+    notifyListeners();
+  }
+
+  Future<void> removePreciseReference(int index) async {
+    if (index < 0 || index >= preciseReferences.length) return;
+    final list = [...preciseReferences]..removeAt(index);
+    preciseReferences = list;
+    await _manageSettings.setPreciseReferencesDraft(preciseReferences);
     notifyListeners();
   }
 
   Future<void> updateVibeReference(
-    int index,
     CharacterReferenceImage reference,
   ) async {
-    if (index < 0 || index >= vibeReferences.length) return;
-    final references = [...vibeReferences];
-    references[index] = reference;
-    vibeReferences = references;
+    if (vibeReferences.isEmpty) return;
+    vibeReferences = [reference];
     await _manageSettings.setVibeReferencesDraft(vibeReferences);
     notifyListeners();
   }
 
-  Future<void> removeVibeReference(int index) async {
-    if (index < 0 || index >= vibeReferences.length) return;
-    final references = [...vibeReferences]..removeAt(index);
-    vibeReferences = references;
+  Future<void> removeVibeReference() async {
+    if (vibeReferences.isEmpty) return;
+    vibeReferences = const [];
     await _manageSettings.setVibeReferencesDraft(vibeReferences);
     notifyListeners();
   }
@@ -976,6 +1041,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final actualModelId =
         selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final provider = selectedOption?.provider ?? currentProvider;
+    if (isIkunEndpoint &&
+        preciseReferences.isNotEmpty &&
+        !_isV45Model(actualModelId)) {
+      errorMessage = '精密参照图像仅支持 NovelAI V4.5 模型';
+      notifyListeners();
+      return;
+    }
 
     final taskSampler = isIkunEndpoint && selectedSampler == 'ddim'
         ? 'ddim_v3'
@@ -1003,7 +1075,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       cfgRescale: cfgRescale,
       sampler: taskSampler,
       noiseSchedule: taskNoiseSchedule,
-      steps: is7877Endpoint ? ApiConstants.defaultSteps : steps.clamp(1, 50),
+      steps: is7877Endpoint || (isIkunEndpoint && isStepsLocked)
+          ? ApiConstants.defaultSteps
+          : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
         (character) => character.centerX != null && character.centerY != null,
       ),
@@ -1012,7 +1086,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
               enabledCharacters.isNotEmpty
           ? enabledCharacters
           : null,
-      vibeReferences: isIkunEndpoint ? vibeReferences : const [],
+      vibeReferences:
+          isIkunEndpoint ? vibeReferences.take(1).toList() : const [],
+      preciseReferences: isIkunEndpoint ? preciseReferences : const [],
       status: 'pending',
       createdAt: DateTime.now(),
       mode: generationMode,
@@ -1302,6 +1378,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   /// 解析实际模型 ID。新格式 `gpt:<endpointId>:<model>` / `nano:<endpointId>:<model>`，
   /// 兼容旧格式 `gpt:<model>` / `nano:<model>`。
+  bool _isV45Model(String model) {
+    final normalized = model.toLowerCase();
+    return normalized.contains('v4.5') ||
+        normalized.contains('v4-5') ||
+        normalized.contains('4-5');
+  }
+
   String _resolveActualModelId(String selectedModelId) {
     String stripPrefix(String prefix) {
       var rest = selectedModelId.substring(prefix.length);

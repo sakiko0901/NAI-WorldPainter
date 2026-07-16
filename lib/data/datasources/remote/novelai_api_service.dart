@@ -67,14 +67,20 @@ class NovelAiApiService {
     try {
       final usesImageGenerations =
           task.protocol == AppConstants.novelAiImageGenerationsProtocol;
-      final requestPath = usesImageGenerations
-          ? ApiConstants.imageGenerations
-          : ApiConstants.chatCompletions;
+      final usesPreciseReference =
+          usesImageGenerations && task.preciseReferences.isNotEmpty;
+      final requestPath = usesPreciseReference
+          ? ApiConstants.imagePreciseReference
+          : usesImageGenerations
+              ? ApiConstants.imageGenerations
+              : ApiConstants.chatCompletions;
       final response = await _dio.post(
         requestPath,
-        data: usesImageGenerations
-            ? await _buildImageGenerationsBody(task)
-            : _buildChatCompletionsBody(task),
+        data: usesPreciseReference
+            ? await _buildPreciseReferenceBody(task)
+            : usesImageGenerations
+                ? await _buildImageGenerationsBody(task)
+                : _buildChatCompletionsBody(task),
         options: Options(
           receiveTimeout: const Duration(minutes: 5),
           sendTimeout: const Duration(minutes: 1),
@@ -87,8 +93,12 @@ class NovelAiApiService {
       final parsed = _parseResponse(response.data, task);
       return await _downloadIfNeeded(parsed, apiKey);
     } on DioException catch (e) {
+      final preciseReferenceUnavailable =
+          task.preciseReferences.isNotEmpty && _isEndpointUnavailable(e);
       throw ApiException(
-        message: _handleDioError(e),
+        message: preciseReferenceUnavailable
+            ? '当前中转站不支持精密参照图像接口，请在 ikun 渠道配置部署了 Precise Reference 的 NovelAI Gateway 根地址'
+            : _handleDioError(e),
         statusCode: e.response?.statusCode,
         originalError: e,
       );
@@ -119,6 +129,48 @@ class NovelAiApiService {
       final data = response.data;
       if (data == null || data.isEmpty) {
         throw ApiException(message: '标注接口未返回 PNG');
+      }
+      return Uint8List.fromList(data);
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
+  }
+
+  Future<Uint8List> processDirectorImage({
+    required String imagePath,
+    required String endpointPath,
+    required String apiKey,
+    required String baseUrl,
+    String? model,
+    String? prompt,
+    int? defry,
+    int? level,
+  }) async {
+    _configureAuth(apiKey, baseUrl);
+    final bytes = await File(imagePath).readAsBytes();
+    final body = <String, dynamic>{'image': base64Encode(bytes)};
+    if (model != null && model.trim().isNotEmpty) body['model'] = model.trim();
+    if (prompt != null) body['prompt'] = prompt.trim();
+    if (defry != null) body['defry'] = defry.clamp(0, 10);
+    if (level != null) body['level'] = level.clamp(1, 5);
+    try {
+      final response = await _dio.post<List<int>>(
+        endpointPath,
+        data: body,
+        options: Options(
+          contentType: 'application/json',
+          responseType: ResponseType.bytes,
+          headers: {'Accept': 'image/png'},
+          receiveTimeout: const Duration(minutes: 3),
+        ),
+      );
+      final data = response.data;
+      if (data == null || data.isEmpty) {
+        throw ApiException(message: '导演工具未返回 PNG');
       }
       return Uint8List.fromList(data);
     } on DioException catch (e) {
@@ -273,18 +325,55 @@ class NovelAiApiService {
     return img.encodePng(output);
   }
 
+  Future<Map<String, dynamic>> _buildPreciseReferenceBody(
+    GenerationTask task,
+  ) async {
+    final references = <Map<String, dynamic>>[];
+    for (var index = 0; index < task.preciseReferences.length; index++) {
+      final reference = task.preciseReferences[index];
+      final referenceImage = await _readPreciseReferenceIfAvailable(reference);
+      if (referenceImage == null) {
+        throw ApiException(message: '精密参照图像 ${index + 1} 不可用，请重新选择');
+      }
+      references.add({
+        'reference_image': referenceImage,
+        'reference_type': reference.referenceType,
+        'strength': reference.strength,
+        'fidelity': reference.fidelity,
+      });
+    }
+
+    final responseFormat =
+        const {'b64_json', 'url'}.contains(task.responseFormat)
+            ? task.responseFormat!
+            : 'b64_json';
+    return {
+      'prompt': task.prompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
+      'model': task.model,
+      'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps,
+      'n_samples': 1,
+      'scale': task.scale,
+      'sampler': _normalizeImageGenerationsSampler(task.sampler),
+      'noise_schedule':
+          _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule),
+      'cfg_rescale': task.cfgRescale,
+      if (task.seed != null) 'seed': task.seed,
+      'response_format': responseFormat,
+      'references': references,
+    };
+  }
+
   Future<Map<String, dynamic>> _buildImageGenerationsBody(
       GenerationTask task) async {
-    final references = <String>[];
-    final strengths = <double>[];
-    final informationExtracted = <double>[];
-    for (final reference in task.vibeReferences) {
-      final file = File(reference.path);
-      if (!await file.exists()) continue;
-      references.add(base64Encode(await file.readAsBytes()));
-      strengths.add(reference.strength);
-      informationExtracted.add(reference.informationExtracted);
-    }
+    final reference =
+        task.vibeReferences.isEmpty ? null : task.vibeReferences.first;
+    final referenceImage =
+        reference == null ? null : await _readReferenceIfAvailable(reference);
     final characterPrompts = _buildCharacterPrompts(task.characters);
     final responseFormat =
         const {'b64_json', 'url'}.contains(task.responseFormat)
@@ -309,11 +398,35 @@ class NovelAiApiService {
       'response_format': responseFormat,
       if (characterPrompts.isNotEmpty) 'characterPrompts': characterPrompts,
       if (characterPrompts.isNotEmpty) 'use_coords': task.useCoords,
-      if (references.isNotEmpty) 'reference_images': references,
-      if (references.isNotEmpty) 'reference_strength_multiple': strengths,
-      if (references.isNotEmpty)
-        'reference_information_extracted_multiple': informationExtracted,
+      if (referenceImage != null) 'reference_image': referenceImage,
+      if (referenceImage != null) 'reference_strength': reference!.strength,
+      if (referenceImage != null)
+        'reference_information_extracted': reference!.informationExtracted,
     };
+  }
+
+  Future<String?> _readPreciseReferenceIfAvailable(
+    PreciseReferenceImage reference,
+  ) async {
+    try {
+      final file = File(reference.path);
+      if (!await file.exists()) return null;
+      return base64Encode(await file.readAsBytes());
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<String?> _readReferenceIfAvailable(
+    CharacterReferenceImage reference,
+  ) async {
+    try {
+      final file = File(reference.path);
+      if (!await file.exists()) return null;
+      return base64Encode(await file.readAsBytes());
+    } on FileSystemException {
+      return null;
+    }
   }
 
   String _normalizeImageGenerationsSampler(String sampler) {
@@ -611,14 +724,34 @@ class NovelAiApiService {
       case DioExceptionType.connectionError:
         return '无法连接到服务器，请检查 Base URL';
       default:
-        return '网络错误: ${e.message}';
+        final summary = _extractErrorSummary(e.response?.data);
+        if (summary != null) return summary;
+        final message = e.message?.trim();
+        if (message != null && message.isNotEmpty) return '网络错误：$message';
+        final original = e.error?.toString().trim();
+        if (original != null && original.isNotEmpty) return '网络错误：$original';
+        return '网络请求失败';
     }
   }
 
   String? _extractErrorSummary(dynamic body) {
+    if (body is List<int>) {
+      final decoded = utf8.decode(body, allowMalformed: true).trim();
+      if (decoded.isEmpty) return null;
+      try {
+        return _extractErrorSummary(jsonDecode(decoded));
+      } catch (_) {
+        return decoded.length > 300 ? '${decoded.substring(0, 300)}…' : decoded;
+      }
+    }
     if (body is String) {
       final trimmed = body.trim();
-      return trimmed.isEmpty ? null : trimmed;
+      if (trimmed.isEmpty) return null;
+      try {
+        return _extractErrorSummary(jsonDecode(trimmed));
+      } catch (_) {
+        return trimmed.length > 300 ? '${trimmed.substring(0, 300)}…' : trimmed;
+      }
     }
     if (body is Map) {
       final error = body['error'];
