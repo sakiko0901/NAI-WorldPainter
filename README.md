@@ -352,7 +352,12 @@ Clean Architecture 分层，每层职责清晰：
 
 感谢原作者提供 NovelAI 绘图转 New API 相关接口方案。本项目主要提供 Android APK 客户端封装与界面实现，接口相关能力与原始方案归原作者所有。
 
-提示词辅助写手的 Danbooru 校准功能基于 [SuzumiyaAkizuki/DanbooruSearch](https://huggingface.co/spaces/SAkizuki/DanbooruSearch)（[GitHub](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) · [数据库管线](https://github.com/SuzumiyaAkizuki/danbooru-tag-pipeline)）提供的语义检索 API。
+提示词辅助写手的 Danbooru 校准与标签检索能力接入了 **SuzumiyaAkizuki** 开源的 [DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 项目。感谢作者提供基于语义匹配的 Danbooru 标签搜索、共现关联推荐及公开 API 服务。
+
+- **项目主页：** [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)
+- **在线服务：** [DanbooruSearch](https://huggingface.co/spaces/SAkizuki/DanbooruSearch)
+- **数据库管线：** [danbooru-tag-pipeline](https://github.com/SuzumiyaAkizuki/danbooru-tag-pipeline)
+- **上游许可证：** [GNU GPLv3](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline/blob/main/LICENSE)
 
 图片打标功能基于 [SmilingWolf](https://huggingface.co/SmilingWolf) 的 WD-Tagger 模型（HuggingFace Space 托管）。
 
