@@ -157,7 +157,6 @@ void main() {
       viewModel.preciseReferences.single.copyWith(
         referenceType: 'character',
         strength: 0.8,
-        fidelity: 0.4,
       ),
     );
     await viewModel.replacePreciseReference(0, 'second.png');
@@ -166,7 +165,6 @@ void main() {
     expect(reference.path, 'second.png');
     expect(reference.referenceType, 'character');
     expect(reference.strength, 0.8);
-    expect(reference.fidelity, 0.4);
     expect(settings.savedPreciseReferences, viewModel.preciseReferences);
 
     await viewModel.removePreciseReference(0);
@@ -252,6 +250,186 @@ void main() {
     expect(viewModel.vibeReferences, isEmpty);
     expect(settings.savedVibeReferences, isEmpty);
   });
+
+  test('Precise Reference accepts V4 and V4.5 models', () async {
+    for (final model in const [
+      'nai-v4-curated',
+      'nai-diffusion-4-5-full',
+    ]) {
+      final image = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'precise_model_${model.hashCode}.png',
+      );
+      await image.writeAsBytes(const [1, 2, 3]);
+      addTearDown(() async {
+        if (await image.exists()) await image.delete();
+      });
+      final repository = _CapturingGenerationRepository(image.path);
+      final history = _MemoryHistoryRepository();
+      final queue = GenerationQueue(repository, history);
+      addTearDown(queue.dispose);
+      final viewModel = GenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+      );
+      addTearDown(viewModel.dispose);
+      await Future<void>.delayed(Duration.zero);
+      viewModel.imageModelOptions = [
+        ImageModelOption(
+          modelId: model,
+          displayName: model,
+          actualModel: model,
+          provider: ImageProviderType.novelAi,
+          protocol: AppConstants.novelAiImageGenerationsProtocol,
+        ),
+      ];
+      viewModel.selectedModel = model;
+      viewModel.prompt = '1girl';
+      await viewModel.addPreciseReference('reference.png');
+
+      await viewModel.generate();
+
+      expect(repository.submitted, hasLength(1));
+      expect(repository.submitted.single.preciseReferences, hasLength(1));
+      expect(viewModel.errorMessage, isNull);
+    }
+  });
+
+  test('Precise Reference rejects unsupported and limit models', () async {
+    for (final entry in const {
+      'nai-v3': 'V4/V4.5',
+      'nai-v4.5-full-limit': '-limit',
+    }.entries) {
+      final history = _MemoryHistoryRepository();
+      final repository = _CapturingGenerationRepository('unused');
+      final queue = GenerationQueue(repository, history);
+      addTearDown(queue.dispose);
+      final viewModel = GenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+      );
+      addTearDown(viewModel.dispose);
+      await Future<void>.delayed(Duration.zero);
+      viewModel.imageModelOptions = [
+        ImageModelOption(
+          modelId: entry.key,
+          displayName: entry.key,
+          actualModel: entry.key,
+          provider: ImageProviderType.novelAi,
+          protocol: AppConstants.novelAiImageGenerationsProtocol,
+        ),
+      ];
+      viewModel.selectedModel = entry.key;
+      viewModel.prompt = '1girl';
+      await viewModel.addPreciseReference('reference.png');
+
+      await viewModel.generate();
+
+      expect(repository.submitted, isEmpty);
+      expect(viewModel.errorMessage, contains(entry.value));
+    }
+  });
+
+  test('7877 and ikun submit independent img2img state', () async {
+    for (final protocol in const [
+      AppConstants.novelAiChatCompletionsProtocol,
+      AppConstants.novelAiImageGenerationsProtocol,
+    ]) {
+      final source = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'img2img_${protocol.hashCode}.png',
+      );
+      await source.writeAsBytes(const [1]);
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
+      final repository = _CapturingGenerationRepository(source.path);
+      final history = _MemoryHistoryRepository();
+      final queue = GenerationQueue(repository, history);
+      addTearDown(queue.dispose);
+      final viewModel = GenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+      );
+      addTearDown(viewModel.dispose);
+      await Future<void>.delayed(Duration.zero);
+      viewModel.imageModelOptions = [
+        ImageModelOption(
+          modelId: protocol,
+          displayName: protocol,
+          actualModel: 'model',
+          provider: ImageProviderType.novelAi,
+          protocol: protocol,
+        ),
+      ];
+      viewModel.selectedModel = protocol;
+      viewModel.prompt = '1girl';
+      viewModel.setImg2ImgSourceImagePath(source.path);
+      viewModel.updateImg2ImgStrength(0.42);
+
+      await viewModel.generate();
+
+      expect(repository.submitted, hasLength(1));
+      expect(repository.submitted.single.img2imgSourceImagePath, source.path);
+      expect(repository.submitted.single.img2imgStrength, 0.42);
+    }
+  });
+
+  test('loadFromHistory restores Precise Reference and clears Vibe', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai-v4-curated',
+        displayName: 'V4',
+        actualModel: 'nai-v4-curated',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    await viewModel.setVibeReference('vibe.png');
+    final task = GenerationTask(
+      taskId: 'history-task',
+      model: 'nai-v4-curated',
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+      prompt: 'history prompt',
+      width: 832,
+      height: 1216,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'native',
+      preciseReferences: const [
+        PreciseReferenceImage(path: 'history-reference.png'),
+      ],
+      status: 'success',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+
+    await viewModel.loadFromHistory(task);
+
+    expect(viewModel.preciseReferences, task.preciseReferences);
+    expect(viewModel.vibeReferences, isEmpty);
+    expect(settings.savedPreciseReferences, task.preciseReferences);
+    expect(settings.savedVibeReferences, isEmpty);
+  });
 }
 
 class _DelayedSaveImageUseCase extends SaveImageUseCase {
@@ -286,6 +464,26 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
         imagePath: imagePath,
         completedAt: DateTime.now(),
       );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _CapturingGenerationRepository implements GenerationRepository {
+  _CapturingGenerationRepository(this.imagePath);
+
+  final String imagePath;
+  final List<GenerationTask> submitted = [];
+
+  @override
+  Future<GenerationTask> submitGeneration(GenerationTask task) async {
+    submitted.add(task);
+    return task.copyWith(
+      status: 'success',
+      imagePath: imagePath,
+      completedAt: DateTime.now(),
+    );
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -357,6 +555,30 @@ class _SettingsRepository implements SettingsRepository {
 
   @override
   Future<void> setStepsLocked(bool value) async => savedStepsLocked = value;
+
+  @override
+  Future<void> setSelectedModelDraft(String value) async {}
+
+  @override
+  Future<void> setSelectedResolutionDraft(String value) async {}
+
+  @override
+  Future<void> setScaleDraft(double value) async {}
+
+  @override
+  Future<void> setCfgRescaleDraft(double value) async {}
+
+  @override
+  Future<void> setSelectedSamplerDraft(String value) async {}
+
+  @override
+  Future<void> setSelectedNoiseScheduleDraft(String value) async {}
+
+  @override
+  Future<void> setPromptDraft(String value) async {}
+
+  @override
+  Future<void> setNegativePromptDraft(String value) async {}
 
   @override
   Future<void> setVibeReferencesDraft(

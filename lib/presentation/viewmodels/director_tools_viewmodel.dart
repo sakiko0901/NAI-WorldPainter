@@ -23,7 +23,6 @@ class DirectorToolsViewModel extends ChangeNotifier {
   DirectorToolType selectedTool = DirectorToolType.declutter;
   String prompt = '';
   int defry = 5;
-  int level = 1;
   bool isProcessing = false;
   bool isLoadingModels = false;
   List<String> availableModels = const [];
@@ -101,12 +100,7 @@ class DirectorToolsViewModel extends ChangeNotifier {
   void updatePrompt(String value) => prompt = value;
 
   void updateDefry(int value) {
-    defry = value.clamp(0, 10);
-    notifyListeners();
-  }
-
-  void updateLevel(int value) {
-    level = value.clamp(1, 5);
+    defry = value.clamp(0, 5);
     notifyListeners();
   }
 
@@ -136,13 +130,12 @@ class DirectorToolsViewModel extends ChangeNotifier {
     try {
       final bytes = await _api.processDirectorImage(
         imagePath: source,
-        endpointPath: selectedTool.endpoint,
+        operation: selectedTool.operation,
         apiKey: endpoint.apiKey,
         baseUrl: endpoint.baseUrl,
         model: model,
         prompt: selectedTool.usesPrompt ? prompt : null,
         defry: selectedTool.usesDefry ? defry : null,
-        level: selectedTool.usesLevel ? level : null,
       );
       outputPath = await ImageUtils.saveBase64Image(
         base64Encode(bytes),

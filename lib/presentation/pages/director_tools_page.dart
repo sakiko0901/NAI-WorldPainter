@@ -182,16 +182,8 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
                   title: '去噪强度',
                   value: _vm.defry,
                   min: 0,
-                  max: 10,
-                  onChanged: _vm.updateDefry,
-                ),
-              if (_vm.selectedTool.usesLevel)
-                _parameterSlider(
-                  title: '应用强度',
-                  value: _vm.level,
-                  min: 1,
                   max: 5,
-                  onChanged: _vm.updateLevel,
+                  onChanged: _vm.updateDefry,
                 ),
               const SizedBox(height: 10),
               Row(

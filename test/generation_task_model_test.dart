@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/data/models/generation_task_model.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -37,5 +39,27 @@ void main() {
   test('GenerationTaskModel uses 28 for legacy database rows', () {
     final row = GenerationTaskModel.fromEntity(task()).toDb()..remove('steps');
     expect(GenerationTaskModel.fromDb(row).steps, 28);
+  });
+
+  test('legacy Precise history ignores fidelity when reserialized', () {
+    final row = GenerationTaskModel.fromEntity(task()).toDb()
+      ..['precise_references'] = jsonEncode([
+        {
+          'path': 'reference.png',
+          'reference_type': 'character',
+          'strength': 0.8,
+          'fidelity': 0.4,
+        },
+      ]);
+
+    final restored = GenerationTaskModel.fromDb(row);
+
+    expect(restored.preciseReferences, hasLength(1));
+    expect(restored.preciseReferences.single.path, 'reference.png');
+    expect(restored.preciseReferences.single.referenceType, 'character');
+    expect(restored.preciseReferences.single.strength, 0.8);
+    final saved = jsonDecode(restored.toDb()['precise_references'] as String)
+        as List<dynamic>;
+    expect(saved.single, isNot(contains('fidelity')));
   });
 }

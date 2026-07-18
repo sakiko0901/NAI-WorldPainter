@@ -69,36 +69,38 @@ class NovelAiApiService {
           task.protocol == AppConstants.novelAiImageGenerationsProtocol;
       final usesPreciseReference =
           usesImageGenerations && task.preciseReferences.isNotEmpty;
-      final requestPath = usesPreciseReference
-          ? ApiConstants.imagePreciseReference
+      final usesImg2Img = task.img2imgSourceImagePath != null;
+      final requestPath = usesImg2Img && !usesImageGenerations
+          ? ApiConstants.imageImg2Img
           : usesImageGenerations
               ? ApiConstants.imageGenerations
               : ApiConstants.chatCompletions;
       final response = await _dio.post(
         requestPath,
-        data: usesPreciseReference
-            ? await _buildPreciseReferenceBody(task)
-            : usesImageGenerations
-                ? await _buildImageGenerationsBody(task)
-                : _buildChatCompletionsBody(task),
+        data: usesImg2Img
+            ? await _buildImg2ImgBody(
+                task,
+                unifiedRoute: usesImageGenerations,
+              )
+            : usesPreciseReference
+                ? await _buildPreciseReferenceBody(task)
+                : usesImageGenerations
+                    ? await _buildImageGenerationsBody(task)
+                    : _buildChatCompletionsBody(task),
         options: Options(
           receiveTimeout: const Duration(minutes: 5),
           sendTimeout: const Duration(minutes: 1),
         ),
       );
 
-      if (usesImageGenerations) {
+      if (usesImageGenerations || usesImg2Img) {
         return _parseImageGenerationResponse(response.data, task, apiKey);
       }
       final parsed = _parseResponse(response.data, task);
       return await _downloadIfNeeded(parsed, apiKey);
     } on DioException catch (e) {
-      final preciseReferenceUnavailable =
-          task.preciseReferences.isNotEmpty && _isEndpointUnavailable(e);
       throw ApiException(
-        message: preciseReferenceUnavailable
-            ? '当前中转站不支持精密参照图像接口，请在 ikun 渠道配置部署了 Precise Reference 的 NovelAI Gateway 根地址'
-            : _handleDioError(e),
+        message: _handleDioError(e),
         statusCode: e.response?.statusCode,
         originalError: e,
       );
@@ -142,37 +144,52 @@ class NovelAiApiService {
 
   Future<Uint8List> processDirectorImage({
     required String imagePath,
-    required String endpointPath,
+    required String operation,
     required String apiKey,
     required String baseUrl,
     String? model,
     String? prompt,
     int? defry,
-    int? level,
   }) async {
     _configureAuth(apiKey, baseUrl);
     final bytes = await File(imagePath).readAsBytes();
-    final body = <String, dynamic>{'image': base64Encode(bytes)};
+    final image = img.decodeImage(bytes);
+    if (image == null) {
+      throw ApiException(message: '无法读取图片，请选择有效的 PNG 或 JPEG 图片');
+    }
+    final body = <String, dynamic>{
+      'novelai_operation': operation,
+      'image': base64Encode(bytes),
+      'width': image.width,
+      'height': image.height,
+    };
     if (model != null && model.trim().isNotEmpty) body['model'] = model.trim();
     if (prompt != null) body['prompt'] = prompt.trim();
-    if (defry != null) body['defry'] = defry.clamp(0, 10);
-    if (level != null) body['level'] = level.clamp(1, 5);
+    if (defry != null) body['defry'] = defry.clamp(0, 5);
     try {
-      final response = await _dio.post<List<int>>(
-        endpointPath,
+      final response = await _dio.post(
+        ApiConstants.imageGenerations,
         data: body,
         options: Options(
           contentType: 'application/json',
-          responseType: ResponseType.bytes,
-          headers: {'Accept': 'image/png'},
           receiveTimeout: const Duration(minutes: 3),
         ),
       );
       final data = response.data;
-      if (data == null || data.isEmpty) {
-        throw ApiException(message: '导演工具未返回 PNG');
+      if (data is Map<String, dynamic>) {
+        final images = data['data'];
+        if (images is List && images.isNotEmpty) {
+          final first = images.first;
+          if (first is Map && first['b64_json'] is String) {
+            try {
+              return base64Decode(first['b64_json'] as String);
+            } on FormatException {
+              throw ApiException(message: '导演工具返回的 b64_json 无效');
+            }
+          }
+        }
       }
-      return Uint8List.fromList(data);
+      throw ApiException(message: '导演工具未返回 b64_json');
     } on DioException catch (e) {
       throw ApiException(
         message: _handleDioError(e),
@@ -339,7 +356,7 @@ class NovelAiApiService {
         'reference_image': referenceImage,
         'reference_type': reference.referenceType,
         'strength': reference.strength,
-        'fidelity': reference.fidelity,
+        'fidelity': 1.0,
       });
     }
 
@@ -348,6 +365,7 @@ class NovelAiApiService {
             ? task.responseFormat!
             : 'b64_json';
     return {
+      'novelai_operation': 'precise-reference',
       'prompt': task.prompt,
       if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
         'negative_prompt': task.negativePrompt,
@@ -365,6 +383,44 @@ class NovelAiApiService {
       if (task.seed != null) 'seed': task.seed,
       'response_format': responseFormat,
       'references': references,
+    };
+  }
+
+  Future<Map<String, dynamic>> _buildImg2ImgBody(
+    GenerationTask task, {
+    required bool unifiedRoute,
+  }) async {
+    final sourcePath = task.img2imgSourceImagePath;
+    if (sourcePath == null) {
+      throw ApiException(message: '图生图缺少源图');
+    }
+    final file = File(sourcePath);
+    if (!await file.exists()) {
+      throw ApiException(message: '图生图源图不可用，请重新选择');
+    }
+
+    return {
+      if (unifiedRoute) 'novelai_operation': 'img2img',
+      'model': task.model,
+      'prompt': task.prompt,
+      'image': base64Encode(await file.readAsBytes()),
+      'strength': task.img2imgStrength ?? 0.7,
+      'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps,
+      'scale': task.scale,
+      'cfg_rescale': task.cfgRescale,
+      'sampler': unifiedRoute
+          ? _normalizeImageGenerationsSampler(task.sampler)
+          : task.sampler,
+      'noise_schedule': unifiedRoute
+          ? _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule)
+          : task.noiseSchedule,
+      if (task.seed != null) 'seed': task.seed,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
+      'response_format': 'b64_json',
     };
   }
 
@@ -767,32 +823,5 @@ class NovelAiApiService {
       }
     }
     return null;
-  }
-
-  /// 判断是否为端点不可用错误（404 或 Invalid URL）
-  bool _isEndpointUnavailable(DioException e) {
-    final statusCode = e.response?.statusCode;
-    if (statusCode == 404) {
-      return true;
-    }
-
-    final body = e.response?.data;
-    if (body is String && body.contains('Invalid URL')) {
-      return true;
-    }
-    if (body is Map) {
-      final errorStr =
-          body['error']?.toString() ?? body['message']?.toString() ?? '';
-      if (errorStr.contains('Invalid URL')) {
-        return true;
-      }
-      // 有些中转站返回 { "detail": "Invalid URL ..." }
-      final detailStr = body['detail']?.toString() ?? '';
-      if (detailStr.contains('Invalid URL')) {
-        return true;
-      }
-    }
-
-    return false;
   }
 }

@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
+import 'package:nai_huishi/domain/entities/director_tool.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 
 void main() {
@@ -55,6 +57,58 @@ void main() {
 
     expect(requests.single.path, '/v1/chat/completions');
     expect(requests.single.body, isNot(contains('"steps"')));
+  });
+
+  test('7877 img2img uses the dedicated route and JSON payload', () async {
+    final directory = await Directory.systemTemp.createTemp('nai_img2img_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    final service = NovelAiApiService(Dio());
+
+    await service.generateImage(
+      _task(
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+        img2imgSourceImagePath: source.path,
+        img2imgStrength: 0.55,
+      ),
+      'key',
+      baseUri.toString(),
+    );
+
+    final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+    expect(requests.single.path, '/v1/images/img2img');
+    expect(body['image'], base64Encode(const [1, 2, 3]));
+    expect(body['strength'], 0.55);
+    expect(body['model'], 'model');
+    expect(body['prompt'], '1girl');
+    expect(body['response_format'], 'b64_json');
+    expect(body, isNot(contains('novelai_operation')));
+  });
+
+  test('ikun img2img uses the unified image-generations route', () async {
+    final directory = await Directory.systemTemp.createTemp('nai_img2img_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    await source.writeAsBytes(const [4, 5, 6]);
+    final service = NovelAiApiService(Dio());
+
+    await service.generateImage(
+      _task(
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        img2imgSourceImagePath: source.path,
+        img2imgStrength: 0.7,
+      ),
+      'key',
+      baseUri.toString(),
+    );
+
+    final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+    expect(requests.single.path, '/v1/images/generations');
+    expect(body['novelai_operation'], 'img2img');
+    expect(body['image'], base64Encode(const [4, 5, 6]));
+    expect(body['strength'], 0.7);
+    expect(body['sampler'], 'k_euler');
   });
 
   test('image-generations sends the minimal text-to-image contract', () async {
@@ -182,7 +236,6 @@ void main() {
             path: first.path,
             referenceType: 'character',
             strength: 0.7,
-            fidelity: 0.9,
           ),
           PreciseReferenceImage(path: second.path, referenceType: 'style'),
         ],
@@ -192,13 +245,14 @@ void main() {
     );
 
     final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
-    expect(requests.single.path, '/v1/images/precise-reference');
+    expect(requests.single.path, '/v1/images/generations');
+    expect(body['novelai_operation'], 'precise-reference');
     expect(body['references'], [
       {
         'reference_image': base64Encode(const [4]),
         'reference_type': 'character',
         'strength': 0.7,
-        'fidelity': 0.9,
+        'fidelity': 1.0,
       },
       {
         'reference_image': base64Encode(const [5]),
@@ -217,10 +271,9 @@ void main() {
     expect(body, isNot(contains('reference_strength')));
   });
 
-  test('precise-reference reports an unsupported gateway route', () async {
-    responseStatus = HttpStatus.notFound;
-    responseBody =
-        '{"detail":"Invalid URL (POST /v1/images/precise-reference)"}';
+  test('precise-reference preserves unified route errors', () async {
+    responseStatus = HttpStatus.badRequest;
+    responseBody = '{"detail":"Unsupported novelai_operation"}';
     final directory = await Directory.systemTemp.createTemp('nai_reference_');
     addTearDown(() => directory.delete(recursive: true));
     final reference = File('${directory.path}/reference.png');
@@ -240,11 +293,11 @@ void main() {
         isA<ApiException>().having(
           (error) => error.message,
           'message',
-          contains('当前中转站不支持精密参照图像接口'),
+          contains('Unsupported novelai_operation'),
         ),
       ),
     );
-    expect(requests.single.path, '/v1/images/precise-reference');
+    expect(requests.single.path, '/v1/images/generations');
   });
 
   test('precise-reference rejects a missing reference file', () async {
@@ -317,11 +370,31 @@ void main() {
     expect(body['response_format'], 'url');
   });
 
-  test('director colorize sends base64 JSON and receives PNG bytes', () async {
-    responseBytes = true;
+  test('director tools map to gateway operations', () {
+    expect(
+      DirectorToolType.values.map((tool) => tool.operation),
+      [
+        'director-declutter',
+        'director-bg-remover',
+        'director-lineart',
+        'director-sketch',
+        'director-colorize',
+        'director-emotion',
+      ],
+    );
+  });
+
+  test('director colorize uses unified route and decodes b64_json', () async {
+    final sourceBytes = img.encodePng(img.Image(width: 320, height: 192));
+    final outputBytes = img.encodePng(img.Image(width: 2, height: 2));
+    responseBody = jsonEncode({
+      'data': [
+        {'b64_json': base64Encode(outputBytes)},
+      ],
+    });
     final source = File(
         '${Directory.systemTemp.path}/director_${DateTime.now().microsecondsSinceEpoch}.png');
-    await source.writeAsBytes([1, 2, 3]);
+    await source.writeAsBytes(sourceBytes);
     addTearDown(() async {
       if (await source.exists()) await source.delete();
     });
@@ -329,7 +402,7 @@ void main() {
 
     final result = await service.processDirectorImage(
       imagePath: source.path,
-      endpointPath: '/v1/images/director/colorize',
+      operation: 'director-colorize',
       apiKey: 'key',
       baseUrl: baseUri.toString(),
       model: 'nai-v4.5-full',
@@ -338,21 +411,28 @@ void main() {
     );
 
     final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
-    expect(requests.single.path, '/v1/images/director/colorize');
-    expect(body['image'], base64Encode([1, 2, 3]));
+    expect(requests.single.path, '/v1/images/generations');
+    expect(body['novelai_operation'], 'director-colorize');
+    expect(body['image'], base64Encode(sourceBytes));
+    expect(body['width'], 320);
+    expect(body['height'], 192);
     expect(body['model'], 'nai-v4.5-full');
     expect(body['prompt'], 'red hair');
-    expect(body['defry'], 10);
+    expect(body['defry'], 5);
     expect(body, isNot(contains('level')));
-    expect(result, [137, 80, 78, 71]);
+    expect(result, outputBytes);
   });
 
-  test('director emotion clamps level and omits unrelated parameters',
-      () async {
-    responseBytes = true;
+  test('director emotion uses defry and omits level', () async {
+    final sourceBytes = img.encodePng(img.Image(width: 64, height: 128));
+    responseBody = jsonEncode({
+      'data': [
+        {'b64_json': base64Encode(sourceBytes)},
+      ],
+    });
     final source = File(
         '${Directory.systemTemp.path}/director_${DateTime.now().microsecondsSinceEpoch}.png');
-    await source.writeAsBytes([4, 5]);
+    await source.writeAsBytes(sourceBytes);
     addTearDown(() async {
       if (await source.exists()) await source.delete();
     });
@@ -360,24 +440,27 @@ void main() {
 
     await service.processDirectorImage(
       imagePath: source.path,
-      endpointPath: '/v1/images/director/emotion',
+      operation: 'director-emotion',
       apiKey: 'key',
       baseUrl: baseUri.toString(),
       prompt: 'smile',
-      level: 0,
+      defry: -1,
     );
 
     final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
-    expect(body['level'], 1);
-    expect(body, isNot(contains('defry')));
+    expect(requests.single.path, '/v1/images/generations');
+    expect(body['novelai_operation'], 'director-emotion');
+    expect(body['defry'], 0);
+    expect(body, isNot(contains('level')));
   });
 
-  test('director preserves JSON error detail from a bytes response', () async {
+  test('director preserves unified route JSON error detail', () async {
     responseStatus = HttpStatus.badRequest;
     responseBody = '{"detail":"model is unavailable"}';
+    final sourceBytes = img.encodePng(img.Image(width: 64, height: 64));
     final source = File(
         '${Directory.systemTemp.path}/director_${DateTime.now().microsecondsSinceEpoch}.png');
-    await source.writeAsBytes([1]);
+    await source.writeAsBytes(sourceBytes);
     addTearDown(() async {
       if (await source.exists()) await source.delete();
     });
@@ -386,7 +469,7 @@ void main() {
     await expectLater(
       service.processDirectorImage(
         imagePath: source.path,
-        endpointPath: '/v1/images/director/declutter',
+        operation: 'director-declutter',
         apiKey: 'key',
         baseUrl: baseUri.toString(),
         model: 'nai-v4.5-full',
@@ -396,6 +479,34 @@ void main() {
           (error) => error.message,
           'message',
           'model is unavailable',
+        ),
+      ),
+    );
+    expect(requests.single.path, '/v1/images/generations');
+  });
+
+  test('director rejects a response without b64_json', () async {
+    final sourceBytes = img.encodePng(img.Image(width: 64, height: 64));
+    final source = File(
+        '${Directory.systemTemp.path}/director_${DateTime.now().microsecondsSinceEpoch}.png');
+    await source.writeAsBytes(sourceBytes);
+    addTearDown(() async {
+      if (await source.exists()) await source.delete();
+    });
+    final service = NovelAiApiService(Dio());
+
+    await expectLater(
+      service.processDirectorImage(
+        imagePath: source.path,
+        operation: 'director-lineart',
+        apiKey: 'key',
+        baseUrl: baseUri.toString(),
+      ),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('b64_json'),
         ),
       ),
     );
@@ -431,6 +542,8 @@ GenerationTask _task({
   String sampler = 'k_euler',
   String noiseSchedule = 'native',
   String? responseFormat,
+  String? img2imgSourceImagePath,
+  double? img2imgStrength,
 }) =>
     GenerationTask(
       taskId: 'task',
@@ -447,6 +560,8 @@ GenerationTask _task({
       vibeReferences: vibeReferences,
       preciseReferences: preciseReferences,
       responseFormat: responseFormat,
+      img2imgSourceImagePath: img2imgSourceImagePath,
+      img2imgStrength: img2imgStrength,
       steps: 31,
       useCoords: false,
       status: 'pending',

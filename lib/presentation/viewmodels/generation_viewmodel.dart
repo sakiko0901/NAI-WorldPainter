@@ -179,6 +179,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String? sourceImagePath;
   String? maskImagePath;
   double inpaintStrength = 1.0;
+  String? img2imgSourceImagePath;
+  double img2imgStrength = 0.7;
   List<String> gptImagePaths = []; // GPT 图生图参考图列表（最多16张）
   List<CharacterReferenceImage> vibeReferences = [];
   List<PreciseReferenceImage> preciseReferences = [];
@@ -965,6 +967,23 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  void setImg2ImgSourceImagePath(String? path) {
+    img2imgSourceImagePath = path;
+    errorMessage = null;
+    notifyListeners();
+  }
+
+  void updateImg2ImgStrength(double value) {
+    img2imgStrength = value.clamp(0.01, 1.0);
+    notifyListeners();
+  }
+
+  void clearImg2ImgData() {
+    img2imgSourceImagePath = null;
+    img2imgStrength = 0.7;
+    notifyListeners();
+  }
+
   void clearInpaintingData() {
     sourceImagePath = null;
     maskImagePath = null;
@@ -1020,6 +1039,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
     final enabledCharacters = characters.where((c) => c.enabled).toList();
+    final supportsImg2Img = is7877Endpoint || isIkunEndpoint;
+    final effectiveImg2ImgPath =
+        generationMode == GenerationMode.textToImage && supportsImg2Img
+            ? img2imgSourceImagePath
+            : null;
+    if (effectiveImg2ImgPath != null &&
+        !File(effectiveImg2ImgPath).existsSync()) {
+      errorMessage = '图生图源图已失效，请重新选择';
+      notifyListeners();
+      return;
+    }
 
     if (generationMode == GenerationMode.inpainting) {
       if (sourceImagePath == null || sourceImagePath!.isEmpty) {
@@ -1041,12 +1071,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final actualModelId =
         selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final provider = selectedOption?.provider ?? currentProvider;
-    if (isIkunEndpoint &&
-        preciseReferences.isNotEmpty &&
-        !_isV45Model(actualModelId)) {
-      errorMessage = '精密参照图像仅支持 NovelAI V4.5 模型';
-      notifyListeners();
-      return;
+    if (isIkunEndpoint && preciseReferences.isNotEmpty) {
+      if (_isLimitModel(actualModelId)) {
+        errorMessage = '精密参照图像不能使用 -limit 模型，请选择无 -limit 后缀的 V4/V4.5 模型';
+        notifyListeners();
+        return;
+      }
+      if (!_supportsPreciseReference(actualModelId)) {
+        errorMessage = '精密参照图像仅支持 NovelAI V4/V4.5 模型';
+        notifyListeners();
+        return;
+      }
     }
 
     final taskSampler = isIkunEndpoint && selectedSampler == 'ddim'
@@ -1105,6 +1140,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           : null,
       inpaintStrength:
           generationMode == GenerationMode.inpainting ? inpaintStrength : null,
+      img2imgSourceImagePath: effectiveImg2ImgPath,
+      img2imgStrength: effectiveImg2ImgPath == null ? null : img2imgStrength,
       responseFormat:
           generationMode == GenerationMode.inpainting ? 'url' : null,
       providerType: provider,
@@ -1324,8 +1361,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       prompt = task.prompt;
       negativePrompt = task.negativePrompt ?? '';
       characters = task.characters ?? [];
+      preciseReferences = [...task.preciseReferences];
+      if (preciseReferences.isNotEmpty) {
+        vibeReferences = const [];
+      }
       await _manageSettings.setPromptDraft(prompt);
       await _manageSettings.setNegativePromptDraft(negativePrompt);
+      await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+      await _manageSettings.setVibeReferencesDraft(vibeReferences);
       await _saveCharactersDraft();
     }
 
@@ -1356,6 +1399,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     characters = [];
     errorMessage = null;
     clearInpaintingData();
+    clearImg2ImgData();
     gptImagePaths = [];
     _manageSettings.setPromptDraft('');
     _manageSettings.setNegativePromptDraft('');
@@ -1378,11 +1422,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   /// 解析实际模型 ID。新格式 `gpt:<endpointId>:<model>` / `nano:<endpointId>:<model>`，
   /// 兼容旧格式 `gpt:<model>` / `nano:<model>`。
-  bool _isV45Model(String model) {
-    final normalized = model.toLowerCase();
-    return normalized.contains('v4.5') ||
-        normalized.contains('v4-5') ||
-        normalized.contains('4-5');
+  bool _isLimitModel(String model) =>
+      model.trim().toLowerCase().endsWith('-limit');
+
+  bool _supportsPreciseReference(String model) {
+    final normalized = model.trim().toLowerCase();
+    return normalized.startsWith('nai-v4-') ||
+        normalized.startsWith('nai-v4.') ||
+        normalized.contains('nai-diffusion-4-') ||
+        normalized.contains('nai-diffusion-4.');
   }
 
   String _resolveActualModelId(String selectedModelId) {

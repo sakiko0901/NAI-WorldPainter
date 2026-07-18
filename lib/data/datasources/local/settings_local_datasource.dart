@@ -168,11 +168,21 @@ class SettingsLocalDatasource {
     if (raw != null) {
       if (raw.isEmpty) return [];
       final list = jsonDecode(raw) as List;
-      return list
+      final references = list
           .map((item) => PreciseReferenceImage.fromJson(
                 item as Map<String, dynamic>,
               ))
           .toList();
+      final normalized = jsonEncode(
+        references.map((reference) => reference.toJson()).toList(),
+      );
+      if (normalized != raw) {
+        await _prefs.setString(
+          AppConstants.keyPreciseReferencesDraft,
+          normalized,
+        );
+      }
+      return references;
     }
 
     final characters = getCharactersDraft();
@@ -183,7 +193,6 @@ class SettingsLocalDatasource {
           path: reference.path,
           referenceType: 'character',
           strength: reference.strength,
-          fidelity: reference.informationExtracted,
         ));
       }
     }

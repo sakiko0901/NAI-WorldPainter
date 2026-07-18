@@ -42,6 +42,8 @@ class GenerationTask extends Equatable {
   final String? sourceImagePath;
   final String? maskImagePath;
   final double? inpaintStrength;
+  final String? img2imgSourceImagePath;
+  final double? img2imgStrength;
   final String? responseFormat;
   final ImageProviderType providerType;
   final List<String>? gptImagePaths;
@@ -78,6 +80,8 @@ class GenerationTask extends Equatable {
     this.sourceImagePath,
     this.maskImagePath,
     this.inpaintStrength,
+    this.img2imgSourceImagePath,
+    this.img2imgStrength,
     this.responseFormat,
     this.providerType = ImageProviderType.novelAi,
     this.gptImagePaths,
@@ -115,6 +119,8 @@ class GenerationTask extends Equatable {
     String? sourceImagePath,
     String? maskImagePath,
     double? inpaintStrength,
+    String? img2imgSourceImagePath,
+    double? img2imgStrength,
     String? responseFormat,
     ImageProviderType? providerType,
     List<String>? gptImagePaths,
@@ -151,6 +157,9 @@ class GenerationTask extends Equatable {
       sourceImagePath: sourceImagePath ?? this.sourceImagePath,
       maskImagePath: maskImagePath ?? this.maskImagePath,
       inpaintStrength: inpaintStrength ?? this.inpaintStrength,
+      img2imgSourceImagePath:
+          img2imgSourceImagePath ?? this.img2imgSourceImagePath,
+      img2imgStrength: img2imgStrength ?? this.img2imgStrength,
       responseFormat: responseFormat ?? this.responseFormat,
       providerType: providerType ?? this.providerType,
       gptImagePaths: gptImagePaths ?? this.gptImagePaths,
@@ -168,33 +177,28 @@ class PreciseReferenceImage extends Equatable {
   final String path;
   final String referenceType;
   final double strength;
-  final double fidelity;
 
   const PreciseReferenceImage({
     required this.path,
     this.referenceType = 'character&style',
     this.strength = 1.0,
-    this.fidelity = 1.0,
   });
 
   PreciseReferenceImage copyWith({
     String? path,
     String? referenceType,
     double? strength,
-    double? fidelity,
   }) =>
       PreciseReferenceImage(
         path: path ?? this.path,
         referenceType: referenceType ?? this.referenceType,
         strength: strength ?? this.strength,
-        fidelity: fidelity ?? this.fidelity,
       );
 
   Map<String, dynamic> toJson() => {
         'path': path,
         'reference_type': referenceType,
         'strength': strength,
-        'fidelity': fidelity,
       };
 
   factory PreciseReferenceImage.fromJson(Map<String, dynamic> json) {
@@ -204,12 +208,11 @@ class PreciseReferenceImage extends Equatable {
       referenceType:
           types.contains(referenceType) ? referenceType! : 'character&style',
       strength: (json['strength'] as num?)?.toDouble() ?? 1.0,
-      fidelity: (json['fidelity'] as num?)?.toDouble() ?? 1.0,
     );
   }
 
   @override
-  List<Object?> get props => [path, referenceType, strength, fidelity];
+  List<Object?> get props => [path, referenceType, strength];
 }
 
 class CharacterReferenceImage extends Equatable {

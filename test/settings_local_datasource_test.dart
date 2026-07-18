@@ -60,4 +60,63 @@ void main() {
     expect(saved[0].name, '可编辑的 7877');
     expect(saved[1].name, '可编辑的 ikun');
   });
+
+  test('旧 Precise 草稿会保留有效字段并移除可变 fidelity', () async {
+    SharedPreferences.setMockInitialValues({
+      AppConstants.keyPreciseReferencesDraft: jsonEncode([
+        {
+          'path': 'reference.png',
+          'reference_type': 'style',
+          'strength': 0.7,
+          'fidelity': 0.4,
+        },
+      ]),
+    });
+    final preferences = await SharedPreferences.getInstance();
+    final datasource = SettingsLocalDatasource(preferences);
+
+    final references = await datasource.getPreciseReferencesDraft();
+
+    expect(references, hasLength(1));
+    expect(references.single.path, 'reference.png');
+    expect(references.single.referenceType, 'style');
+    expect(references.single.strength, 0.7);
+    final saved = jsonDecode(
+      preferences.getString(AppConstants.keyPreciseReferencesDraft)!,
+    ) as List;
+    expect(saved.single, isNot(contains('fidelity')));
+  });
+
+  test('旧角色参考迁移为 Precise 时不保留信息提取量', () async {
+    SharedPreferences.setMockInitialValues({
+      AppConstants.keyCharactersDraft: jsonEncode([
+        {
+          'prompt': 'girl',
+          'uc': '',
+          'enabled': true,
+          'reference_images': [
+            {
+              'path': 'legacy.png',
+              'strength': 0.6,
+              'information_extracted': 0.3,
+            },
+          ],
+        },
+      ]),
+    });
+    final preferences = await SharedPreferences.getInstance();
+    final datasource = SettingsLocalDatasource(preferences);
+
+    final references = await datasource.getPreciseReferencesDraft();
+
+    expect(references, hasLength(1));
+    expect(references.single.path, 'legacy.png');
+    expect(references.single.referenceType, 'character');
+    expect(references.single.strength, 0.6);
+    final saved = jsonDecode(
+      preferences.getString(AppConstants.keyPreciseReferencesDraft)!,
+    ) as List;
+    expect(saved.single, isNot(contains('fidelity')));
+    expect(datasource.getCharactersDraft().single.referenceImages, isEmpty);
+  });
 }

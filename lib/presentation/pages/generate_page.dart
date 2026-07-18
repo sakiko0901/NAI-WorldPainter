@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
@@ -275,6 +276,7 @@ class _GeneratePageState extends State<GeneratePage> {
   late final ScrollController _scrollController;
   int _promptSegmentIndex = 0; // 0: 正面, 1: 负面
   bool _isDrawingMask = false; // 手绘遮罩时禁用 ListView 滚动
+  bool _isPreparingImg2Img = false;
 
   @override
   void initState() {
@@ -1511,6 +1513,26 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
+  Future<void> _pickImg2ImgSource() async {
+    if (_isPreparingImg2Img) return;
+    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (picked == null || !mounted) return;
+    setState(() => _isPreparingImg2Img = true);
+    try {
+      final path = await ImageUtils.normalizeImg2ImgSource(File(picked.path));
+      if (!mounted) return;
+      _vm.setImg2ImgSourceImagePath(path);
+      final decoded = img.decodeImage(await File(path).readAsBytes());
+      _showToast(decoded == null
+          ? '源图已压缩'
+          : '源图已压缩为 ${decoded.width}×${decoded.height}');
+    } catch (error) {
+      if (mounted) _showToast('图片处理失败：$error');
+    } finally {
+      if (mounted) setState(() => _isPreparingImg2Img = false);
+    }
+  }
+
   Future<void> _pickImage({required bool isMask}) async {
     final file = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (file == null) return;
@@ -2060,6 +2082,101 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
+  Widget _buildImg2ImgSourceField() {
+    final path = _vm.img2imgSourceImagePath;
+    final file = path == null ? null : File(path);
+    final hasImage = file?.existsSync() ?? false;
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('图生图源图',
+            style: TextStyle(
+                fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+          ),
+          child: hasImage
+              ? Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.file(file!,
+                          width: 72, height: 72, fit: BoxFit.cover),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('已启用图生图',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+                          Text('已自动压缩至 1M 像素以内并按 64px 对齐',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 4,
+                            children: [
+                              TextButton(
+                                onPressed: _isPreparingImg2Img
+                                    ? null
+                                    : _pickImg2ImgSource,
+                                child: const Text('替换'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    _vm.setImg2ImgSourceImagePath(null),
+                                child: const Text('移除'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                )
+              : OutlinedButton.icon(
+                  onPressed: _isPreparingImg2Img ? null : _pickImg2ImgSource,
+                  icon: _isPreparingImg2Img
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(CupertinoIcons.photo_on_rectangle, size: 17),
+                  label: Text(_isPreparingImg2Img ? '正在压缩图片…' : '上传图生图源图'),
+                ),
+        ),
+        if (hasImage) ...[
+          const SizedBox(height: 12),
+          _PremiumSlider(
+            label: '图生图强度',
+            value: _vm.img2imgStrength,
+            min: 0.01,
+            max: 1.0,
+            divisions: 99,
+            onChanged: _vm.updateImg2ImgStrength,
+          ),
+          Text('数值越高，生成结果越偏离原图。',
+              style: TextStyle(
+                  fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+        ],
+      ],
+    );
+  }
+
   Widget _buildModelSection() {
     return _PremiumAccordion(
       title: '模型与基础参数',
@@ -2191,6 +2308,11 @@ class _GeneratePageState extends State<GeneratePage> {
               ),
             ),
           ),
+        ],
+        if ((_vm.is7877Endpoint || _vm.isIkunEndpoint) &&
+            _vm.generationMode == GenerationMode.textToImage) ...[
+          SizedBox(height: 20),
+          _buildImg2ImgSourceField(),
         ],
         if (_vm.is7877Endpoint)
           Padding(
@@ -2908,7 +3030,7 @@ class _CharacterReferenceSectionState
           ),
           const SizedBox(height: 10),
           Text(
-            '参照图与角色卡相互独立，仅支持 NovelAI V4.5；每张消耗 5 Anlas。',
+            '参照图与角色卡相互独立，支持 NovelAI V4/V4.5（不含 -limit）；每张参考图、每个样本加 5 Anlas。',
             style: TextStyle(
               fontSize: 12,
               height: 1.5,
@@ -3165,11 +3287,16 @@ class _PreciseReferenceCard extends StatelessWidget {
                           onUpdate(image.copyWith(strength: value)),
                     ),
                     const SizedBox(height: 12),
-                    _PreciseReferenceSlider(
-                      label: '忠实度',
-                      value: image.fidelity,
-                      onChanged: (value) =>
-                          onUpdate(image.copyWith(fidelity: value)),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '忠实度固定为 1.0，请通过强度调节参考效果。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
                     Align(
                       alignment: Alignment.centerRight,
