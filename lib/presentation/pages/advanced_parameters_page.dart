@@ -93,9 +93,7 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
             children: [
               _dropdown(
                 title: '采样算法',
-                value: _vm.isIkunEndpoint && _vm.selectedSampler == 'ddim'
-                    ? 'ddim_v3'
-                    : _vm.selectedSampler,
+                value: _vm.selectedSampler,
                 values: _vm.isIkunEndpoint
                     ? ApiConstants.ikunSupportedSamplers
                     : ApiConstants.supportedSamplers,
@@ -104,10 +102,7 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
               const SizedBox(height: 20),
               _dropdown(
                 title: '噪声调度',
-                value: _vm.isIkunEndpoint &&
-                        _vm.selectedNoiseSchedule == 'polyexponential'
-                    ? 'exponential'
-                    : _vm.selectedNoiseSchedule,
+                value: _vm.selectedNoiseSchedule,
                 values: _vm.isIkunEndpoint
                     ? ApiConstants.ikunSupportedNoiseSchedules
                     : ApiConstants.supportedNoiseSchedules,
@@ -177,9 +172,8 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
       );
 
   Widget _stepsControl() {
-    final is7877 = _vm.is7877Endpoint;
     final isIkun = _vm.isIkunEndpoint;
-    final isLocked = is7877 || (isIkun && _vm.isStepsLocked);
+    final isLocked = isIkun && _vm.isStepsLocked;
     final value = isLocked ? ApiConstants.defaultSteps : _vm.steps;
     final colors = Theme.of(context).colorScheme;
     return Column(
@@ -218,12 +212,7 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
           divisions: 49,
           onChanged: isLocked ? null : (next) => _vm.updateSteps(next.round()),
         ),
-        if (is7877)
-          Text(
-            '7877 渠道固定为 28 步，不可修改。',
-            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
-          )
-        else if (isIkun && _vm.isStepsLocked)
+        if (isIkun && _vm.isStepsLocked)
           Text(
             '已锁定为 28 步。点击锁图标后可自由调整。',
             style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),

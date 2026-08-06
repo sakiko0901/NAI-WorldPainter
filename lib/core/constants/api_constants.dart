@@ -7,8 +7,6 @@ class ApiConstants {
   // API 路径
   static const String chatCompletions = '/v1/chat/completions';
   static const String imageGenerations = '/v1/images/generations';
-  static const String imageImg2Img = '/v1/images/img2img';
-  static const String imageInpainting = '/v1/images/inpainting';
   static const String imageEdits = '/v1/images/edits';
   static const String imageAnnotate = '/v1/images/annotate';
   static const String models = '/v1/models';
@@ -48,6 +46,8 @@ class ApiConstants {
     '832x1216': {'width': 832, 'height': 1216},
     '1216x832': {'width': 1216, 'height': 832},
     '1024x1024': {'width': 1024, 'height': 1024},
+    '1024x1536': {'width': 1024, 'height': 1536},
+    '1536x1024': {'width': 1536, 'height': 1024},
   };
 
   static const List<String> ikunSupportedResolutions = [
@@ -95,47 +95,36 @@ class ApiConstants {
     'auto': 'auto 默认',
   };
 
-  // 支持的采样器
+  // 新网关文档规定的 NovelAI 采样器。
   static const List<String> supportedSamplers = [
     'k_euler',
     'k_euler_ancestral',
+    'k_dpm_2',
+    'k_dpm_2_ancestral',
     'k_dpmpp_2m',
+    'k_dpmpp_2m_sde',
     'k_dpmpp_2s_ancestral',
     'k_dpmpp_sde',
     'ddim',
-    'ddim_v3',
-    'gans',
   ];
 
-  static const List<String> ikunSupportedSamplers = [
-    'k_euler',
-    'k_euler_ancestral',
-    'k_dpmpp_2m',
-    'k_dpmpp_2s_ancestral',
-    'k_dpmpp_sde',
-    'ddim_v3',
-    'gans',
-  ];
+  static const List<String> ikunSupportedSamplers = supportedSamplers;
 
-  // 支持的 noise_schedule
+  // 新网关文档规定的噪声调度。
   static const List<String> supportedNoiseSchedules = [
-    'native',
     'karras',
     'exponential',
     'polyexponential',
   ];
 
-  static const List<String> ikunSupportedNoiseSchedules = [
-    'native',
-    'karras',
-    'exponential',
-  ];
+  static const List<String> ikunSupportedNoiseSchedules =
+      supportedNoiseSchedules;
 
   // 默认参数
   static const double defaultScale = 5.0;
   static const double defaultCfgRescale = 0.0;
-  static const String defaultSampler = 'k_euler';
-  static const String defaultNoiseSchedule = 'native';
+  static const String defaultSampler = 'k_euler_ancestral';
+  static const String defaultNoiseSchedule = 'karras';
   static const int defaultSteps = 28;
   static const int defaultInpaintingSteps = 23;
   static const String defaultResolution = '832x1216';

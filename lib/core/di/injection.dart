@@ -14,6 +14,7 @@ import 'package:nai_huishi/data/datasources/remote/bing_search_service.dart';
 import 'package:nai_huishi/data/datasources/remote/danbooru_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/duckduckgo_search_service.dart';
 import 'package:nai_huishi/data/datasources/remote/wd_tagger_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/wikipedia_search_service.dart';
 import 'package:nai_huishi/data/repositories/artist_prompt_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/history_repository_impl.dart';
@@ -23,6 +24,7 @@ import 'package:nai_huishi/data/repositories/prompt_memory_repository_impl.dart'
 import 'package:nai_huishi/data/repositories/prompt_template_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/settings_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/style_preset_repository_impl.dart';
+import 'package:nai_huishi/data/repositories/vibe_encoding_repository_impl.dart';
 import 'package:nai_huishi/domain/agents/agent_loop.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/domain/agents/tools/get_memories_tool.dart';
@@ -45,8 +47,10 @@ import 'package:nai_huishi/domain/repositories/prompt_memory_repository.dart';
 import 'package:nai_huishi/domain/repositories/prompt_template_repository.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/domain/repositories/style_preset_repository.dart';
+import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
 import 'package:nai_huishi/domain/usecases/manage_artist_prompts.dart';
 import 'package:nai_huishi/domain/usecases/generate_image.dart';
+import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
 import 'package:nai_huishi/domain/usecases/get_history.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
 import 'package:nai_huishi/domain/usecases/manage_presets.dart';
@@ -54,6 +58,7 @@ import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_templates.dart';
 import 'package:nai_huishi/domain/usecases/manage_settings.dart';
 import 'package:nai_huishi/domain/usecases/manage_style_presets.dart';
+import 'package:nai_huishi/domain/usecases/manage_vibe_encodings.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/domain/usecases/calibrate_with_danbooru.dart';
 import 'package:nai_huishi/domain/usecases/extract_keywords.dart';
@@ -76,6 +81,7 @@ import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/style_preset_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/super_resolution_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/image_tag_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 
 // Pixiv
@@ -116,6 +122,8 @@ Future<void> configureDependencies() async {
   sl.registerSingleton<DanbooruApiService>(DanbooruApiService());
   sl.registerSingleton<DuckDuckGoSearchService>(
       DuckDuckGoSearchService(sl<Dio>()));
+  sl.registerSingleton<WikipediaSearchService>(
+      WikipediaSearchService(sl<Dio>()));
   sl.registerSingleton<WdTaggerApiService>(WdTaggerApiService(sl<Dio>()));
   sl.registerSingleton<LlmChatLocalDatasource>(
       LlmChatLocalDatasource(sl<Database>()));
@@ -127,11 +135,14 @@ Future<void> configureDependencies() async {
   settingsRepo.setApiService(sl<NovelAiApiService>());
   sl.registerSingleton<SettingsRepository>(settingsRepo);
 
+  sl.registerSingleton<VibeEncodingRepository>(
+      VibeEncodingRepositoryImpl(sl<Database>()));
   sl.registerSingleton<GenerationRepository>(GenerationRepositoryImpl(
     apiService: sl<NovelAiApiService>(),
     gptApiService: sl<GptApiService>(),
     nanoApiService: sl<NanoBananaApiService>(),
     settingsRepo: sl<SettingsRepository>(),
+    vibeEncodingRepo: sl<VibeEncodingRepository>(),
   ));
   sl.registerSingleton<HistoryRepository>(
       HistoryRepositoryImpl(sl<Database>()));
@@ -153,6 +164,8 @@ Future<void> configureDependencies() async {
     sl<GenerationRepository>(),
     sl<HistoryRepository>(),
   ));
+  sl.registerSingleton<TiledImg2ImgService>(
+      TiledImg2ImgService(sl<GenerationQueue>()));
 
   sl.registerSingleton<GenerateImageUseCase>(GenerateImageUseCase(
     sl<HistoryRepository>(),
@@ -169,6 +182,8 @@ Future<void> configureDependencies() async {
       ManageSettingsUseCase(sl<SettingsRepository>()));
   sl.registerSingleton<ManageStylePresetsUseCase>(
       ManageStylePresetsUseCase(sl<StylePresetRepository>()));
+  sl.registerSingleton<ManageVibeEncodingsUseCase>(
+      ManageVibeEncodingsUseCase(sl<VibeEncodingRepository>()));
   sl.registerSingleton<ManageArtistPromptsUseCase>(
       ManageArtistPromptsUseCase(sl<ArtistPromptRepository>()));
   sl.registerSingleton<ManageLlmChatUseCase>(
@@ -222,6 +237,7 @@ Future<void> configureDependencies() async {
         manageSettings: sl<ManageSettingsUseCase>(),
         saveImage: sl<SaveImageUseCase>(),
         queue: sl<GenerationQueue>(),
+        tiledImg2Img: sl<TiledImg2ImgService>(),
       ));
   sl.registerFactory<SuperResolutionViewModel>(() => SuperResolutionViewModel(
         sl<UpscaleImageUseCase>(),
@@ -244,6 +260,8 @@ Future<void> configureDependencies() async {
       () => SettingsViewModel(sl<ManageSettingsUseCase>()));
   sl.registerFactory<StylePresetViewModel>(
       () => StylePresetViewModel(sl<ManageStylePresetsUseCase>()));
+  sl.registerFactory<VibeEncodingViewModel>(
+      () => VibeEncodingViewModel(sl<ManageVibeEncodingsUseCase>()));
   sl.registerFactory<ArtistPromptViewModel>(
       () => ArtistPromptViewModel(sl<ManageArtistPromptsUseCase>()));
   // 图片解析
@@ -259,7 +277,8 @@ Future<void> configureDependencies() async {
     ..register(WritePromptTool(sl<GenerationViewModel>()))
     ..register(RemoveCharacterTool(sl<GenerationViewModel>()))
     ..register(ClearCharactersTool(sl<GenerationViewModel>()))
-    ..register(WebSearchTool(sl<DuckDuckGoSearchService>()))
+    ..register(WebSearchTool(
+        sl<DuckDuckGoSearchService>(), sl<WikipediaSearchService>()))
     ..register(SearchDanbooruTool(sl<DanbooruApiService>()))
     ..register(GenerateImageTool(sl<GenerationViewModel>()))
     ..register(UpscaleImageTool(sl<UpscaleImageUseCase>()))

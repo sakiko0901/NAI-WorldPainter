@@ -334,6 +334,15 @@ class NaiMetadataParser {
       }
     }
 
+    final rawVibeEncodings =
+        comment['reference_image_multiple'] ?? json['reference_image_multiple'];
+    final vibeEncodings = rawVibeEncodings is List
+        ? rawVibeEncodings
+            .whereType<String>()
+            .where((encoding) => encoding.trim().isNotEmpty)
+            .toList()
+        : const <String>[];
+
     final metadata = <String, dynamic>{};
     for (final key in [
       'seed',
@@ -359,6 +368,7 @@ class NaiMetadataParser {
       negativePrompt: negativePrompt.isNotEmpty ? negativePrompt : null,
       negativeEntries: negativeTags,
       characters: characters.isNotEmpty ? characters : null,
+      vibeEncodings: vibeEncodings,
       metadata: metadata.isNotEmpty ? metadata : null,
     );
   }

@@ -85,6 +85,10 @@ class ManageSettingsUseCase {
       _repo.getVibeReferencesDraft();
   Future<void> setVibeReferencesDraft(List<CharacterReferenceImage> value) =>
       _repo.setVibeReferencesDraft(value);
+  Future<ReferenceMode> getReferenceModeDraft() =>
+      _repo.getReferenceModeDraft();
+  Future<void> setReferenceModeDraft(ReferenceMode value) =>
+      _repo.setReferenceModeDraft(value);
   Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() =>
       _repo.getPreciseReferencesDraft();
   Future<void> setPreciseReferencesDraft(List<PreciseReferenceImage> value) =>

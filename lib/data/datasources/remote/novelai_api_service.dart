@@ -65,35 +65,37 @@ class NovelAiApiService {
     _configureAuth(apiKey, baseUrl);
 
     try {
+      final is7877 =
+          task.protocol == AppConstants.novelAiChatCompletionsProtocol;
       final usesImageGenerations =
           task.protocol == AppConstants.novelAiImageGenerationsProtocol;
       final usesPreciseReference =
           usesImageGenerations && task.preciseReferences.isNotEmpty;
       final usesImg2Img = task.img2imgSourceImagePath != null;
-      final requestPath = usesImg2Img && !usesImageGenerations
-          ? ApiConstants.imageImg2Img
-          : usesImageGenerations
-              ? ApiConstants.imageGenerations
-              : ApiConstants.chatCompletions;
+      final usesUnifiedImageRoute = is7877 || usesImageGenerations;
+      final requestPath = usesUnifiedImageRoute
+          ? ApiConstants.imageGenerations
+          : ApiConstants.chatCompletions;
+      final requestOptions = Options(
+        receiveTimeout: const Duration(minutes: 5),
+        sendTimeout: const Duration(minutes: 1),
+      );
+      final requestBody = is7877
+          ? await _build7877GenerationBody(task)
+          : usesImg2Img
+              ? await _buildImg2ImgBody(task, unifiedRoute: true)
+              : usesPreciseReference
+                  ? await _buildPreciseReferenceBody(task)
+                  : usesImageGenerations
+                      ? await _buildImageGenerationsBody(task)
+                      : _buildChatCompletionsBody(task);
       final response = await _dio.post(
         requestPath,
-        data: usesImg2Img
-            ? await _buildImg2ImgBody(
-                task,
-                unifiedRoute: usesImageGenerations,
-              )
-            : usesPreciseReference
-                ? await _buildPreciseReferenceBody(task)
-                : usesImageGenerations
-                    ? await _buildImageGenerationsBody(task)
-                    : _buildChatCompletionsBody(task),
-        options: Options(
-          receiveTimeout: const Duration(minutes: 5),
-          sendTimeout: const Duration(minutes: 1),
-        ),
+        data: requestBody,
+        options: requestOptions,
       );
 
-      if (usesImageGenerations || usesImg2Img) {
+      if (usesUnifiedImageRoute) {
         return _parseImageGenerationResponse(response.data, task, apiKey);
       }
       final parsed = _parseResponse(response.data, task);
@@ -145,9 +147,73 @@ class NovelAiApiService {
   Future<Uint8List> processDirectorImage({
     required String imagePath,
     required String operation,
+    required String model,
     required String apiKey,
     required String baseUrl,
-    String? model,
+    String? prompt,
+    int? defry,
+  }) async {
+    _configureAuth(apiKey, baseUrl);
+    final bytes = await File(imagePath).readAsBytes();
+    final image = img.decodeImage(bytes);
+    if (image == null) {
+      throw ApiException(message: '无法读取图片，请选择有效的 PNG 或 JPEG 图片');
+    }
+    final body = <String, dynamic>{
+      'model': _normalize7877Model(model),
+      'extra': operation,
+      'image': base64Encode(bytes),
+      'width': image.width,
+      'height': image.height,
+      'response_format': 'b64_json',
+    };
+    if ((operation == 'director-colorize' || operation == 'director-emotion') &&
+        prompt != null) {
+      body['prompt'] = prompt.trim();
+    }
+    if ((operation == 'director-colorize' || operation == 'director-emotion') &&
+        defry != null) {
+      body['defry'] = defry.clamp(0, 5);
+    }
+    try {
+      final response = await _dio.post(
+        ApiConstants.imageGenerations,
+        data: body,
+        options: Options(
+          contentType: 'application/json',
+          receiveTimeout: const Duration(minutes: 3),
+        ),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) {
+        final images = data['data'];
+        if (images is List && images.isNotEmpty) {
+          final first = images.first;
+          if (first is Map && first['b64_json'] is String) {
+            try {
+              return base64Decode(first['b64_json'] as String);
+            } on FormatException {
+              throw ApiException(message: '导演工具返回的 b64_json 无效');
+            }
+          }
+        }
+      }
+      throw ApiException(message: '导演工具未返回 b64_json');
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
+  }
+
+  Future<Uint8List> processDirectorImageIkun({
+    required String imagePath,
+    required String operation,
+    required String model,
+    required String apiKey,
+    required String baseUrl,
     String? prompt,
     int? defry,
   }) async {
@@ -162,8 +228,9 @@ class NovelAiApiService {
       'image': base64Encode(bytes),
       'width': image.width,
       'height': image.height,
+      'model': model,
+      'response_format': 'b64_json',
     };
-    if (model != null && model.trim().isNotEmpty) body['model'] = model.trim();
     if (prompt != null) body['prompt'] = prompt.trim();
     if (defry != null) body['defry'] = defry.clamp(0, 5);
     try {
@@ -199,98 +266,27 @@ class NovelAiApiService {
     }
   }
 
-  Future<GenerationTask> inpaintImage(
-      GenerationTask task, String apiKey, String baseUrl) async {
+  Future<Uint8List> upscaleImage7877({
+    required String imagePath,
+    required String model,
+    required String apiKey,
+    required String baseUrl,
+  }) async {
     _configureAuth(apiKey, baseUrl);
-
-    print('[NAI] === INPAINT START ===');
-    print('[NAI] baseUrl: ${_dio.options.baseUrl}');
-    print('[NAI] sourceImage: ${task.sourceImagePath}');
-    print('[NAI] maskImage: ${task.maskImagePath}');
-    print('[NAI] prompt: ${task.prompt}');
-    print('[NAI] model: ${task.model}');
-    print('[NAI] strength: ${task.inpaintStrength}');
-    print('[NAI] size: ${task.width}x${task.height}');
-
-    final sourceBytes = await File(task.sourceImagePath!).readAsBytes();
-    final maskBytes = await File(task.maskImagePath!).readAsBytes();
-    final alphaSourceBytes = _applyMaskToImageAlpha(sourceBytes, maskBytes);
-
-    print('[NAI] sourceBytes length: ${sourceBytes.length}');
-    print('[NAI] maskBytes length: ${maskBytes.length}');
-    print('[NAI] alphaSourceBytes length: ${alphaSourceBytes.length}');
-
-    // /v1/images/edits: 不传 mask，使用 image alpha 通道；透明区域会被转换为 NovelAI 白色重绘区域
-    final formData = FormData.fromMap({
-      'model': task.model,
-      'prompt': task.prompt,
-      'negative_prompt': task.negativePrompt ?? '',
-      'image': MultipartFile.fromBytes(alphaSourceBytes,
-          filename: 'source_alpha.png'),
-      'size': '${task.width}x${task.height}',
-      'width': task.width,
-      'height': task.height,
-      'steps': task.steps,
-      'n_samples': 1,
-      'scale': task.scale,
-      'sampler': task.sampler,
-      'noise_schedule': task.noiseSchedule,
-      'cfg_rescale': task.cfgRescale,
-      if (task.seed != null) 'seed': task.seed,
-      'characterPrompts': jsonEncode(_buildCharacterPrompts(task.characters)),
-      'use_coords': task.useCoords,
-      'strength': task.inpaintStrength ?? 1.0,
-      'response_format': 'b64_json',
-    });
-
-    print(
-        '[NAI] sending alpha image as multipart/form-data to /v1/images/edits');
-
+    final bytes = await File(imagePath).readAsBytes();
     try {
       final response = await _dio.post(
-        ApiConstants.imageEdits,
-        data: formData,
-        options: Options(
-          receiveTimeout: const Duration(minutes: 5),
-          sendTimeout: const Duration(minutes: 2),
-          headers: {
-            'Authorization': 'Bearer $apiKey',
-          },
-        ),
+        ApiConstants.imageGenerations,
+        data: {
+          'model': _normalize7877Model(model),
+          'extra': 'upscale',
+          'image': base64Encode(bytes),
+          'response_format': 'b64_json',
+        },
+        options: Options(receiveTimeout: const Duration(minutes: 5)),
       );
-
-      print('[NAI] response statusCode: ${response.statusCode}');
-      print('[NAI] response data type: ${response.data.runtimeType}');
-      if (response.data is Map) {
-        print('[NAI] response keys: ${(response.data as Map).keys.toList()}');
-        final data = response.data as Map<String, dynamic>;
-        if (data.containsKey('data')) {
-          final dataList = data['data'] as List?;
-          print('[NAI] response data[].length: ${dataList?.length}');
-          if (dataList != null && dataList.isNotEmpty) {
-            final first = dataList.first;
-            if (first is Map) {
-              print('[NAI] response data[0] keys: ${first.keys.toList()}');
-              if (first.containsKey('b64_json')) {
-                print(
-                    '[NAI] response data[0].b64_json length: ${(first['b64_json'] as String?)?.length}');
-              }
-              if (first.containsKey('url')) {
-                print('[NAI] response data[0].url: ${first['url']}');
-              }
-            }
-          }
-        }
-      }
-
-      final parsed = await _parseInpaintingResponse(response.data, task);
-      print(
-          '[NAI] parsed status: ${parsed.status}, imagePath: ${parsed.imagePath}, imageUrl: ${parsed.imageUrl}');
-      return parsed;
+      return _decodeImageResponse(response.data, '4x 放大');
     } on DioException catch (e) {
-      print(
-          '[NAI] DioException: ${e.type}, statusCode: ${e.response?.statusCode}');
-      print('[NAI] DioException response: ${e.response?.data}');
       throw ApiException(
         message: _handleDioError(e),
         statusCode: e.response?.statusCode,
@@ -299,47 +295,50 @@ class NovelAiApiService {
     }
   }
 
-  List<int> _applyMaskToImageAlpha(List<int> sourceBytes, List<int> maskBytes) {
-    final source = img.decodeImage(Uint8List.fromList(sourceBytes));
-    final mask = img.decodeImage(Uint8List.fromList(maskBytes));
-    if (source == null || mask == null) {
-      return sourceBytes;
-    }
-
-    final output = img.Image.from(source);
-    final resizedMask =
-        mask.width == output.width && mask.height == output.height
-            ? mask
-            : img.copyResize(mask,
-                width: output.width,
-                height: output.height,
-                interpolation: img.Interpolation.nearest);
-
-    int transparentPixels = 0;
-    for (int y = 0; y < output.height; y++) {
-      for (int x = 0; x < output.width; x++) {
-        final maskPixel = resizedMask.getPixel(x, y);
-        final shouldRepaint = maskPixel.r > 127 ||
-            maskPixel.g > 127 ||
-            maskPixel.b > 127 ||
-            maskPixel.a < 128;
-        final sourcePixel = output.getPixel(x, y);
-        output.setPixelRgba(
-          x,
-          y,
-          sourcePixel.r,
-          sourcePixel.g,
-          sourcePixel.b,
-          shouldRepaint ? 0 : 255,
-        );
-        if (shouldRepaint) transparentPixels++;
+  Uint8List _decodeImageResponse(dynamic data, String featureName) {
+    if (data is Map<String, dynamic>) {
+      final images = data['data'];
+      if (images is List && images.isNotEmpty) {
+        final first = images.first;
+        if (first is Map && first['b64_json'] is String) {
+          try {
+            return base64Decode(first['b64_json'] as String);
+          } on FormatException {
+            throw ApiException(message: '$featureName返回的 b64_json 无效');
+          }
+        }
       }
     }
+    throw ApiException(message: '$featureName未返回 b64_json');
+  }
 
-    final totalPixels = output.width * output.height;
-    print(
-        '[NAI] alpha source transparent pixels: $transparentPixels / $totalPixels (${(transparentPixels / totalPixels * 100).toStringAsFixed(2)}%)');
-    return img.encodePng(output);
+  Future<GenerationTask> inpaintImage(
+      GenerationTask task, String apiKey, String baseUrl) async {
+    _configureAuth(apiKey, baseUrl);
+
+    try {
+      final usesUnifiedImageRoute =
+          task.protocol == AppConstants.novelAiImageGenerationsProtocol ||
+              task.protocol == AppConstants.novelAiChatCompletionsProtocol;
+      final response = await _dio.post(
+        usesUnifiedImageRoute
+            ? ApiConstants.imageGenerations
+            : ApiConstants.imageEdits,
+        data: await _buildInpaintingBody(task),
+        options: Options(
+          receiveTimeout: const Duration(minutes: 5),
+          sendTimeout: const Duration(minutes: 2),
+        ),
+      );
+      final parsed = await _parseInpaintingResponse(response.data, task);
+      return _downloadIfNeeded(parsed, apiKey);
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
   }
 
   Future<Map<String, dynamic>> _buildPreciseReferenceBody(
@@ -386,6 +385,196 @@ class NovelAiApiService {
     };
   }
 
+  Future<String> encode7877VibeReference({
+    required GenerationTask task,
+    required CharacterReferenceImage reference,
+    required String apiKey,
+    required String baseUrl,
+  }) async {
+    _configureAuth(apiKey, baseUrl);
+    final image = await _readReferenceIfAvailable(reference);
+    if (image == null) {
+      throw ApiException(message: '氛围参考图像不可用，请重新选择');
+    }
+    try {
+      final response = await _dio.post(
+        ApiConstants.imageGenerations,
+        data: {
+          'model': _normalize7877Model(task.model),
+          'extra': 'encode-vibe',
+          'image': image,
+          'information_extracted': reference.informationExtracted,
+        },
+        options: Options(receiveTimeout: const Duration(minutes: 3)),
+      );
+      final data = response.data;
+      final encoded = data is Map ? data['data'] : null;
+      final first =
+          encoded is List && encoded.isNotEmpty ? encoded.first : null;
+      final value = first is Map ? first['b64_json'] : null;
+      if (value is! String || value.isEmpty) {
+        throw ApiException(message: '氛围参考图像编码失败');
+      }
+      return value;
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _build7877GenerationBody(
+    GenerationTask task,
+  ) async {
+    final responseFormat =
+        const {'b64_json', 'url'}.contains(task.responseFormat)
+            ? task.responseFormat!
+            : 'b64_json';
+    final characters = _build7877Characters(task.characters);
+    final preciseReferences = await _build7877PreciseReferences(task);
+    final vibe = await _encode7877VibeReferences(task);
+    final sourcePath = task.img2imgSourceImagePath;
+    String? sourceImage;
+    if (sourcePath != null) {
+      final file = File(sourcePath);
+      if (!await file.exists()) {
+        throw ApiException(message: '图生图源图不可用，请重新选择');
+      }
+      sourceImage = base64Encode(await file.readAsBytes());
+    }
+
+    return {
+      'model': _normalize7877Model(task.model),
+      'prompt': task.prompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
+      if (sourceImage != null) 'image': sourceImage,
+      if (sourceImage != null) 'strength': task.img2imgStrength ?? 0.7,
+      'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps,
+      'n': 1,
+      'scale': task.scale,
+      'cfg_rescale': task.cfgRescale,
+      'sampler': task.sampler,
+      'noise_schedule': task.noiseSchedule,
+      if (task.seed != null) 'seed': task.seed,
+      'response_format': responseFormat,
+      if (characters.isNotEmpty) 'characters': characters,
+      if (preciseReferences.isNotEmpty)
+        'character_references': preciseReferences,
+      if (vibe.images.isNotEmpty) 'reference_image_multiple': vibe.images,
+      if (vibe.images.isNotEmpty) 'reference_strength_multiple': vibe.strengths,
+      if (vibe.images.isNotEmpty)
+        'reference_information_extracted_multiple': vibe.informationExtracted,
+      if (vibe.images.isNotEmpty) 'controlnet_strength': 1.0,
+    };
+  }
+
+  List<Map<String, dynamic>> _build7877Characters(
+    List<CharacterSpec>? characters,
+  ) {
+    if (characters == null) return const [];
+    return characters
+        .map((character) => {
+              'prompt': character.prompt,
+              'negative_prompt': character.uc ?? '',
+              if (character.centerX != null && character.centerY != null)
+                'position': [character.centerX, character.centerY],
+              'enabled': character.enabled,
+            })
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _build7877PreciseReferences(
+    GenerationTask task,
+  ) async {
+    final references = <Map<String, dynamic>>[];
+    for (var index = 0; index < task.preciseReferences.length; index++) {
+      final referenceImage =
+          await _readPreciseReferenceIfAvailable(task.preciseReferences[index]);
+      if (referenceImage == null) {
+        throw ApiException(message: '精密参照图像 ${index + 1} 不可用，请重新选择');
+      }
+      final reference = task.preciseReferences[index];
+      references.add({
+        'image': referenceImage,
+        'type': reference.referenceType,
+        'strength': reference.strength,
+        'fidelity': 1.0,
+        'information_extracted': 1.0,
+      });
+    }
+    return references;
+  }
+
+  Future<
+      ({
+        List<String> images,
+        List<double> strengths,
+        List<double> informationExtracted
+      })> _encode7877VibeReferences(GenerationTask task) async {
+    final images = <String>[];
+    final strengths = <double>[];
+    final informationExtracted = <double>[];
+    for (var index = 0; index < task.vibeReferences.length; index++) {
+      final reference = task.vibeReferences[index];
+      final preEncoded = reference.encodedVibe;
+      if (preEncoded != null && preEncoded.isNotEmpty) {
+        images.add(preEncoded);
+        strengths.add(reference.strength);
+        informationExtracted.add(reference.informationExtracted);
+        continue;
+      }
+      final image = await _readReferenceIfAvailable(reference);
+      if (image == null) {
+        throw ApiException(message: '氛围参考图像 ${index + 1} 不可用，请重新选择');
+      }
+      final response = await _dio.post(
+        ApiConstants.imageGenerations,
+        data: {
+          'model': _normalize7877Model(task.model),
+          'extra': 'encode-vibe',
+          'image': image,
+          'information_extracted': reference.informationExtracted,
+        },
+        options: Options(receiveTimeout: const Duration(minutes: 3)),
+      );
+      final data = response.data;
+      final encoded = data is Map ? data['data'] : null;
+      final first =
+          encoded is List && encoded.isNotEmpty ? encoded.first : null;
+      final value = first is Map ? first['b64_json'] : null;
+      if (value is! String || value.isEmpty) {
+        throw ApiException(message: '氛围参考图像 ${index + 1} 编码失败');
+      }
+      images.add(value);
+      strengths.add(reference.strength);
+      informationExtracted.add(reference.informationExtracted);
+    }
+    return (
+      images: images,
+      strengths: strengths,
+      informationExtracted: informationExtracted,
+    );
+  }
+
+  String _normalize7877Model(String model) {
+    final normalized = model.trim().toLowerCase();
+    return switch (normalized) {
+      'nai-v4.5-full' || 'nai-v4-5-full' => 'nai-diffusion-4-5-full',
+      'nai-v4.5-curated' || 'nai-v4-5-curated' => 'nai-diffusion-4-5-curated',
+      'nai-v4-full' => 'nai-diffusion-4-full',
+      'nai-v4-curated' => 'nai-diffusion-4-curated',
+      'nai-v3' => 'nai-diffusion-3',
+      'nai-v3-furry' || 'nai-v3-furry-limit' => 'nai-diffusion-3-furry',
+      _ => model,
+    };
+  }
+
   Future<Map<String, dynamic>> _buildImg2ImgBody(
     GenerationTask task, {
     required bool unifiedRoute,
@@ -428,8 +617,11 @@ class NovelAiApiService {
       GenerationTask task) async {
     final reference =
         task.vibeReferences.isEmpty ? null : task.vibeReferences.first;
-    final referenceImage =
-        reference == null ? null : await _readReferenceIfAvailable(reference);
+    final referenceImage = reference == null
+        ? null
+        : reference.encodedVibe?.isNotEmpty == true
+            ? reference.encodedVibe
+            : await _readReferenceIfAvailable(reference);
     final characterPrompts = _buildCharacterPrompts(task.characters);
     final responseFormat =
         const {'b64_json', 'url'}.contains(task.responseFormat)
@@ -485,13 +677,10 @@ class NovelAiApiService {
     }
   }
 
-  String _normalizeImageGenerationsSampler(String sampler) {
-    return sampler == 'ddim' ? 'ddim_v3' : sampler;
-  }
+  String _normalizeImageGenerationsSampler(String sampler) => sampler;
 
-  String _normalizeImageGenerationsNoiseSchedule(String noiseSchedule) {
-    return noiseSchedule == 'polyexponential' ? 'exponential' : noiseSchedule;
-  }
+  String _normalizeImageGenerationsNoiseSchedule(String noiseSchedule) =>
+      noiseSchedule;
 
   List<Map<String, dynamic>> _buildCharacterPrompts(
     List<CharacterSpec>? characters,
@@ -559,33 +748,72 @@ class NovelAiApiService {
   }
 
   Future<Map<String, dynamic>> _buildInpaintingBody(GenerationTask task) async {
-    if (task.sourceImagePath == null || task.maskImagePath == null) {
-      throw Exception('局部重绘缺少原图或遮罩图');
+    final sourceImagePath = task.sourceImagePath;
+    final maskImagePath = task.maskImagePath;
+    if (sourceImagePath == null || sourceImagePath.isEmpty) {
+      throw ApiException(message: '局部重绘缺少原图');
+    }
+    if (maskImagePath == null || maskImagePath.isEmpty) {
+      throw ApiException(message: '局部重绘缺少遮罩图');
     }
 
-    final sourceBytes = await File(task.sourceImagePath!).readAsBytes();
-    final maskBytes = await File(task.maskImagePath!).readAsBytes();
+    final source = File(sourceImagePath);
+    final mask = File(maskImagePath);
+    if (!await source.exists()) {
+      throw ApiException(message: '局部重绘原图不可用，请重新选择');
+    }
+    if (!await mask.exists()) {
+      throw ApiException(message: '局部重绘遮罩图不可用，请重新绘制');
+    }
 
-    final imageBase64 = base64Encode(sourceBytes);
-    final maskBase64 = base64Encode(maskBytes);
+    final responseFormat =
+        const {'b64_json', 'url'}.contains(task.responseFormat)
+            ? task.responseFormat!
+            : 'b64_json';
+    final is7877 = task.protocol == AppConstants.novelAiChatCompletionsProtocol;
+    final usesImageGenerations =
+        task.protocol == AppConstants.novelAiImageGenerationsProtocol;
 
     return {
-      'model': task.model,
+      if (usesImageGenerations) 'novelai_operation': 'inpainting',
+      'model': is7877
+          ? _normalize7877Model(task.model)
+          : _inpaintingModel(task.model, usesImageGenerations),
       'prompt': task.prompt,
-      'image': imageBase64,
-      'mask': maskBase64,
+      'image': base64Encode(await source.readAsBytes()),
+      'mask': base64Encode(await mask.readAsBytes()),
       'strength': task.inpaintStrength ?? 1.0,
-      if (task.seed != null) 'seed': task.seed,
+      if (!is7877) 'add_original_image': true,
       'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
       if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
         'negative_prompt': task.negativePrompt,
-      'steps': ApiConstants.defaultInpaintingSteps,
+      'steps': task.steps,
       'scale': task.scale,
       'cfg_rescale': task.cfgRescale,
-      'sampler': task.sampler,
-      'noise_schedule': task.noiseSchedule,
+      'sampler': usesImageGenerations
+          ? _normalizeImageGenerationsSampler(task.sampler)
+          : task.sampler,
+      'noise_schedule': usesImageGenerations
+          ? _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule)
+          : task.noiseSchedule,
+      if (task.seed != null) 'seed': task.seed,
       'n': 1,
-      'response_format': 'b64_json',
+      'response_format': responseFormat,
+    };
+  }
+
+  String _inpaintingModel(String model, bool usesImageGenerations) {
+    if (!usesImageGenerations || model.contains('inpaint')) return model;
+    return switch (model) {
+      'nai-v4.5-full' || 'nai-v4.5-curated' => 'nai-v4.5-inpaint',
+      'nai-v4.5-full-limit' ||
+      'nai-v4.5-curated-limit' =>
+        'nai-v4.5-inpaint-limit',
+      'nai-v3' => 'nai-v3-inpaint',
+      'nai-v3-furry' => 'nai-v3-furry-inpaint',
+      _ => model,
     };
   }
 

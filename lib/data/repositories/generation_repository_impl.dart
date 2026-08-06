@@ -5,6 +5,9 @@ import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
+import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
+import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 
 class GenerationRepositoryImpl implements GenerationRepository {
@@ -12,16 +15,19 @@ class GenerationRepositoryImpl implements GenerationRepository {
   final GptApiService _gptApiService;
   final NanoBananaApiService _nanoApiService;
   final SettingsRepository _settingsRepo;
+  final VibeEncodingRepository _vibeEncodingRepo;
 
   GenerationRepositoryImpl({
     required NovelAiApiService apiService,
     required GptApiService gptApiService,
     required NanoBananaApiService nanoApiService,
     required SettingsRepository settingsRepo,
+    required VibeEncodingRepository vibeEncodingRepo,
   })  : _apiService = apiService,
         _gptApiService = gptApiService,
         _nanoApiService = nanoApiService,
-        _settingsRepo = settingsRepo;
+        _settingsRepo = settingsRepo,
+        _vibeEncodingRepo = vibeEncodingRepo;
 
   @override
   Future<GenerationTask> submitGeneration(GenerationTask task) async {
@@ -89,7 +95,90 @@ class GenerationRepositoryImpl implements GenerationRepository {
     if (task.mode == GenerationMode.inpainting) {
       return _apiService.inpaintImage(task, creds.apiKey, creds.baseUrl);
     }
-    return _apiService.generateImage(task, creds.apiKey, creds.baseUrl);
+    if (task.protocol == AppConstants.novelAiImageGenerationsProtocol &&
+        task.img2imgSourceImagePath != null &&
+        task.vibeReferences.isNotEmpty) {
+      throw ApiException(
+        message: 'ikun 暂不支持图生图与 Vibe 编码同时使用，请先移除其中一种参考',
+        code: 'VIBE_IMG2IMG_UNSUPPORTED_IKUN',
+      );
+    }
+    final prepared = await _prepareVibeReferences(
+      task,
+      creds.apiKey,
+      creds.baseUrl,
+    );
+    return _apiService.generateImage(prepared, creds.apiKey, creds.baseUrl);
+  }
+
+  Future<GenerationTask> _prepareVibeReferences(
+    GenerationTask task,
+    String apiKey,
+    String baseUrl,
+  ) async {
+    if ((task.protocol != AppConstants.novelAiChatCompletionsProtocol &&
+            task.protocol != AppConstants.novelAiImageGenerationsProtocol) ||
+        task.vibeReferences.isEmpty) {
+      return task;
+    }
+
+    final prepared = <CharacterReferenceImage>[];
+    for (final reference in task.vibeReferences) {
+      if (reference.encodedVibe?.isNotEmpty == true) {
+        prepared.add(reference);
+        continue;
+      }
+
+      VibeEncoding? saved;
+      if (reference.vibeLibraryId != null) {
+        saved = await _vibeEncodingRepo.getById(reference.vibeLibraryId!);
+        if (saved == null) {
+          throw ApiException(message: '已保存的氛围编码不存在，请重新选择');
+        }
+      } else if (reference.path.isNotEmpty) {
+        saved = await _vibeEncodingRepo.findBySourceImagePath(reference.path);
+      }
+
+      if (saved != null) {
+        prepared.add(reference.copyWith(
+          vibeLibraryId: saved.id,
+          encodedVibe: saved.encodedVibe,
+          thumbnailPath: saved.thumbnailPath,
+          title: saved.title,
+        ));
+        continue;
+      }
+
+      if (reference.path.isEmpty) {
+        throw ApiException(message: '氛围参考图像不可用，请重新选择');
+      }
+      final encoded = await _apiService.encode7877VibeReference(
+        task: task,
+        reference: reference,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+      final created = await _vibeEncodingRepo.createFromEncoding(
+        title: _vibeTitleForPath(reference.path),
+        encodedVibe: encoded,
+        sourceImagePath: reference.path,
+        encodedModel: task.model,
+      );
+      prepared.add(reference.copyWith(
+        vibeLibraryId: created.id,
+        encodedVibe: encoded,
+        thumbnailPath: created.thumbnailPath,
+        title: created.title,
+      ));
+    }
+    return task.copyWith(vibeReferences: prepared);
+  }
+
+  String _vibeTitleForPath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final name = normalized.split('/').last;
+    final dot = name.lastIndexOf('.');
+    return dot > 0 ? name.substring(0, dot) : name;
   }
 
   Future<GenerationTask> _submitGpt(GenerationTask task) async {

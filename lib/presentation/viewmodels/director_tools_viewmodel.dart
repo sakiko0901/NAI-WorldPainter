@@ -21,6 +21,7 @@ class DirectorToolsViewModel extends ChangeNotifier {
   String? inputPath;
   String? outputPath;
   DirectorToolType selectedTool = DirectorToolType.declutter;
+  DirectorChannel selectedChannel = DirectorChannel.gateway7877;
   String prompt = '';
   int defry = 5;
   bool isProcessing = false;
@@ -28,7 +29,19 @@ class DirectorToolsViewModel extends ChangeNotifier {
   List<String> availableModels = const [];
   String? selectedModel;
   String? errorMessage;
-  ApiEndpoint? _endpoint;
+  ApiEndpoint? _endpoint7877;
+  ApiEndpoint? _endpointIkun;
+  List<String> _models7877 = const [];
+  List<String> _modelsIkun = const [];
+  String? _model7877;
+  String? _modelIkun;
+
+  String get channelName =>
+      selectedChannel == DirectorChannel.gateway7877 ? '7877' : 'ikun';
+
+  ApiEndpoint? get _endpoint => selectedChannel == DirectorChannel.gateway7877
+      ? _endpoint7877
+      : _endpointIkun;
 
   Future<void> load() async {
     isLoadingModels = true;
@@ -36,51 +49,101 @@ class DirectorToolsViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       final endpoints = await _settings.getEndpoints(ImageProviderType.novelAi);
-      _endpoint = endpoints
+      _endpoint7877 = endpoints
+          .where((endpoint) =>
+              endpoint.id == AppConstants.novelAiChatCompletionsEndpointId)
+          .firstOrNull;
+      _endpointIkun = endpoints
           .where((endpoint) =>
               endpoint.id == AppConstants.novelAiImageGenerationsEndpointId)
           .firstOrNull;
-      final endpoint = _endpoint;
-      if (endpoint == null || endpoint.baseUrl.trim().isEmpty) {
-        availableModels = const [];
-        selectedModel = null;
-        errorMessage = '请先在 API 配置中配置 ikun 渠道';
-        return;
-      }
+      _models7877 = _availableModels(_endpoint7877);
+      _modelsIkun = _availableModels(_endpointIkun);
 
-      final seen = <String>{};
-      availableModels =
-          endpoint.models.map((model) => model.trim()).where((model) {
-        final lower = model.toLowerCase();
-        return model.isNotEmpty &&
-            !lower.endsWith('-limit') &&
-            !lower.contains('inpaint') &&
-            seen.add(model);
-      }).toList();
+      final activeId =
+          await _settings.getActiveEndpointId(ImageProviderType.novelAi);
+      selectedChannel =
+          activeId == AppConstants.novelAiImageGenerationsEndpointId
+              ? DirectorChannel.ikun
+              : DirectorChannel.gateway7877;
       final activeModel =
           await _settings.getActiveModel(ImageProviderType.novelAi);
-      selectedModel = availableModels.contains(activeModel)
-          ? activeModel
-          : availableModels.firstOrNull;
-      if (selectedModel == null) {
-        errorMessage = 'ikun 渠道没有可用于导演工具的模型';
+      _model7877 = _models7877.firstOrNull;
+      _modelIkun = _modelsIkun.firstOrNull;
+      if (selectedChannel == DirectorChannel.gateway7877 &&
+          _models7877.contains(activeModel)) {
+        _model7877 = activeModel;
       }
+      if (selectedChannel == DirectorChannel.ikun &&
+          _modelsIkun.contains(activeModel)) {
+        _modelIkun = activeModel;
+      }
+      _syncSelectedModel();
     } catch (e) {
       availableModels = const [];
       selectedModel = null;
-      errorMessage = '加载 ikun 模型失败：$e';
+      errorMessage = '加载 $channelName 模型失败：$e';
     } finally {
       isLoadingModels = false;
       notifyListeners();
     }
   }
 
-  void selectModel(String? model) {
+  List<String> _availableModels(ApiEndpoint? endpoint) {
+    if (endpoint == null) return const [];
+    final seen = <String>{};
+    return endpoint.models.map((model) => model.trim()).where((model) {
+      final lower = model.toLowerCase();
+      return model.isNotEmpty &&
+          !lower.endsWith('-limit') &&
+          !lower.contains('inpaint') &&
+          seen.add(model);
+    }).toList();
+  }
+
+  void _syncSelectedModel() {
+    if (selectedChannel == DirectorChannel.gateway7877) {
+      availableModels = _models7877;
+      selectedModel = _model7877;
+    } else {
+      availableModels = _modelsIkun;
+      selectedModel = _modelIkun;
+    }
+    final endpoint = _endpoint;
+    if (endpoint == null || endpoint.baseUrl.trim().isEmpty) {
+      errorMessage = '请先在 API 配置中配置 $channelName 渠道';
+    } else if (selectedModel == null) {
+      errorMessage = '$channelName 渠道没有可用于导演工具的模型';
+    } else {
+      errorMessage = null;
+    }
+  }
+
+  Future<void> selectChannel(DirectorChannel channel) async {
+    if (channel == selectedChannel) return;
+    selectedChannel = channel;
+    outputPath = null;
+    _syncSelectedModel();
+    notifyListeners();
+
+    final endpoint = _endpoint;
+    if (endpoint == null) return;
+    await _settings.setActiveEndpointId(ImageProviderType.novelAi, endpoint.id);
+    await _settings.setActiveModel(ImageProviderType.novelAi, selectedModel);
+  }
+
+  Future<void> selectModel(String? model) async {
     if (model == null || !availableModels.contains(model)) return;
+    if (selectedChannel == DirectorChannel.gateway7877) {
+      _model7877 = model;
+    } else {
+      _modelIkun = model;
+    }
     selectedModel = model;
     outputPath = null;
     errorMessage = null;
     notifyListeners();
+    await _settings.setActiveModel(ImageProviderType.novelAi, model);
   }
 
   void selectInput(String path) {
@@ -114,12 +177,12 @@ class DirectorToolsViewModel extends ChangeNotifier {
     final endpoint = _endpoint;
     final model = selectedModel;
     if (endpoint == null || endpoint.baseUrl.trim().isEmpty) {
-      errorMessage = '请先在 API 配置中配置 ikun 渠道';
+      errorMessage = '请先在 API 配置中配置 $channelName 渠道';
       notifyListeners();
       return false;
     }
     if (model == null || model.isEmpty) {
-      errorMessage = '请选择 ikun NovelAI 模型';
+      errorMessage = '请选择 $channelName NovelAI 模型';
       notifyListeners();
       return false;
     }
@@ -128,15 +191,25 @@ class DirectorToolsViewModel extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      final bytes = await _api.processDirectorImage(
-        imagePath: source,
-        operation: selectedTool.operation,
-        apiKey: endpoint.apiKey,
-        baseUrl: endpoint.baseUrl,
-        model: model,
-        prompt: selectedTool.usesPrompt ? prompt : null,
-        defry: selectedTool.usesDefry ? defry : null,
-      );
+      final bytes = selectedChannel == DirectorChannel.gateway7877
+          ? await _api.processDirectorImage(
+              imagePath: source,
+              operation: selectedTool.operation,
+              model: model,
+              apiKey: endpoint.apiKey,
+              baseUrl: endpoint.baseUrl,
+              prompt: selectedTool.usesPrompt ? prompt : null,
+              defry: selectedTool.usesDefry ? defry : null,
+            )
+          : await _api.processDirectorImageIkun(
+              imagePath: source,
+              operation: selectedTool.operation,
+              model: model,
+              apiKey: endpoint.apiKey,
+              baseUrl: endpoint.baseUrl,
+              prompt: selectedTool.usesPrompt ? prompt : null,
+              defry: selectedTool.usesDefry ? defry : null,
+            );
       outputPath = await ImageUtils.saveBase64Image(
         base64Encode(bytes),
         ImageUtils.generateFilename(),

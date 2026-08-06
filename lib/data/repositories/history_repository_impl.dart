@@ -76,10 +76,18 @@ class HistoryRepositoryImpl implements HistoryRepository {
 
   @override
   Future<void> deleteTask(String taskId) async {
-    // 先删除本地图片
-    final task = await getTask(taskId);
-    if (task?.imagePath != null) {
-      await ImageUtils.deleteImage(task!.imagePath!);
+    // 只查 image_path 列，避免历史行中其它大字段（如过长的 error_message、
+    // characters JSON）撑爆 Android CursorWindow（默认 1~2MB）。
+    final rows = await _db.query(
+      _table,
+      columns: ['image_path'],
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      limit: 1,
+    );
+    final imagePath = rows.isEmpty ? null : rows.first['image_path'] as String?;
+    if (imagePath != null && imagePath.isNotEmpty) {
+      await ImageUtils.deleteImage(imagePath);
     }
     await _db.delete(_table, where: 'task_id = ?', whereArgs: [taskId]);
   }

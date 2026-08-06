@@ -34,6 +34,7 @@ class ImageTagResult extends Equatable {
   final String? negativePrompt;
   final List<TagEntry> negativeEntries;
   final List<CharacterSpec>? characters;
+  final List<String> vibeEncodings;
   final Map<String, dynamic>? metadata;
 
   const ImageTagResult({
@@ -43,6 +44,7 @@ class ImageTagResult extends Equatable {
     this.negativePrompt,
     this.negativeEntries = const [],
     this.characters,
+    this.vibeEncodings = const [],
     this.metadata,
   });
 
@@ -68,6 +70,7 @@ class ImageTagResult extends Equatable {
         negativePrompt: negativePrompt,
         negativeEntries: negativeEntries ?? this.negativeEntries,
         characters: characters,
+        vibeEncodings: vibeEncodings,
         metadata: metadata,
       );
 
@@ -79,6 +82,7 @@ class ImageTagResult extends Equatable {
         'negativePrompt': negativePrompt,
         'negativeEntries': negativeEntries.map((e) => e.toJson()).toList(),
         'characters': characters?.map((e) => e.toJson()).toList(),
+        'vibeEncodings': vibeEncodings,
         'metadata': metadata,
       };
 
@@ -98,6 +102,10 @@ class ImageTagResult extends Equatable {
       characters: (json['characters'] as List<dynamic>?)
           ?.map((e) => CharacterSpec.fromJson(e as Map<String, dynamic>))
           .toList(),
+      vibeEncodings: (json['vibeEncodings'] as List<dynamic>?)
+              ?.whereType<String>()
+              .toList() ??
+          const [],
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
@@ -110,6 +118,7 @@ class ImageTagResult extends Equatable {
         negativePrompt,
         negativeEntries,
         characters,
+        vibeEncodings,
         metadata
       ];
 }

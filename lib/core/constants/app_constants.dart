@@ -6,12 +6,13 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 12;
+  static const int dbVersion = 14;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
   static const String stylePresetsDirName = 'style_presets';
   static const String artistPromptsDirName = 'artist_prompts';
+  static const String vibeEncodingsDirName = 'vibe_encodings';
 
   // 设置 key
   static const String keyApiKey = 'api_key';
@@ -39,6 +40,7 @@ class AppConstants {
   static const String keyCharactersDraft = 'characters_draft';
   static const String keyVibeReferencesDraft = 'vibe_references_draft';
   static const String keyPreciseReferencesDraft = 'precise_references_draft';
+  static const String keyReferenceModeDraft = 'reference_mode_draft';
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
   static const String keyInpaintNegativePromptDraft =
       'inpaint_negative_prompt_draft';
@@ -147,7 +149,34 @@ class AppConstants {
       '- 添加新元素到现有提示词尾部时，用 mode=append（自动去重，但仍建议先 read 确认）。\n'
       '- 用户明确纠正人名/特征/画风时：调 `save_memory`，然后回复确认。\n'
       '- 不要在 tool 调用之间凭空想象 tag，所有 tag 必须来自 Danbooru 检索结果或用户本地记忆。\n'
-      '- 多角色场景（2 人及以上）**禁止单纯把全部特征写入 positive**，必须按角色拆分到 character_1、character_2…；positive 只放通用画质词与画风词，角色独有特征（角色名、发色、瞳色、服装、动作）一律进 character_N。\n';
+      '- 多角色场景（2 人及以上）**禁止单纯把全部特征写入 positive**，必须按角色拆分到 character_1、character_2…；positive 只放通用画质词与画风词，角色独有特征（角色名、发色、瞳色、服装、动作）一律进 character_N。\n'
+      '\n'
+      '## 任务完成标志\n'
+      '- 当用户请求涉及修改/编排提示词时，**任务完成的唯一标志是 `write_prompt` 工具被成功调用并返回 success**。\n'
+      '- 调用 `read_current_prompts` 后不要立即 stop——read 只是收集信息，不是任务终点。即使 read 后发现提示词框为空或已是期望内容，也要么调用 `write_prompt` 写入新内容，要么在最终回复里明确说明"无需修改"。不允许 read 后直接 stop 不解释。\n'
+      '- 当 `search_danbooru` 返回的 tag 数量已足够覆盖用户描述的全部特征（一般 ≤30 个），不要再继续 search，立即进入 `write_prompt`。\n';
+
+  /// 识图专用 system prompt：用户发图时，vision 模型仅做图像描述，不调用工具。
+  /// 描述文本会与 WD-Tagger tag 一起回灌给 main 模型走 agent 工具链。
+  /// 设计动机：部分 vision 中转站把 OpenAI tool 消息转 Gemini functionResponse
+  /// 时丢 name 字段，导致 400 错误。vision 路径不再跑带 tools 的 agent，
+  /// 把工具链交给更可控的 main 模型。
+  static const String defaultVisionDescribePrompt =
+      '你是图像识别助手。请用结构化中文描述这张图：\n'
+      '1. 角色名（含作品，若可识别）\n'
+      '2. 性别与人数\n'
+      '3. 发色与发型\n'
+      '4. 瞳色\n'
+      '5. 表情\n'
+      '6. 服装与配饰\n'
+      '7. 姿势与动作\n'
+      '8. 场景与背景\n'
+      '9. 光影与构图\n'
+      '10. 风格/画师特征（若可识别）\n\n'
+      '输出要求：\n'
+      '- 用编号列表，每项一句话，简洁明了。\n'
+      '- 不确定的部分标注"未识别"，不要凭空想象。\n'
+      '- **不要编排英文 tag，不要调用任何工具，只输出描述文本。**\n';
 
   // 图像 API 供应商配置
   static const String keyImageProviderNovelAiBaseUrl =
@@ -193,6 +222,7 @@ class AppConstants {
       'image_provider_nano_active_model_v2';
 
   // 批量生成
+  static const int maxBatchCount = 30;
   static const String keyBatchCount = 'batch_count_draft';
 
   // 图片解析缓存

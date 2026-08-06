@@ -171,6 +171,65 @@ void main() {
     expect(viewModel.preciseReferences, isEmpty);
   });
 
+  test('batch count persists the 1 to 30 range', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+
+    await viewModel.updateBatchCount(31);
+    expect(viewModel.batchCount, AppConstants.maxBatchCount);
+    expect(settings.savedBatchCount, AppConstants.maxBatchCount);
+
+    await viewModel.updateBatchCount(0);
+    expect(viewModel.batchCount, 1);
+    expect(settings.savedBatchCount, 1);
+  });
+
+  test('switching reference mode clears the other draft and persists choice',
+      () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    await viewModel.setVibeReference('vibe.png');
+    await viewModel.switchReferenceMode(ReferenceMode.precise);
+
+    expect(viewModel.referenceMode, ReferenceMode.precise);
+    expect(settings.savedReferenceMode, ReferenceMode.precise);
+    expect(viewModel.vibeReferences, isEmpty);
+    expect(settings.savedVibeReferences, isEmpty);
+    expect(viewModel.preciseReferences, isEmpty);
+  });
+
   test('vibe and precise references clear each other', () async {
     final settings = _SettingsRepository();
     final history = _MemoryHistoryRepository();
@@ -198,9 +257,11 @@ void main() {
     await viewModel.setVibeReference('vibe.png');
     await viewModel.addPreciseReference('precise.png');
     expect(viewModel.vibeReferences, isEmpty);
+    expect(viewModel.referenceMode, ReferenceMode.precise);
 
     await viewModel.setVibeReference('new-vibe.png');
     expect(viewModel.preciseReferences, isEmpty);
+    expect(viewModel.referenceMode, ReferenceMode.vibe);
   });
 
   test('vibe reference is replaced, updated, removed and saved', () async {
@@ -334,6 +395,98 @@ void main() {
     }
   });
 
+  test('7877 支持 Vibe 与精密参考两种模式', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+    ];
+    viewModel.selectedModel = 'model';
+    viewModel.prompt = '1girl';
+
+    await viewModel.setVibeReference('vibe.png');
+    await viewModel.updateVibeReference(
+      viewModel.vibeReferences.single.copyWith(
+        strength: 0.8,
+        informationExtracted: 0.4,
+      ),
+    );
+    await viewModel.generate();
+
+    expect(viewModel.supportsVibeReferences, isTrue);
+    expect(viewModel.supportsPreciseReferences, isTrue);
+    expect(settings.savedVibeReferences.single.path, 'vibe.png');
+    expect(repository.submitted, hasLength(1));
+    expect(repository.submitted.single.vibeReferences, hasLength(1));
+    expect(repository.submitted.single.vibeReferences.single.strength, 0.8);
+    expect(
+      repository.submitted.single.vibeReferences.single.informationExtracted,
+      0.4,
+    );
+
+    await viewModel.addPreciseReference('precise.png');
+    expect(viewModel.vibeReferences, isEmpty);
+    expect(viewModel.preciseReferences.single.path, 'precise.png');
+  });
+
+  test('7877 支持组合图生图与 Vibe 参考', () async {
+    final source = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}vibe_img2img.png',
+    );
+    await source.writeAsBytes(const [1]);
+    addTearDown(() async {
+      if (await source.exists()) await source.delete();
+    });
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+    ];
+    viewModel.selectedModel = 'model';
+    viewModel.prompt = '1girl';
+    await viewModel.setVibeReference('vibe.png');
+    viewModel.setImg2ImgSourceImagePath(source.path);
+
+    await viewModel.generate();
+
+    expect(repository.submitted, hasLength(1));
+    expect(repository.submitted.single.img2imgSourceImagePath, source.path);
+    expect(repository.submitted.single.vibeReferences, hasLength(1));
+  });
+
   test('7877 and ikun submit independent img2img state', () async {
     for (final protocol in const [
       AppConstants.novelAiChatCompletionsProtocol,
@@ -378,6 +531,79 @@ void main() {
       expect(repository.submitted, hasLength(1));
       expect(repository.submitted.single.img2imgSourceImagePath, source.path);
       expect(repository.submitted.single.img2imgStrength, 0.42);
+    }
+  });
+
+  test('GPT reference images are batch-added, deduplicated and capped at 16',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.addGptImages(['a.png', 'b.png', 'a.png']), 2);
+    expect(viewModel.gptImagePaths, ['a.png', 'b.png']);
+
+    final additional = List.generate(20, (index) => 'image_$index.png');
+    expect(viewModel.addGptImages(additional), 14);
+    expect(viewModel.gptImagePaths, hasLength(16));
+    expect(viewModel.gptImagePaths.toSet(), hasLength(16));
+    expect(viewModel.addGptImages(['overflow.png']), 0);
+  });
+
+  test('GPT and NanoBanana tasks preserve all selected reference images',
+      () async {
+    for (final provider in const [
+      ImageProviderType.gpt,
+      ImageProviderType.nanoBanana,
+    ]) {
+      final output = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'multi_reference_${provider.name}.png',
+      );
+      await output.writeAsBytes(const [1]);
+      addTearDown(() async {
+        if (await output.exists()) await output.delete();
+      });
+      final history = _MemoryHistoryRepository();
+      final repository = _CapturingGenerationRepository(output.path);
+      final queue = GenerationQueue(repository, history);
+      addTearDown(queue.dispose);
+      final viewModel = GenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+      );
+      addTearDown(viewModel.dispose);
+      await Future<void>.delayed(Duration.zero);
+      viewModel.imageModelOptions = [
+        ImageModelOption(
+          modelId: provider.name,
+          displayName: provider.name,
+          actualModel: 'model',
+          provider: provider,
+        ),
+      ];
+      viewModel.selectedModel = provider.name;
+      viewModel.prompt = 'edit these images';
+      viewModel.addGptImages(['first.png', 'second.png', 'third.png']);
+
+      await viewModel.generate();
+
+      expect(repository.submitted, hasLength(1));
+      expect(
+        repository.submitted.single.gptImagePaths,
+        ['first.png', 'second.png', 'third.png'],
+      );
     }
   });
 
@@ -427,6 +653,8 @@ void main() {
 
     expect(viewModel.preciseReferences, task.preciseReferences);
     expect(viewModel.vibeReferences, isEmpty);
+    expect(viewModel.referenceMode, ReferenceMode.precise);
+    expect(settings.savedReferenceMode, ReferenceMode.precise);
     expect(settings.savedPreciseReferences, task.preciseReferences);
     expect(settings.savedVibeReferences, isEmpty);
   });
@@ -546,7 +774,9 @@ class _MemoryHistoryRepository implements HistoryRepository {
 class _SettingsRepository implements SettingsRepository {
   List<CharacterReferenceImage> savedVibeReferences = const [];
   List<PreciseReferenceImage> savedPreciseReferences = const [];
+  ReferenceMode savedReferenceMode = ReferenceMode.vibe;
   List<CharacterSpec> savedCharacters = const [];
+  int savedBatchCount = 1;
   int savedSteps = 28;
   bool savedStepsLocked = false;
 
@@ -585,6 +815,14 @@ class _SettingsRepository implements SettingsRepository {
     List<CharacterReferenceImage> value,
   ) async {
     savedVibeReferences = [...value];
+  }
+
+  @override
+  Future<ReferenceMode> getReferenceModeDraft() async => savedReferenceMode;
+
+  @override
+  Future<void> setReferenceModeDraft(ReferenceMode value) async {
+    savedReferenceMode = value;
   }
 
   @override
@@ -650,7 +888,10 @@ class _SettingsRepository implements SettingsRepository {
       const [];
 
   @override
-  Future<int> getBatchCount() async => 1;
+  Future<int> getBatchCount() async => savedBatchCount;
+
+  @override
+  Future<void> setBatchCount(int value) async => savedBatchCount = value;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

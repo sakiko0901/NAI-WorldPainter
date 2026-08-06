@@ -1,3 +1,4 @@
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
@@ -34,7 +35,9 @@ class GenerateImageTool extends AgentTool {
           },
           'batch_count': {
             'type': 'integer',
-            'description': '批量张数，1-15，默认 1',
+            'minimum': 1,
+            'maximum': AppConstants.maxBatchCount,
+            'description': '批量张数，1-30；不传则使用当前批量设置',
           },
         },
       };
@@ -57,13 +60,21 @@ class GenerateImageTool extends AgentTool {
       await _genVm.updateNegativePrompt(negative);
     }
     if (batch != null) {
-      await _genVm.updateBatchCount(batch.clamp(1, 15));
+      await _genVm.updateBatchCount(batch.clamp(1, AppConstants.maxBatchCount));
     }
     try {
+      final previousTaskId = _genVm.lastCompletedTask?.taskId;
       await _genVm.generate();
+      final error = _genVm.errorMessage?.trim();
+      if (error != null && error.isNotEmpty) {
+        return ToolResult.failure('生图失败：$error');
+      }
+      if (_genVm.lastCompletedTask?.taskId == previousTaskId) {
+        return ToolResult.failure('生图未产生新结果，请检查当前模型、渠道和提示词配置');
+      }
       return ToolResult.success(
-        '已提交生图任务（batch_count=${_genVm.batchCount}）。生成完成后结果会显示在生图区。',
-        displayText: '已提交生图任务',
+        '已完成生图任务（batch_count=${_genVm.batchCount}）。结果已显示在生图区。',
+        displayText: '生图已完成',
       );
     } catch (e) {
       return ToolResult.failure('生图失败：$e');

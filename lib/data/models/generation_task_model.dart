@@ -106,6 +106,16 @@ class GenerationTaskModel {
     );
   }
 
+  /// Android CursorWindow 单行上限约 1~2MB，对长文本字段做截断保护，
+  /// 防止异常长 prompt / 错误堆栈 / 角色引用 JSON 把整行撑爆导致后续
+  /// `SELECT *` 抛 DatabaseException(Row too big to fit into CursorWindow)。
+  static const int _maxTextLength = 64 * 1024; // 64KB
+  static String? _truncate(String? text) {
+    if (text == null) return null;
+    if (text.length <= _maxTextLength) return text;
+    return '${text.substring(0, _maxTextLength - 16)}…[truncated]';
+  }
+
   /// 转数据库行
   Map<String, dynamic> toDb() {
     return {
@@ -114,8 +124,8 @@ class GenerationTaskModel {
       'model': model,
       'endpoint_id': endpointId,
       'protocol': protocol,
-      'prompt': prompt,
-      'negative_prompt': negativePrompt,
+      'prompt': _truncate(prompt) ?? '',
+      'negative_prompt': _truncate(negativePrompt),
       'width': width,
       'height': height,
       'scale': scale,
@@ -125,16 +135,20 @@ class GenerationTaskModel {
       'steps': steps,
       'use_coords': useCoords ? 1 : 0,
       'seed': seed,
-      'characters': characters != null
-          ? jsonEncode(characters!.map((c) => c.toJson()).toList())
-          : null,
+      'characters': _truncate(
+        characters != null && characters!.isNotEmpty
+            ? jsonEncode(characters!.map((c) => c.toJson()).toList())
+            : null,
+      ),
       'precise_references': preciseReferences.isEmpty
           ? null
-          : jsonEncode(preciseReferences.map((r) => r.toJson()).toList()),
+          : _truncate(
+              jsonEncode(preciseReferences.map((r) => r.toJson()).toList()),
+            ),
       'status': status,
       'image_path': imagePath,
       'image_url': imageUrl,
-      'error_message': errorMessage,
+      'error_message': _truncate(errorMessage),
       'is_favorite': isFavorite ? 1 : 0,
       'created_at': createdAt.millisecondsSinceEpoch,
       'completed_at': completedAt?.millisecondsSinceEpoch,

@@ -87,7 +87,7 @@
 
 - `local/database_helper.dart`：sqflite 句柄。
 - `local/llm_chat_local_datasource.dart`：会话表读写。
-- `local/settings_local_datasource.dart`：**关键**。负责 v1→v2 endpoint **自动迁移**：第一次 `getEndpoints(provider)` 若空，则用旧的单值 url/key/model 拼成 `name = '默认'` 的 endpoint 写回新 key。Batch 张数 1-15 clamp。
+- `local/settings_local_datasource.dart`：**关键**。负责 v1→v2 endpoint **自动迁移**：第一次 `getEndpoints(provider)` 若空，则用旧的单值 url/key/model 拼成 `name = '默认'` 的 endpoint 写回新 key。Batch 张数 1-30 clamp。
 - `remote/novelai_api_service.dart` / `gpt_api_service.dart` / `nano_banana_api_service.dart`：三套 HTTP 客户端，统一 dio 入口。
 - `remote/llm_api_service.dart`：聊天补全。
 - `remote/bing_search_service.dart`：内置搜索能力。
@@ -104,7 +104,7 @@
 | 页面 | 主要职责 |
 |---|---|
 | `pages/home_page.dart` | 底部 Tab 容器（History / Generate / Settings 等）。|
-| `pages/generate_page.dart` | 出图主页：**批量滑块（1-15）**、**结果区缩略图带**、保存按钮基于 `selectedResult ?? lastCompletedTask`。底部 Generate 按钮在批量模式下显示 `n/N` 进度。集成 `ChatDrawer`，`onApplyAll` 把聚合 segments 写回 vm。|
+| `pages/generate_page.dart` | 出图主页：**批量滑块（1-30）**、**结果区缩略图带**、保存按钮基于 `selectedResult ?? lastCompletedTask`。底部 Generate 按钮在批量模式下显示 `n/N` 进度。集成 `ChatDrawer`，`onApplyAll` 把聚合 segments 写回 vm。|
 | `pages/api_config_page.dart` | **API 配置子页**。顶部 TabBar（NovelAI / GPT / Nano）。每 provider 一组 endpoint 卡片：可展开、设激活、连测、编辑、删除。`+ 添加中转站` 在底部。保存用 `showFloatingToast('已保存配置')`。|
 | `pages/settings_page.dart` | 进入 API 配置、外观、关于。|
 | `pages/history_page.dart` / `history_detail_page.dart` | 历史浏览。|

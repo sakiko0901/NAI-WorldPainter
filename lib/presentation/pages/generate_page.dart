@@ -6,12 +6,17 @@ import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
+import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
+import 'package:nai_huishi/presentation/widgets/img2img_crop_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_apply_parser.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_capsule_sheet.dart';
@@ -277,6 +282,7 @@ class _GeneratePageState extends State<GeneratePage> {
   int _promptSegmentIndex = 0; // 0: 正面, 1: 负面
   bool _isDrawingMask = false; // 手绘遮罩时禁用 ListView 滚动
   bool _isPreparingImg2Img = false;
+  String? _img2ImgOriginalPath;
 
   @override
   void initState() {
@@ -314,6 +320,10 @@ class _GeneratePageState extends State<GeneratePage> {
       TextEditingController();
   late final TextEditingController _inpaintNegativeController =
       TextEditingController();
+  late final FocusNode _promptFocusNode = FocusNode();
+  late final FocusNode _negativeFocusNode = FocusNode();
+  late final FocusNode _inpaintPromptFocusNode = FocusNode();
+  late final FocusNode _inpaintNegativeFocusNode = FocusNode();
   final GlobalKey _maskPreviewKey = GlobalKey();
   final GlobalKey _resultSectionKey = GlobalKey();
   int _knownResultCount = 0;
@@ -328,21 +338,25 @@ class _GeneratePageState extends State<GeneratePage> {
     _inpaintNegativeController.text = _vm.inpaintNegativePrompt;
   }
 
+  void _closeChatDrawer() {
+    setState(() => _isChatDrawerOpen = false);
+    _syncPromptControllers();
+  }
+
   void _onVmChanged() {
-    if (_promptController.text != _vm.prompt &&
-        FocusManager.instance.primaryFocus?.context?.widget is! EditableText) {
+    if (_promptController.text != _vm.prompt && !_promptFocusNode.hasFocus) {
       _promptController.text = _vm.prompt;
     }
     if (_negativeController.text != _vm.negativePrompt &&
-        FocusManager.instance.primaryFocus?.context?.widget is! EditableText) {
+        !_negativeFocusNode.hasFocus) {
       _negativeController.text = _vm.negativePrompt;
     }
     if (_inpaintPromptController.text != _vm.inpaintPrompt &&
-        FocusManager.instance.primaryFocus?.context?.widget is! EditableText) {
+        !_inpaintPromptFocusNode.hasFocus) {
       _inpaintPromptController.text = _vm.inpaintPrompt;
     }
     if (_inpaintNegativeController.text != _vm.inpaintNegativePrompt &&
-        FocusManager.instance.primaryFocus?.context?.widget is! EditableText) {
+        !_inpaintNegativeFocusNode.hasFocus) {
       _inpaintNegativeController.text = _vm.inpaintNegativePrompt;
     }
 
@@ -671,21 +685,27 @@ class _GeneratePageState extends State<GeneratePage> {
       }
     }
 
-    final pngBytes = img.encodePng(mask);
+    // NovelAI 渠道：编码为单通道灰度 PNG 并对齐 8×8 latent 网格。
+    // GPT / Nano Banana：保留 RGBA 透明语义，直接编码 PNG。
+    final pngBytes = transparentMaskProvider
+        ? img.encodePng(mask)
+        : ImageUtils.encodeNovelAiMask(mask);
 
-    // 统计 mask 中白色像素数量
+    // 统计 mask 中重绘像素数量（NovelAI 看 R 通道，GPT/Nano 看 alpha）。
     int whitePixelCount = 0;
     for (int y = 0; y < mask.height; y++) {
       for (int x = 0; x < mask.width; x++) {
         final pixel = mask.getPixel(x, y);
-        if (pixel.r == 255 && pixel.a == 255) {
+        final isRepaint =
+            transparentMaskProvider ? pixel.a == 0 : pixel.r == 255;
+        if (isRepaint) {
           whitePixelCount++;
         }
       }
     }
     final totalPixels = mask.width * mask.height;
     print(
-        '[NAI] mask: ${mask.width}x${mask.height}, white pixels: $whitePixelCount / $totalPixels (${(whitePixelCount / totalPixels * 100).toStringAsFixed(2)}%)');
+        '[NAI] mask: ${mask.width}x${mask.height}, repaint pixels: $whitePixelCount / $totalPixels (${(whitePixelCount / totalPixels * 100).toStringAsFixed(2)}%)');
     print('[NAI] mask PNG size: ${pngBytes.length} bytes');
 
     final dir = await Directory.systemTemp.createTemp('nai_mask_');
@@ -703,6 +723,10 @@ class _GeneratePageState extends State<GeneratePage> {
     _negativeController.dispose();
     _inpaintPromptController.dispose();
     _inpaintNegativeController.dispose();
+    _promptFocusNode.dispose();
+    _negativeFocusNode.dispose();
+    _inpaintPromptFocusNode.dispose();
+    _inpaintNegativeFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -799,9 +823,10 @@ class _GeneratePageState extends State<GeneratePage> {
                   // 角色控制
                   _CharacterControlSection(vm: _vm),
                   SizedBox(height: 16),
-                  if (_vm.isIkunEndpoint) ...[
+                  if (_vm.supportsVibeReferences) ...[
                     _CharacterReferenceSection(
                       vm: _vm,
+                      imagePicker: _imagePicker,
                       onShowMessage: _showToast,
                     ),
                     SizedBox(height: 16),
@@ -828,7 +853,7 @@ class _GeneratePageState extends State<GeneratePage> {
 
           if (_isChatDrawerOpen)
             ChatDrawer(
-              onClose: () => setState(() => _isChatDrawerOpen = false),
+              onClose: _closeChatDrawer,
             ),
 
           // 悬浮提示
@@ -1494,12 +1519,16 @@ class _GeneratePageState extends State<GeneratePage> {
           if (canAdd)
             OutlinedButton.icon(
               onPressed: () async {
-                final file =
-                    await _imagePicker.pickImage(source: ImageSource.gallery);
-                if (file != null) _vm.addGptImage(file.path);
+                final files = await _imagePicker.pickMultiImage();
+                if (files.isEmpty) return;
+                final added = _vm.addGptImages(files.map((file) => file.path));
+                if (!mounted) return;
+                if (added < files.length) {
+                  _showToast('已添加 $added 张参考图，自动忽略重复图片并限制最多 16 张');
+                }
               },
               icon: Icon(CupertinoIcons.plus, size: 16),
-              label: Text('添加参考图'),
+              label: Text('批量添加参考图'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
                 side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
@@ -1517,20 +1546,84 @@ class _GeneratePageState extends State<GeneratePage> {
     if (_isPreparingImg2Img) return;
     final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (picked == null || !mounted) return;
+    if (_vm.img2ImgMode == Img2ImgMode.tiled) {
+      await _useImg2ImgOriginal(picked.path);
+    } else {
+      final applied = await _cropImg2ImgSource(picked.path);
+      if (applied) _img2ImgOriginalPath = picked.path;
+    }
+  }
+
+  Future<void> _useImg2ImgOriginal(String sourcePath) async {
     setState(() => _isPreparingImg2Img = true);
     try {
-      final path = await ImageUtils.normalizeImg2ImgSource(File(picked.path));
+      final source = File(sourcePath);
+      final decoded = img.decodeImage(await source.readAsBytes());
+      if (decoded == null) {
+        throw const FormatException('无法读取图片，请选择有效的 PNG 或 JPEG 图片');
+      }
       if (!mounted) return;
-      _vm.setImg2ImgSourceImagePath(path);
-      final decoded = img.decodeImage(await File(path).readAsBytes());
-      _showToast(decoded == null
-          ? '源图已压缩'
-          : '源图已压缩为 ${decoded.width}×${decoded.height}');
+      _vm.setImg2ImgSourceImagePath(sourcePath);
+      _img2ImgOriginalPath = sourcePath;
     } catch (error) {
       if (mounted) _showToast('图片处理失败：$error');
     } finally {
       if (mounted) setState(() => _isPreparingImg2Img = false);
     }
+  }
+
+  Future<void> _recropImg2ImgSource() async {
+    final path = _img2ImgOriginalPath ?? _vm.img2imgSourceImagePath;
+    if (path == null || _isPreparingImg2Img) return;
+    await _cropImg2ImgSource(path);
+  }
+
+  Future<bool> _cropImg2ImgSource(String sourcePath) async {
+    var applied = false;
+    setState(() => _isPreparingImg2Img = true);
+    try {
+      final source = File(sourcePath);
+      final decoded = img.decodeImage(await source.readAsBytes());
+      if (decoded == null) {
+        throw const FormatException('无法读取图片，请选择有效的 PNG 或 JPEG 图片');
+      }
+      if (!mounted) return false;
+      setState(() => _isPreparingImg2Img = false);
+      final crop = await showDialog<Img2ImgCropResult>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => Img2ImgCropDialog(
+          imagePath: sourcePath,
+          imageWidth: decoded.width,
+          imageHeight: decoded.height,
+          initialTargetIndex: switch (_vm.selectedResolution) {
+            '832x1216' => 0,
+            '1216x832' => 2,
+            _ => 1,
+          },
+        ),
+      );
+      if (crop == null || !mounted) return false;
+      setState(() => _isPreparingImg2Img = true);
+      final path = await ImageUtils.cropImg2ImgSource(
+        source,
+        cropX: crop.x,
+        cropY: crop.y,
+        cropWidth: crop.width,
+        cropHeight: crop.height,
+        targetWidth: crop.targetWidth,
+        targetHeight: crop.targetHeight,
+      );
+      if (!mounted) return false;
+      _vm.setImg2ImgSourceImagePath(path);
+      _showToast('源图已裁剪为 ${crop.targetWidth}×${crop.targetHeight}');
+      applied = true;
+    } catch (error) {
+      if (mounted) _showToast('图片处理失败：$error');
+    } finally {
+      if (mounted) setState(() => _isPreparingImg2Img = false);
+    }
+    return applied;
   }
 
   Future<void> _pickImage({required bool isMask}) async {
@@ -1723,6 +1816,7 @@ class _GeneratePageState extends State<GeneratePage> {
 
   Widget _buildPromptField({
     required TextEditingController controller,
+    required FocusNode focusNode,
     required String hintText,
     required ValueChanged<String> onChanged,
     required Color textColor,
@@ -1733,6 +1827,7 @@ class _GeneratePageState extends State<GeneratePage> {
       children: [
         TextField(
           controller: controller,
+          focusNode: focusNode,
           minLines: 7,
           maxLines: 14,
           style: TextStyle(
@@ -1795,6 +1890,7 @@ class _GeneratePageState extends State<GeneratePage> {
         padding: const EdgeInsets.all(16),
         child: TextField(
           controller: _promptController,
+          focusNode: _promptFocusNode,
           minLines: 7,
           maxLines: 14,
           style: TextStyle(fontSize: 14, height: 1.5),
@@ -1875,6 +1971,7 @@ class _GeneratePageState extends State<GeneratePage> {
               children: [
                 _buildPromptField(
                   controller: _promptController,
+                  focusNode: _promptFocusNode,
                   hintText: '描述你想要的画面...',
                   onChanged: _vm.updatePrompt,
                   textColor: Theme.of(context).colorScheme.onSurface,
@@ -1883,6 +1980,7 @@ class _GeneratePageState extends State<GeneratePage> {
                 ),
                 _buildPromptField(
                   controller: _negativeController,
+                  focusNode: _negativeFocusNode,
                   hintText: '描述你不想要的画面...',
                   onChanged: _vm.updateNegativePrompt,
                   textColor: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1915,6 +2013,7 @@ class _GeneratePageState extends State<GeneratePage> {
         padding: const EdgeInsets.all(16),
         child: TextField(
           controller: _inpaintPromptController,
+          focusNode: _inpaintPromptFocusNode,
           minLines: 7,
           maxLines: 14,
           style: TextStyle(fontSize: 14, height: 1.5),
@@ -2010,6 +2109,7 @@ class _GeneratePageState extends State<GeneratePage> {
               children: [
                 _buildPromptField(
                   controller: _inpaintPromptController,
+                  focusNode: _inpaintPromptFocusNode,
                   hintText: '描述重绘区域想要的画面...',
                   onChanged: _vm.updateInpaintPrompt,
                   textColor: Theme.of(context).colorScheme.onSurface,
@@ -2018,6 +2118,7 @@ class _GeneratePageState extends State<GeneratePage> {
                 ),
                 _buildPromptField(
                   controller: _inpaintNegativeController,
+                  focusNode: _inpaintNegativeFocusNode,
                   hintText: '描述重绘区域不想要的画面...',
                   onChanged: _vm.updateInpaintNegativePrompt,
                   textColor: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -2082,19 +2183,30 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  Widget _buildImg2ImgSourceField() {
+  Widget _buildImg2ImgSection() {
     final path = _vm.img2imgSourceImagePath;
     final file = path == null ? null : File(path);
     final hasImage = file?.existsSync() ?? false;
     final theme = Theme.of(context);
+    final isTiled = _vm.img2ImgMode == Img2ImgMode.tiled;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('图生图源图',
+        Text('图生图',
             style: TextStyle(
                 fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 8),
+        SegmentedButton<Img2ImgMode>(
+          segments: const [
+            ButtonSegment(value: Img2ImgMode.normal, label: Text('普通图生图')),
+            ButtonSegment(value: Img2ImgMode.tiled, label: Text('分块高清重绘')),
+          ],
+          selected: {_vm.img2ImgMode},
+          onSelectionChanged: (selection) =>
+              _vm.updateImg2ImgMode(selection.first),
+        ),
+        const SizedBox(height: 12),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(12),
@@ -2108,20 +2220,30 @@ class _GeneratePageState extends State<GeneratePage> {
           child: hasImage
               ? Row(
                   children: [
-                    ClipRRect(
+                    InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.file(file!,
-                          width: 72, height: 72, fit: BoxFit.cover),
+                      onTap: _isPreparingImg2Img || isTiled
+                          ? null
+                          : _recropImg2ImgSource,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.file(file!,
+                            width: 72, height: 72, fit: BoxFit.cover),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('已启用图生图',
-                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text(isTiled ? '已选择分块原图' : '已启用图生图',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
                           const SizedBox(height: 4),
-                          Text('已自动压缩至 1M 像素以内并按 64px 对齐',
+                          Text(
+                              isTiled
+                                  ? '将整张原图分块高清重绘，约放大 1.6 倍'
+                                  : '点击缩略图可重新选择裁剪区域',
                               style: TextStyle(
                                   fontSize: 11,
                                   color: theme.colorScheme.onSurfaceVariant)),
@@ -2156,7 +2278,9 @@ class _GeneratePageState extends State<GeneratePage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(CupertinoIcons.photo_on_rectangle, size: 17),
-                  label: Text(_isPreparingImg2Img ? '正在压缩图片…' : '上传图生图源图'),
+                  label: Text(_isPreparingImg2Img
+                      ? '正在压缩图片…'
+                      : (isTiled ? '上传分块原图' : '上传图生图源图')),
                 ),
         ),
         if (hasImage) ...[
@@ -2164,14 +2288,21 @@ class _GeneratePageState extends State<GeneratePage> {
           _PremiumSlider(
             label: '图生图强度',
             value: _vm.img2imgStrength,
-            min: 0.01,
-            max: 1.0,
-            divisions: 99,
+            min: isTiled ? 0.1 : 0.01,
+            max: isTiled ? 0.6 : 1.0,
+            divisions: isTiled ? 50 : 99,
             onChanged: _vm.updateImg2ImgStrength,
           ),
-          Text('数值越高，生成结果越偏离原图。',
+          Text(isTiled ? '数值过高会导致块间不一致，建议 0.2–0.4' : '数值越高，生成结果越偏离原图。',
               style: TextStyle(
                   fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+          if (isTiled)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('自动按 640×640 分块、320 重叠，每块输出 1024×1024，处理耗时较长。',
+                  style: TextStyle(
+                      fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+            ),
         ],
       ],
     );
@@ -2312,7 +2443,7 @@ class _GeneratePageState extends State<GeneratePage> {
         if ((_vm.is7877Endpoint || _vm.isIkunEndpoint) &&
             _vm.generationMode == GenerationMode.textToImage) ...[
           SizedBox(height: 20),
-          _buildImg2ImgSourceField(),
+          _buildImg2ImgSection(),
         ],
         if (_vm.is7877Endpoint)
           Padding(
@@ -2356,10 +2487,12 @@ class _GeneratePageState extends State<GeneratePage> {
             showValueIndicator: ShowValueIndicator.never,
           ),
           child: Slider(
-            value: _vm.batchCount.toDouble().clamp(1.0, 15.0),
+            value: _vm.batchCount
+                .toDouble()
+                .clamp(1.0, AppConstants.maxBatchCount.toDouble()),
             min: 1,
-            max: 15,
-            divisions: 14,
+            max: AppConstants.maxBatchCount.toDouble(),
+            divisions: AppConstants.maxBatchCount - 1,
             onChanged: _vm.isGenerating
                 ? null
                 : (v) => _vm.updateBatchCount(v.round()),
@@ -2626,7 +2759,9 @@ class _GeneratePageState extends State<GeneratePage> {
                 Expanded(
                   child: GestureDetector(
                     onTap: _vm.isGenerating
-                        ? () => _vm.cancelBatch()
+                        ? () => _vm.isTiledImg2Img
+                            ? _vm.cancelTiledImg2Img()
+                            : _vm.cancelBatch()
                         : () => _vm.generate(),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -2668,11 +2803,15 @@ class _GeneratePageState extends State<GeneratePage> {
                                               .onSurface)),
                                   SizedBox(width: 12),
                                   Text(
-                                    _vm.isBatchCancelling
-                                        ? '取消中…'
-                                        : (_vm.batchCount > 1
-                                            ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
-                                            : '取消生成'),
+                                    _vm.isTiledImg2Img
+                                        ? (_vm.isTiledCancelling
+                                            ? '取消中…'
+                                            : '取消分块重绘 ${_vm.tiledCompleted}/${_vm.tiledTotal}')
+                                        : (_vm.isBatchCancelling
+                                            ? '取消中…'
+                                            : (_vm.batchCount > 1
+                                                ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
+                                                : '取消生成')),
                                     style: TextStyle(
                                         color: Theme.of(context)
                                             .colorScheme
@@ -2911,159 +3050,326 @@ class _PremiumSlider extends StatelessWidget {
   }
 }
 
-class _CharacterReferenceSection extends StatefulWidget {
+class _CharacterReferenceSection extends StatelessWidget {
   final GenerationViewModel vm;
+  final ImagePicker imagePicker;
   final ValueChanged<String> onShowMessage;
 
   const _CharacterReferenceSection({
     required this.vm,
+    required this.imagePicker,
     required this.onShowMessage,
   });
 
   @override
-  State<_CharacterReferenceSection> createState() =>
-      _CharacterReferenceSectionState();
-}
-
-class _CharacterReferenceSectionState
-    extends State<_CharacterReferenceSection> {
-  int _mode = 0;
-
-  GenerationViewModel get vm => widget.vm;
-
-  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = Theme.of(context).colorScheme;
+    final vibeActive =
+        !vm.supportsPreciseReferences || vm.referenceMode == ReferenceMode.vibe;
     return _PremiumAccordion(
-      title: '氛围转移与精密参照图像',
+      title: '参考图像',
       icon: CupertinoIcons.photo_on_rectangle,
       initiallyExpanded: false,
       children: [
-        SegmentedButton<int>(
-          segments: const [
-            ButtonSegment(
-              value: 0,
-              label: Text('氛围转移'),
-              icon: Icon(CupertinoIcons.photo),
-            ),
-            ButtonSegment(
-              value: 1,
-              label: Text('精密参照图像'),
-              icon: Icon(CupertinoIcons.person_crop_rectangle),
-            ),
-          ],
-          selected: {_mode},
-          onSelectionChanged: (value) => setState(() => _mode = value.first),
-        ),
-        const SizedBox(height: 14),
-        if (_mode == 0) ...[
-          Text(
-            '最多使用一张全局参考图，影响整张图的画风与视觉特征。添加后会清除精密参照图像。',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.5,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final image =
-                  await ImagePicker().pickImage(source: ImageSource.gallery);
-              if (image == null) return;
-              final cleared = vm.preciseReferences.isNotEmpty;
-              await vm.setVibeReference(image.path);
-              if (cleared) widget.onShowMessage('已切换为氛围转移并清除精密参照图像');
-            },
-            icon: Icon(
-              vm.vibeReferences.isEmpty
-                  ? CupertinoIcons.photo
-                  : CupertinoIcons.arrow_2_circlepath,
-              size: 17,
-            ),
-            label: Text(
-              vm.vibeReferences.isEmpty ? '选择氛围参考图' : '替换氛围参考图',
-            ),
-          ),
-          if (vm.vibeReferences.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: _ReferenceImageCard(
-                image: vm.vibeReferences.first,
-                onReplace: () async {
-                  final picked = await ImagePicker()
-                      .pickImage(source: ImageSource.gallery);
-                  if (picked != null) await vm.setVibeReference(picked.path);
-                },
-                onUpdate: vm.updateVibeReference,
-                onDelete: vm.removeVibeReference,
-              ),
-            ),
-        ] else ...[
-          Row(
+        _ReferenceModePanel(
+          title: '氛围转移',
+          icon: CupertinoIcons.photo,
+          isActive: vibeActive,
+          onTap: () => _switchMode(context, ReferenceMode.vibe),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(CupertinoIcons.photo_on_rectangle,
-                  color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('精密参照图像',
-                        style: TextStyle(fontWeight: FontWeight.w800)),
-                    Text(
-                      '使用特定图像精密控制生成结果',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+              OutlinedButton.icon(
+                onPressed: () => _showVibeSourceMenu(context),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.primary,
+                  side: BorderSide(
+                    color: colors.primary.withValues(alpha: 0.45),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                icon: Icon(
+                  vm.vibeReferences.isEmpty
+                      ? CupertinoIcons.photo
+                      : CupertinoIcons.arrow_2_circlepath,
+                  size: 17,
+                ),
+                label: Text(
+                  vm.vibeReferences.isEmpty ? '选择氛围参考图' : '替换氛围参考图',
                 ),
               ),
-              IconButton.filledTonal(
-                tooltip: '导入参照图像',
-                onPressed: _addPreciseReference,
-                icon: const Icon(CupertinoIcons.arrow_up_square, size: 19),
-              ),
+              if (vm.vibeReferences.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: _ReferenceImageCard(
+                    image: vm.vibeReferences.first,
+                    onReplace: () => _showVibeSourceMenu(context),
+                    onUpdate: vm.updateVibeReference,
+                    onDelete: vm.removeVibeReference,
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            '参照图与角色卡相互独立，支持 NovelAI V4/V4.5（不含 -limit）；每张参考图、每个样本加 5 Anlas。',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.5,
-              color: theme.colorScheme.onSurfaceVariant,
+        ),
+        if (vm.supportsPreciseReferences) ...[
+          const SizedBox(height: 12),
+          _ReferenceModePanel(
+            title: '精密参照图像',
+            icon: CupertinoIcons.person_crop_rectangle,
+            isActive: !vibeActive,
+            onTap: () => _switchMode(context, ReferenceMode.precise),
+            trailing: IconButton.outlined(
+              tooltip: '导入参照图像',
+              onPressed: () => _addPreciseReference(),
+              style: IconButton.styleFrom(
+                foregroundColor: colors.primary,
+                side: BorderSide(
+                  color: colors.primary.withValues(alpha: 0.45),
+                ),
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(CupertinoIcons.add, size: 19),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final entry in vm.preciseReferences.asMap().entries)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _PreciseReferenceCard(
+                      image: entry.value,
+                      onReplace: () => _replacePreciseReference(entry.key),
+                      onUpdate: (reference) =>
+                          vm.updatePreciseReference(entry.key, reference),
+                      onDelete: () => vm.removePreciseReference(entry.key),
+                    ),
+                  ),
+              ],
             ),
           ),
-          for (final entry in vm.preciseReferences.asMap().entries)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: _PreciseReferenceCard(
-                image: entry.value,
-                onReplace: () => _replacePreciseReference(entry.key),
-                onUpdate: (reference) =>
-                    vm.updatePreciseReference(entry.key, reference),
-                onDelete: () => vm.removePreciseReference(entry.key),
-              ),
-            ),
         ],
       ],
     );
   }
 
+  Future<void> _switchMode(BuildContext context, ReferenceMode target) async {
+    if (vm.referenceMode == target) return;
+    final hasCurrentReferences = vm.referenceMode == ReferenceMode.vibe
+        ? vm.vibeReferences.isNotEmpty
+        : vm.preciseReferences.isNotEmpty;
+    if (hasCurrentReferences) {
+      final targetLabel = target == ReferenceMode.vibe ? '氛围转移' : '精密参照图像';
+      final currentLabel =
+          vm.referenceMode == ReferenceMode.vibe ? '氛围参考图' : '精密参照图像';
+      final confirmed = await showCupertinoDialog<bool>(
+        context: context,
+        builder: (dialogContext) => CupertinoAlertDialog(
+          title: Text('切换为$targetLabel？'),
+          content: Text('切换后会清空当前的$currentLabel。'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            CupertinoDialogAction(
+              isDestructiveAction: true,
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('清空并切换'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    await vm.switchReferenceMode(target);
+    if (!context.mounted) return;
+    onShowMessage(target == ReferenceMode.vibe ? '已切换为氛围转移' : '已切换为精密参照图像');
+  }
+
+  Future<void> _showVibeSourceMenu(BuildContext context) async {
+    final source = await showCupertinoModalPopup<String>(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: const Text('选择氛围来源'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(context, 'image'),
+            child: const Text('选择本地图片'),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(context, 'library'),
+            child: const Text('从 Vibe 编码库选择'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+      ),
+    );
+    if (source == 'image') {
+      await _pickVibe();
+    } else if (source == 'library' && context.mounted) {
+      final selected = await _showVibeLibraryPicker(context);
+      if (selected != null) await vm.selectVibeEncoding(selected);
+    }
+  }
+
+  Future<VibeEncoding?> _showVibeLibraryPicker(BuildContext context) async {
+    final viewModel = sl<VibeEncodingViewModel>();
+    await viewModel.load();
+    if (!context.mounted) return null;
+    return showModalBottomSheet<VibeEncoding>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => ListenableBuilder(
+        listenable: viewModel,
+        builder: (context, _) {
+          if (viewModel.encodings.isEmpty) {
+            return const SizedBox(
+              height: 180,
+              child: Center(child: Text('暂无已保存的氛围编码')),
+            );
+          }
+          return GridView.builder(
+            padding: const EdgeInsets.all(16),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 0.78,
+            ),
+            itemCount: viewModel.encodings.length,
+            itemBuilder: (context, index) {
+              final encoding = viewModel.encodings[index];
+              return InkWell(
+                onTap: () => Navigator.pop(context, encoding),
+                borderRadius: BorderRadius.circular(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.file(
+                          File(encoding.thumbnailPath),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            CupertinoIcons.photo,
+                            size: 32,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      encoding.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _pickVibe() async {
+    final image = await imagePicker.pickImage(source: ImageSource.gallery);
+    if (image != null) await vm.setVibeReference(image.path);
+  }
+
   Future<void> _addPreciseReference() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    final clearedVibe = vm.vibeReferences.isNotEmpty;
-    await vm.addPreciseReference(picked.path);
-    if (clearedVibe) widget.onShowMessage('已切换为精密参照图像并清除氛围图');
+    final picked = await imagePicker.pickImage(source: ImageSource.gallery);
+    if (picked != null) await vm.addPreciseReference(picked.path);
   }
 
   Future<void> _replacePreciseReference(int index) async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final picked = await imagePicker.pickImage(source: ImageSource.gallery);
     if (picked != null) await vm.replacePreciseReference(index, picked.path);
+  }
+}
+
+class _ReferenceModePanel extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback onTap;
+  final Widget child;
+  final Widget? trailing;
+
+  const _ReferenceModePanel({
+    required this.title,
+    required this.icon,
+    required this.isActive,
+    required this.onTap,
+    required this.child,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final foreground = isActive ? colors.primary : colors.onSurfaceVariant;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: isActive ? null : onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isActive
+                ? colors.primary.withValues(alpha: 0.1)
+                : colors.surfaceContainerHighest.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isActive
+                  ? colors.primary
+                  : colors.outlineVariant.withValues(alpha: 0.55),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 19, color: foreground),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: foreground,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (isActive && trailing != null) trailing!,
+                  if (!isActive)
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: colors.onSurfaceVariant,
+                    ),
+                ],
+              ),
+              if (isActive) ...[
+                const SizedBox(height: 12),
+                child,
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -3090,6 +3396,10 @@ class _ReferenceImageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final previewPath = image.thumbnailPath?.isNotEmpty == true
+        ? image.thumbnailPath!
+        : image.path;
+    final sourceLabel = image.vibeLibraryId != null ? '已保存编码' : '首次生成时自动编码并保存';
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -3110,7 +3420,7 @@ class _ReferenceImageCard extends StatelessWidget {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
-                    File(image.path),
+                    File(previewPath),
                     width: 82,
                     height: 108,
                     fit: BoxFit.cover,
@@ -3130,6 +3440,26 @@ class _ReferenceImageCard extends StatelessWidget {
               Expanded(
                 child: Column(
                   children: [
+                    if (image.title?.isNotEmpty == true)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          image.title!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        sourceLabel,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                     _ReferenceSlider(
                       label: '参考强度',
                       value: image.strength,
@@ -3200,9 +3530,15 @@ class _PreciseReferenceCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              IconButton.filledTonal(
+              IconButton.outlined(
                 tooltip: '删除参照图像',
                 onPressed: onDelete,
+                style: IconButton.styleFrom(
+                  foregroundColor: theme.colorScheme.primary,
+                  side: BorderSide(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.45),
+                  ),
+                ),
                 icon: const Icon(CupertinoIcons.trash, size: 17),
               ),
               const SizedBox(width: 8),
@@ -3287,17 +3623,6 @@ class _PreciseReferenceCard extends StatelessWidget {
                           onUpdate(image.copyWith(strength: value)),
                     ),
                     const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '忠实度固定为 1.0，请通过强度调节参考效果。',
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.4,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(

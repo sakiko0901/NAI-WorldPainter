@@ -147,6 +147,23 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              SegmentedButton<DirectorChannel>(
+                segments: const [
+                  ButtonSegment(
+                    value: DirectorChannel.gateway7877,
+                    label: Text('7877'),
+                  ),
+                  ButtonSegment(
+                    value: DirectorChannel.ikun,
+                    label: Text('ikun'),
+                  ),
+                ],
+                selected: {_vm.selectedChannel},
+                onSelectionChanged: disabled
+                    ? null
+                    : (selection) => _vm.selectChannel(selection.first),
+              ),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   _thumbnail(colors),
@@ -292,8 +309,8 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
           ? _vm.selectedModel
           : null,
       isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'ikun NovelAI 模型',
+      decoration: InputDecoration(
+        labelText: '${_vm.channelName} NovelAI 模型',
         isDense: true,
       ),
       hint: const Text('无可用模型'),

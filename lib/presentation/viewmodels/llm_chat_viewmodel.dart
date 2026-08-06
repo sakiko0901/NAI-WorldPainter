@@ -438,36 +438,6 @@ class LlmChatViewModel extends ChangeNotifier {
         });
       }
 
-      // 自动图片解析：用户发图时跑 WD-Tagger，把 tag 结果作为 system 上下文注入
-      if (imageBase64 != null) {
-        final tagContext = await _autoAnalyzeImageTags(imageBase64);
-        if (tagContext.isNotEmpty) {
-          payload.add({'role': 'system', 'content': tagContext});
-        }
-      }
-
-      // 历史消息
-      for (final m in historyLimited) {
-        if (m.id == null) continue;
-        // 跳过刚落库的 user 消息（最后一条），它在后面单独加入
-        payload.add({'role': m.roleString, 'content': m.content});
-      }
-
-      // 当前用户消息（含图片支持 vision）
-      if (imageBase64 != null) {
-        final parts = <Map<String, dynamic>>[];
-        if (trimmed.isNotEmpty) {
-          parts.add({'type': 'text', 'text': trimmed});
-        }
-        parts.add({
-          'type': 'image_url',
-          'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
-        });
-        payload.add({'role': 'user', 'content': parts});
-      } else {
-        payload.add({'role': 'user', 'content': trimmed});
-      }
-
       // 选择使用哪个模型 profile
       // 含图：必须用 vision profile（已配置）；未配置则报错，不静默回退 main（避免走错模型浪费 token）
       // 无图：使用 main profile
@@ -480,9 +450,61 @@ class LlmChatViewModel extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      final useConfig = (imageBase64 != null && visionConfig.isConfigured)
-          ? visionConfig
-          : mainConfig;
+
+      // ── Bug 1 修复：vision 双阶段识图 ──
+      // 含图路径不再让 vision 模型跑带 tools 的 agent（部分 vision 中转站把 OpenAI
+      // tool 消息转 Gemini functionResponse 时丢 name 字段，触发 400 错误）。
+      // 改为：阶段 A vision 纯识图（无 tools），阶段 B 把识图文本 + WD-Tagger tag
+      // 回灌给 main 模型走 agent 工具链。
+      String? visionDescription;
+      String wdTagContext = '';
+      if (imageBase64 != null) {
+        // 先跑 WD-Tagger，拿 tag 文本作为阶段 A 失败时的 fallback
+        wdTagContext = await _autoAnalyzeImageTags(imageBase64);
+        visionDescription = await _describeImageWithVision(
+          visionConfig: visionConfig,
+          imageBase64: imageBase64,
+          userText: trimmed,
+        );
+        if (visionDescription.isEmpty) {
+          // vision 失败：用 WD-Tagger tag 兜底，不阻断流程
+          visionDescription = wdTagContext.isNotEmpty
+              ? '识图模型不可用。WD-Tagger 检测到以下 tag：\n$wdTagContext'
+              : '识图模型不可用，且 WD-Tagger 也未检测到 tag。';
+        }
+      }
+
+      // 历史消息
+      for (final m in historyLimited) {
+        if (m.id == null) continue;
+        // 跳过刚落库的 user 消息（最后一条），它在后面单独加入
+        payload.add({'role': m.roleString, 'content': m.content});
+      }
+
+      // 当前用户消息
+      // 含图路径：把识图文本 + WD-Tagger tag 拼成纯文本 user 消息回灌给 main agent
+      // 不再使用 image_url（main 模型多数是文本模型，且避免中转站格式 bug）
+      if (imageBase64 != null) {
+        final buf = StringBuffer();
+        buf.writeln('用户上传了图片，已自动识别如下内容：');
+        buf.writeln(visionDescription);
+        if (wdTagContext.isNotEmpty) {
+          buf.writeln();
+          buf.writeln(wdTagContext);
+        }
+        if (trimmed.isNotEmpty) {
+          buf.writeln();
+          buf.writeln('用户原始诉求：$trimmed');
+        } else {
+          buf.writeln();
+          buf.writeln('用户未附加文字诉求，请基于图片内容编排提示词并写入对应框。');
+        }
+        payload.add({'role': 'user', 'content': buf.toString()});
+      } else {
+        payload.add({'role': 'user', 'content': trimmed});
+      }
+
+      final useConfig = mainConfig;
 
       // 创建 AgentLoop 实例，注入本次的 onEvent + onRequireConfirmation 回调
       final agentLoop = _agentLoopFactory();
@@ -533,15 +555,34 @@ class LlmChatViewModel extends ChangeNotifier {
 
       // 落库 user + assistant（含 tool_calls JSON）
       final timeline = result.timeline;
+      final toolNamesSet = timeline.map((e) => e.toolName).toSet();
+      // Bug 3 修复：检测"有 read 无 write"——用户含修改类动词但 agent 只读未写
+      final hasReadNoWrite = toolNamesSet.contains('read_current_prompts') &&
+          !toolNamesSet.contains('write_prompt');
+      final hasModifyVerb = _containsModifyVerb(trimmed);
+
       String statusText;
       if (result.failed) {
-        statusText = 'Agent 失败：${result.error ?? "未知错误"}';
+        if (hasReadNoWrite && hasModifyVerb) {
+          statusText =
+              'Agent 失败：读取了提示词但未完成写入。${result.error ?? "未知错误"}。建议重试或换更具体的指令。';
+        } else {
+          statusText = 'Agent 失败：${result.error ?? "未知错误"}';
+        }
       } else if (result.hitMaxIterations) {
-        statusText = 'Agent 达到迭代上限';
+        if (hasReadNoWrite && hasModifyVerb) {
+          statusText = 'Agent 读取了提示词但未完成写入（已达迭代上限）。建议重试或换更具体的指令。';
+        } else {
+          statusText = 'Agent 达到迭代上限';
+        }
       } else if (timeline.isEmpty) {
         statusText = 'Agent 完成';
+      } else if (hasReadNoWrite && hasModifyVerb) {
+        // 正常完成但没写入——可能是 LLM 误解 read 即终点
+        statusText =
+            'Agent 调用了 read 但未写入提示词。建议明确说"把改动写入正向框"或重试。';
       } else {
-        final toolNames = timeline.map((e) => e.toolName).toSet().join(', ');
+        final toolNames = toolNamesSet.join(', ');
         statusText = 'Agent 完成，调用工具：$toolNames';
       }
 
@@ -716,6 +757,59 @@ class LlmChatViewModel extends ChangeNotifier {
         await tempFile?.delete();
       } catch (_) {}
     }
+  }
+
+  /// Bug 1 修复：用 vision 模型对图片做纯描述（不调用 tools）。
+  /// 失败时返回空字符串，由调用方 fallback 到 WD-Tagger tag。
+  /// 设计动机：部分 vision 中转站把 OpenAI tool 消息转 Gemini functionResponse
+  /// 时丢 name 字段，触发 400 错误。本方法只发 system + user(图) 两条消息，
+  /// 不带 tools 字段，规避中转站的 tool 格式转换 bug。
+  Future<String> _describeImageWithVision({
+    required LlmRoleConfig visionConfig,
+    required String imageBase64,
+    required String userText,
+  }) async {
+    if (!visionConfig.isConfigured) return '';
+    try {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'system', 'content': AppConstants.defaultVisionDescribePrompt},
+        {
+          'role': 'user',
+          'content': [
+            if (userText.isNotEmpty)
+              {'type': 'text', 'text': userText},
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
+            },
+          ],
+        },
+      ];
+      // _apiServiceSingleton 实际是 LlmApiService 单例（DI 注入），
+      // dynamic 调用走 Dart 动态分发。
+      final desc = await (_apiServiceSingleton as dynamic).chatCompletions(
+        apiKey: visionConfig.apiKey,
+        baseUrl: visionConfig.baseUrl,
+        model: visionConfig.model,
+        messages: messages,
+      ) as String;
+      return desc.trim();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('describeImageWithVision failed: $e');
+      }
+      return '';
+    }
+  }
+
+  /// Bug 3 修复：检测用户原文是否含修改类动词。
+  /// 用于判断"有 read 无 write"是否为误判——纯查询（"读一下"）不应触发警告。
+  static final RegExp _modifyVerbPattern = RegExp(
+    r'改|加|换|删|调整|变成|修改|重新编排|重排|替换|覆盖|新增|去掉|删除|添加',
+  );
+
+  bool _containsModifyVerb(String text) {
+    return _modifyVerbPattern.hasMatch(text);
   }
 }
 

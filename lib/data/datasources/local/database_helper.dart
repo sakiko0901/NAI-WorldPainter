@@ -108,6 +108,26 @@ class DatabaseHelper {
     await _createLlmTables(db);
     await _createPromptAssistantTables(db);
     await _createArtistPromptTables(db);
+    await _createVibeEncodingTables(db);
+  }
+
+  Future<void> _createVibeEncodingTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS vibe_encodings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        thumbnail_path TEXT NOT NULL,
+        source_image_path TEXT,
+        encoded_vibe TEXT NOT NULL,
+        encoded_model TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_vibe_encodings_updated '
+      'ON vibe_encodings(updated_at DESC)',
+    );
   }
 
   Future<void> _createLlmTables(Database db) async {
@@ -303,6 +323,18 @@ class DatabaseHelper {
     }
     if (oldVersion < 12) {
       await _ensureGenerationHistoryColumns(db);
+    }
+    if (oldVersion < 13) {
+      await _createVibeEncodingTables(db);
+    }
+    if (oldVersion < 14) {
+      final table = await db.rawQuery('PRAGMA table_info(vibe_encodings)');
+      final columns = table.map((column) => column['name'] as String).toSet();
+      if (!columns.contains('source_image_path')) {
+        await db.execute(
+          'ALTER TABLE vibe_encodings ADD COLUMN source_image_path TEXT',
+        );
+      }
     }
   }
 

@@ -5,6 +5,11 @@ enum GenerationMode {
   inpainting,
 }
 
+enum ReferenceMode {
+  vibe,
+  precise,
+}
+
 enum ImageProviderType {
   novelAi,
   gpt,
@@ -48,6 +53,7 @@ class GenerationTask extends Equatable {
   final ImageProviderType providerType;
   final List<String>? gptImagePaths;
   final String? nanoImageSize;
+  final bool isInternal;
 
   const GenerationTask({
     this.id,
@@ -86,6 +92,7 @@ class GenerationTask extends Equatable {
     this.providerType = ImageProviderType.novelAi,
     this.gptImagePaths,
     this.nanoImageSize,
+    this.isInternal = false,
   });
 
   GenerationTask copyWith({
@@ -125,6 +132,7 @@ class GenerationTask extends Equatable {
     ImageProviderType? providerType,
     List<String>? gptImagePaths,
     String? nanoImageSize,
+    bool? isInternal,
   }) {
     return GenerationTask(
       id: id ?? this.id,
@@ -164,6 +172,7 @@ class GenerationTask extends Equatable {
       providerType: providerType ?? this.providerType,
       gptImagePaths: gptImagePaths ?? this.gptImagePaths,
       nanoImageSize: nanoImageSize ?? this.nanoImageSize,
+      isInternal: isInternal ?? this.isInternal,
     );
   }
 
@@ -219,28 +228,47 @@ class CharacterReferenceImage extends Equatable {
   final String path;
   final double strength;
   final double informationExtracted;
+  final int? vibeLibraryId;
+  final String? encodedVibe;
+  final String? thumbnailPath;
+  final String? title;
 
   const CharacterReferenceImage({
     required this.path,
     this.strength = 0.6,
     this.informationExtracted = 1.0,
+    this.vibeLibraryId,
+    this.encodedVibe,
+    this.thumbnailPath,
+    this.title,
   });
 
   CharacterReferenceImage copyWith({
     String? path,
     double? strength,
     double? informationExtracted,
+    int? vibeLibraryId,
+    String? encodedVibe,
+    String? thumbnailPath,
+    String? title,
   }) =>
       CharacterReferenceImage(
         path: path ?? this.path,
         strength: strength ?? this.strength,
         informationExtracted: informationExtracted ?? this.informationExtracted,
+        vibeLibraryId: vibeLibraryId ?? this.vibeLibraryId,
+        encodedVibe: encodedVibe ?? this.encodedVibe,
+        thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+        title: title ?? this.title,
       );
 
   Map<String, dynamic> toJson() => {
         'path': path,
         'strength': strength,
         'information_extracted': informationExtracted,
+        if (vibeLibraryId != null) 'vibe_library_id': vibeLibraryId,
+        if (thumbnailPath != null) 'thumbnail_path': thumbnailPath,
+        if (title != null) 'title': title,
       };
 
   factory CharacterReferenceImage.fromJson(Map<String, dynamic> json) =>
@@ -249,10 +277,21 @@ class CharacterReferenceImage extends Equatable {
         strength: (json['strength'] as num?)?.toDouble() ?? 0.6,
         informationExtracted:
             (json['information_extracted'] as num?)?.toDouble() ?? 1.0,
+        vibeLibraryId: (json['vibe_library_id'] as num?)?.toInt(),
+        thumbnailPath: json['thumbnail_path'] as String?,
+        title: json['title'] as String?,
       );
 
   @override
-  List<Object?> get props => [path, strength, informationExtracted];
+  List<Object?> get props => [
+        path,
+        strength,
+        informationExtracted,
+        vibeLibraryId,
+        encodedVibe,
+        thumbnailPath,
+        title,
+      ];
 }
 
 /// 多人物坐标规格

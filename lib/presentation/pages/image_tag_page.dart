@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/image_tag_result.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/image_tag_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
 /// 图片解析页面：导入图片 → 选择分析方式（NAI 元数据 / WD-Tagger）→ 选择标签 → 复制 / 导入文生图
@@ -85,14 +87,23 @@ class _ImageTagPageState extends State<ImageTagPage> {
     final parts = <String>[];
     if (positive.isNotEmpty) parts.add('【正向】\n$positive');
     if (negative.isNotEmpty) parts.add('【负向】\n$negative');
+    for (final entry in (r.characters ?? const <CharacterSpec>[]).indexed) {
+      final character = entry.$2;
+      if (character.prompt.trim().isNotEmpty) {
+        parts.add('【角色 ${entry.$1 + 1}】\n${character.prompt.trim()}');
+      }
+      if (character.uc?.trim().isNotEmpty == true) {
+        parts.add('【角色 ${entry.$1 + 1} 负向】\n${character.uc!.trim()}');
+      }
+    }
     if (parts.isEmpty) {
-      showFloatingToast(context, '没有选中的标签',
+      showFloatingToast(context, '没有可复制的标签',
           icon: CupertinoIcons.exclamationmark_circle);
       return;
     }
     await Clipboard.setData(ClipboardData(text: parts.join('\n\n')));
     if (!mounted) return;
-    showFloatingToast(context, '已复制选中标签', icon: CupertinoIcons.doc_on_doc);
+    showFloatingToast(context, '已复制全部解析内容', icon: CupertinoIcons.doc_on_doc);
   }
 
   Future<void> _copyTags(String text, {String label = '已复制'}) async {
@@ -467,6 +478,10 @@ class _ImageTagPageState extends State<ImageTagPage> {
           _buildMultiCharacterBlock(r, isDark),
           const SizedBox(height: 16),
         ],
+        if (r.vibeEncodings.isNotEmpty) ...[
+          _buildVibeEncodingsBlock(r.vibeEncodings, isDark),
+          const SizedBox(height: 16),
+        ],
         const SizedBox(height: 6),
         _buildBottomActions(),
       ],
@@ -745,6 +760,122 @@ class _ImageTagPageState extends State<ImageTagPage> {
           ),
         ],
       ],
+    );
+  }
+
+  Future<void> _saveVibeEncodings(List<String> encodings) async {
+    final sourceImagePath = _vm.imagePath;
+    if (sourceImagePath == null || sourceImagePath.isEmpty) {
+      showFloatingToast(context, '请先选择图片', icon: CupertinoIcons.photo);
+      return;
+    }
+    if (encodings.isEmpty) return;
+    final fileName = sourceImagePath.replaceAll('\\', '/').split('/').last;
+    final dot = fileName.lastIndexOf('.');
+    final titlePrefix = dot > 0 ? fileName.substring(0, dot) : fileName;
+    try {
+      final viewModel = sl<VibeEncodingViewModel>();
+      final created = await viewModel.createManyFromEncodings(
+        titlePrefix: titlePrefix,
+        sourceImagePath: sourceImagePath,
+        encodedVibes: encodings,
+      );
+      if (!mounted) return;
+      showFloatingToast(
+        context,
+        '已保存 ${created.length} 个氛围编码',
+        icon: CupertinoIcons.checkmark_circle_fill,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showFloatingToast(
+        context,
+        '保存氛围编码失败：$e',
+        icon: CupertinoIcons.exclamationmark_circle,
+      );
+    }
+  }
+
+  Widget _buildVibeEncodingsBlock(List<String> encodings, bool isDark) {
+    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(CupertinoIcons.waveform,
+                  size: 16, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 6),
+              const Text('氛围编码',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 6),
+              Text('${encodings.length} 个',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.white60 : Colors.black54)),
+              const Spacer(),
+              _miniBtn(
+                icon: CupertinoIcons.archivebox,
+                label: '保存',
+                onTap: () => _saveVibeEncodings(encodings),
+              ),
+              const SizedBox(width: 6),
+              _miniBtn(
+                icon: CupertinoIcons.doc_on_doc,
+                label: '全部复制',
+                onTap: () => _copyTags(
+                  encodings.join('\n'),
+                  label: '已复制氛围编码',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '这是可复用的 Vibe 编码数据，不是普通提示词；使用相同编码可跳过重复编码。',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.35,
+              color: isDark ? Colors.white54 : Colors.black54,
+            ),
+          ),
+          for (final entry in encodings.indexed) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text('编码 ${entry.$1 + 1}',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                _miniBtn(
+                  icon: CupertinoIcons.doc_on_doc,
+                  label: '复制',
+                  onTap: () => _copyTags(
+                    entry.$2,
+                    label: '已复制氛围编码 ${entry.$1 + 1}',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              entry.$2.length > 96 ? '${entry.$2.substring(0, 96)}…' : entry.$2,
+              maxLines: 3,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.35,
+                color: isDark ? Colors.white60 : Colors.black54,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

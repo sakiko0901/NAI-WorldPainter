@@ -1,3 +1,8 @@
+enum DirectorChannel {
+  gateway7877,
+  ikun,
+}
+
 enum DirectorToolType {
   declutter(
     label: '去杂物',
@@ -42,5 +47,6 @@ enum DirectorToolType {
 
   bool get usesPrompt => this == colorize || this == emotion;
   bool get usesDefry => this == colorize || this == emotion;
-  bool get consumesAnlas => this == colorize || this == emotion;
+  bool get consumesAnlas =>
+      this == bgRemover || this == colorize || this == emotion;
 }

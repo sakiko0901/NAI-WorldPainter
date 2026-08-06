@@ -140,7 +140,7 @@ Clean Architecture 分层，每层职责清晰：
 - Vibe Transfer 与独立 Precise Reference（参考类型、强度、忠实度）
 - 多角色提示词、负向提示词与坐标控制
 - 分辨率、采样器、噪声调度、CFG scale、seed 全可调
-- 单次批量 1–15 张
+- 单次批量 1–30 张
 - 预览、全屏查看、一键保存到相册
 - 串行生成队列 + Android 前台服务通知，避免后台被杀
 - 结果持久化到 SQLite，可在「历史」页回看

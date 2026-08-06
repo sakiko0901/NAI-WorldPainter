@@ -10,6 +10,7 @@ import 'package:nai_huishi/presentation/pages/image_enhance_page.dart';
 import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
 import 'package:nai_huishi/presentation/pages/pixiv_upload_page.dart';
 import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
+import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -125,6 +126,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: () => Navigator.of(context).push(
                     CupertinoPageRoute(
                         builder: (_) => const ImageEnhancePage()),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.waveform,
+                  title: 'Vibe 编码库',
+                  subtitle: '管理已保存的氛围编码，复用时跳过重复编码',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                        builder: (_) => const VibeEncodingLibraryPage()),
                   ),
                 ),
                 _SettingsTile(

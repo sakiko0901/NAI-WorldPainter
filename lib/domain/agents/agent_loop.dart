@@ -5,10 +5,11 @@ import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/agents/agent_result.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
+import 'package:nai_huishi/domain/entities/tool_call.dart';
 
 /// Agent 主循环。负责反复调用 LLM 并执行工具，直到 LLM 给出 stop。
 class AgentLoop {
-  static const int maxIterations = 8;
+  static const int maxIterations = 16;
 
   final LlmApiService _api;
   final ToolRegistry _registry;
@@ -97,11 +98,9 @@ class AgentLoop {
             _replaceLast(timeline, updated);
             onEvent?.call(updated);
             // 仍要把错误结果回灌给 LLM
-            messages.add({
-              'role': 'tool',
-              'tool_call_id': call.id,
-              'content': '失败：工具 ${call.name} 不存在',
-            });
+            messages.add(
+              _toolMessage(call, '失败：工具 ${call.name} 不存在'),
+            );
             continue;
           }
 
@@ -118,11 +117,9 @@ class AgentLoop {
               );
               _replaceLast(timeline, updated);
               onEvent?.call(updated);
-              messages.add({
-                'role': 'tool',
-                'tool_call_id': call.id,
-                'content': '失败：用户取消了执行',
-              });
+              messages.add(
+                _toolMessage(call, '失败：用户取消了执行'),
+              );
               continue;
             }
           }
@@ -152,11 +149,7 @@ class AgentLoop {
               failCounts.remove(call.name);
             }
 
-            messages.add({
-              'role': 'tool',
-              'tool_call_id': call.id,
-              'content': result.text,
-            });
+            messages.add(_toolMessage(call, result.text));
           } catch (e) {
             failCounts[call.name] = (failCounts[call.name] ?? 0) + 1;
             final errEvent = running.copyWith(
@@ -165,11 +158,7 @@ class AgentLoop {
             );
             _replaceLast(timeline, errEvent);
             onEvent?.call(errEvent);
-            messages.add({
-              'role': 'tool',
-              'tool_call_id': call.id,
-              'content': '失败：$e',
-            });
+            messages.add(_toolMessage(call, '失败：$e'));
           }
         }
       }
@@ -184,6 +173,13 @@ class AgentLoop {
           e.toString().replaceFirst('AppException(null): ', ''), timeline);
     }
   }
+
+  Map<String, dynamic> _toolMessage(ToolCall call, String content) => {
+        'role': 'tool',
+        'tool_call_id': call.id,
+        'name': call.name,
+        'content': content,
+      };
 
   void _replaceLast(List<AgentEvent> list, AgentEvent next) {
     if (list.isEmpty) return;

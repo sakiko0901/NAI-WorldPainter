@@ -166,6 +166,14 @@ class SettingsRepositoryImpl implements SettingsRepository {
       _local.setVibeReferencesDraft(value);
 
   @override
+  Future<ReferenceMode> getReferenceModeDraft() async =>
+      _local.getReferenceModeDraft();
+
+  @override
+  Future<void> setReferenceModeDraft(ReferenceMode value) =>
+      _local.setReferenceModeDraft(value);
+
+  @override
   Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async =>
       _local.getPreciseReferencesDraft();
 

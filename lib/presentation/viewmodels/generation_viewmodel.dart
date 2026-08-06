@@ -9,6 +9,9 @@ import 'package:nai_huishi/core/services/background_keepalive_service.dart';
 import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
+import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
+import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/entities/preset.dart';
 import 'package:nai_huishi/domain/usecases/generate_image.dart';
@@ -47,16 +50,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final ManageSettingsUseCase _manageSettings;
   final SaveImageUseCase _saveImage;
   final GenerationQueue _queue;
+  final TiledImg2ImgService _tiledImg2Img;
 
   GenerationViewModel({
     required GenerateImageUseCase generateImage,
     required ManageSettingsUseCase manageSettings,
     required SaveImageUseCase saveImage,
     required GenerationQueue queue,
+    TiledImg2ImgService? tiledImg2Img,
   })  : _generateImage = generateImage,
         _manageSettings = manageSettings,
         _saveImage = saveImage,
-        _queue = queue {
+        _queue = queue,
+        _tiledImg2Img = tiledImg2Img ?? TiledImg2ImgService(queue) {
     _init();
   }
 
@@ -93,6 +99,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get is7877Endpoint =>
       currentModelOption?.protocol ==
       AppConstants.novelAiChatCompletionsProtocol;
+
+  bool get supportsVibeReferences => is7877Endpoint || isIkunEndpoint;
+
+  bool get supportsPreciseReferences => is7877Endpoint || isIkunEndpoint;
 
   List<ImageModelOption> imageModelOptions = [];
 
@@ -148,7 +158,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String? errorMessage;
 
   // 批量生成
-  int batchCount = 1; // 1-15
+  int batchCount = 1; // 1-30
   List<GenerationTask> sessionResults = [];
   String? selectedResultTaskId;
   GenerationTask? get selectedResult {
@@ -176,12 +186,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get isBatchCancelling => _cancelBatch;
 
   GenerationMode generationMode = GenerationMode.textToImage;
+  Img2ImgMode img2ImgMode = Img2ImgMode.normal;
+  int _tiledCompleted = 0;
+  int _tiledTotal = 0;
+  bool _cancelTiled = false;
   String? sourceImagePath;
   String? maskImagePath;
   double inpaintStrength = 1.0;
   String? img2imgSourceImagePath;
   double img2imgStrength = 0.7;
   List<String> gptImagePaths = []; // GPT 图生图参考图列表（最多16张）
+  ReferenceMode referenceMode = ReferenceMode.vibe;
   List<CharacterReferenceImage> vibeReferences = [];
   List<PreciseReferenceImage> preciseReferences = [];
 
@@ -226,13 +241,37 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       await _saveCharactersDraft();
     }
     final savedVibeReferences = await _manageSettings.getVibeReferencesDraft();
-    vibeReferences = savedVibeReferences.take(1).toList();
-    if (savedVibeReferences.length > 1) {
-      await _manageSettings.setVibeReferencesDraft(vibeReferences);
-    }
+    vibeReferences = savedVibeReferences;
+    referenceMode = await _manageSettings.getReferenceModeDraft();
+    await _normalizeReferenceDrafts();
     batchCount = await _manageSettings.getBatchCount();
 
     notifyListeners();
+  }
+
+  Future<void> _normalizeReferenceDrafts() async {
+    final savedMode = referenceMode;
+    final savedVibeReferences = vibeReferences;
+    final savedPreciseReferences = preciseReferences;
+    if (vibeReferences.isNotEmpty && preciseReferences.isEmpty) {
+      referenceMode = ReferenceMode.vibe;
+    } else if (preciseReferences.isNotEmpty && vibeReferences.isEmpty) {
+      referenceMode = ReferenceMode.precise;
+    } else if (vibeReferences.isNotEmpty && preciseReferences.isNotEmpty) {
+      if (referenceMode == ReferenceMode.vibe) {
+        preciseReferences = const [];
+      } else {
+        vibeReferences = const [];
+      }
+    }
+    await Future.wait([
+      if (referenceMode != savedMode)
+        _manageSettings.setReferenceModeDraft(referenceMode),
+      if (!listEquals(vibeReferences, savedVibeReferences))
+        _manageSettings.setVibeReferencesDraft(vibeReferences),
+      if (!listEquals(preciseReferences, savedPreciseReferences))
+        _manageSettings.setPreciseReferencesDraft(preciseReferences),
+    ]);
   }
 
   void _listenQueue() {
@@ -245,7 +284,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> _onQueueTask(GenerationTask task) async {
-    if (!_isFinalTask(task)) return;
+    if (task.isInternal || !_isFinalTask(task)) return;
     await _applyCompletedTask(task);
   }
 
@@ -754,7 +793,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       await _manageSettings.setActiveEndpointId(
           opt.first.provider, opt.first.endpointId);
     }
-    if (is7877Endpoint || (isIkunEndpoint && isStepsLocked)) {
+    if (isIkunEndpoint && isStepsLocked) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
@@ -786,14 +825,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedSampler(String value) async {
-    selectedSampler = isIkunEndpoint && value == 'ddim' ? 'ddim_v3' : value;
+    selectedSampler = value;
     notifyListeners();
     await _manageSettings.setSelectedSamplerDraft(selectedSampler);
   }
 
   Future<void> updateSelectedNoiseSchedule(String value) async {
-    selectedNoiseSchedule =
-        isIkunEndpoint && value == 'polyexponential' ? 'exponential' : value;
+    selectedNoiseSchedule = value;
     notifyListeners();
     await _manageSettings.setSelectedNoiseScheduleDraft(selectedNoiseSchedule);
   }
@@ -811,7 +849,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSteps(int value) async {
-    steps = is7877Endpoint || (isIkunEndpoint && isStepsLocked)
+    steps = isIkunEndpoint && isStepsLocked
         ? ApiConstants.defaultSteps
         : value.clamp(1, 50);
     await _manageSettings.setStepsDraft(steps);
@@ -828,9 +866,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  Future<void> switchReferenceMode(ReferenceMode mode) async {
+    if (referenceMode == mode) return;
+    referenceMode = mode;
+    if (mode == ReferenceMode.vibe) {
+      preciseReferences = const [];
+    } else {
+      vibeReferences = const [];
+    }
+    await Future.wait([
+      _manageSettings.setReferenceModeDraft(referenceMode),
+      _manageSettings.setVibeReferencesDraft(vibeReferences),
+      _manageSettings.setPreciseReferencesDraft(preciseReferences),
+    ]);
+    notifyListeners();
+  }
+
   Future<void> setVibeReference(String path) async {
-    if (!isIkunEndpoint) return;
+    if (!supportsVibeReferences) return;
     final current = vibeReferences.isEmpty ? null : vibeReferences.first;
+    referenceMode = ReferenceMode.vibe;
     vibeReferences = [
       CharacterReferenceImage(
         path: path,
@@ -838,25 +893,52 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         informationExtracted: current?.informationExtracted ?? 1.0,
       ),
     ];
-    if (preciseReferences.isNotEmpty) {
-      preciseReferences = const [];
-      await _manageSettings.setPreciseReferencesDraft(preciseReferences);
-    }
-    await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    preciseReferences = const [];
+    await Future.wait([
+      _manageSettings.setReferenceModeDraft(referenceMode),
+      _manageSettings.setVibeReferencesDraft(vibeReferences),
+      _manageSettings.setPreciseReferencesDraft(preciseReferences),
+    ]);
+    notifyListeners();
+  }
+
+  Future<void> selectVibeEncoding(VibeEncoding encoding) async {
+    if (!supportsVibeReferences || encoding.id == null) return;
+    final current = vibeReferences.isEmpty ? null : vibeReferences.first;
+    referenceMode = ReferenceMode.vibe;
+    vibeReferences = [
+      CharacterReferenceImage(
+        path: encoding.sourceImagePath ?? '',
+        strength: current?.strength ?? 0.6,
+        informationExtracted: current?.informationExtracted ?? 1.0,
+        vibeLibraryId: encoding.id,
+        encodedVibe: encoding.encodedVibe,
+        thumbnailPath: encoding.thumbnailPath,
+        title: encoding.title,
+      ),
+    ];
+    preciseReferences = const [];
+    await Future.wait([
+      _manageSettings.setReferenceModeDraft(referenceMode),
+      _manageSettings.setVibeReferencesDraft(vibeReferences),
+      _manageSettings.setPreciseReferencesDraft(preciseReferences),
+    ]);
     notifyListeners();
   }
 
   Future<void> addPreciseReference(String path) async {
-    if (!isIkunEndpoint) return;
+    if (!supportsPreciseReferences) return;
+    referenceMode = ReferenceMode.precise;
     preciseReferences = [
       ...preciseReferences,
       PreciseReferenceImage(path: path),
     ];
-    if (vibeReferences.isNotEmpty) {
-      vibeReferences = const [];
-      await _manageSettings.setVibeReferencesDraft(vibeReferences);
-    }
-    await _manageSettings.setPreciseReferencesDraft(preciseReferences);
+    vibeReferences = const [];
+    await Future.wait([
+      _manageSettings.setReferenceModeDraft(referenceMode),
+      _manageSettings.setVibeReferencesDraft(vibeReferences),
+      _manageSettings.setPreciseReferencesDraft(preciseReferences),
+    ]);
     notifyListeners();
   }
 
@@ -922,9 +1004,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   void addGptImage(String path) {
-    if (gptImagePaths.length >= 16) return;
-    gptImagePaths = [...gptImagePaths, path];
+    addGptImages([path]);
+  }
+
+  int addGptImages(Iterable<String> paths) {
+    final available = 16 - gptImagePaths.length;
+    if (available <= 0) return 0;
+
+    final existing = gptImagePaths.toSet();
+    final additions = <String>[];
+    for (final path in paths) {
+      if (path.isEmpty || existing.contains(path)) continue;
+      existing.add(path);
+      additions.add(path);
+      if (additions.length >= available) break;
+    }
+    if (additions.isEmpty) return 0;
+
+    gptImagePaths = [...gptImagePaths, ...additions];
     notifyListeners();
+    return additions.length;
   }
 
   void removeGptImage(int index) {
@@ -960,6 +1059,24 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       }
     }
     notifyListeners();
+  }
+
+  bool get isTiledImg2Img =>
+      img2ImgMode == Img2ImgMode.tiled && img2imgSourceImagePath != null;
+  int get tiledCompleted => _tiledCompleted;
+  int get tiledTotal => _tiledTotal;
+  bool get isTiledCancelling => _cancelTiled;
+
+  void updateImg2ImgMode(Img2ImgMode mode) {
+    img2ImgMode = mode;
+    notifyListeners();
+  }
+
+  void cancelTiledImg2Img() {
+    if (isTiledImg2Img && _generateInFlight) {
+      _cancelTiled = true;
+      notifyListeners();
+    }
   }
 
   void updateInpaintStrength(double value) {
@@ -1005,6 +1122,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       _generateInFlight = false;
       _batchRemaining = 0;
       _cancelBatch = false;
+      _cancelTiled = false;
+      _tiledCompleted = 0;
+      _tiledTotal = 0;
       notifyListeners();
     }
   }
@@ -1050,7 +1170,6 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       notifyListeners();
       return;
     }
-
     if (generationMode == GenerationMode.inpainting) {
       if (sourceImagePath == null || sourceImagePath!.isEmpty) {
         errorMessage = '请选择原图';
@@ -1071,7 +1190,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final actualModelId =
         selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final provider = selectedOption?.provider ?? currentProvider;
-    if (isIkunEndpoint && preciseReferences.isNotEmpty) {
+    if (supportsPreciseReferences && preciseReferences.isNotEmpty) {
       if (_isLimitModel(actualModelId)) {
         errorMessage = '精密参照图像不能使用 -limit 模型，请选择无 -limit 后缀的 V4/V4.5 模型';
         notifyListeners();
@@ -1084,13 +1203,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       }
     }
 
-    final taskSampler = isIkunEndpoint && selectedSampler == 'ddim'
-        ? 'ddim_v3'
-        : selectedSampler;
-    final taskNoiseSchedule =
-        isIkunEndpoint && selectedNoiseSchedule == 'polyexponential'
-            ? 'exponential'
-            : selectedNoiseSchedule;
+    final taskSampler = selectedSampler;
+    final taskNoiseSchedule = selectedNoiseSchedule;
 
     final task = GenerationTask(
       taskId: const Uuid().v4(),
@@ -1110,7 +1224,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       cfgRescale: cfgRescale,
       sampler: taskSampler,
       noiseSchedule: taskNoiseSchedule,
-      steps: is7877Endpoint || (isIkunEndpoint && isStepsLocked)
+      steps: isIkunEndpoint && isStepsLocked
           ? ApiConstants.defaultSteps
           : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
@@ -1121,15 +1235,23 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
               enabledCharacters.isNotEmpty
           ? enabledCharacters
           : null,
-      vibeReferences:
-          isIkunEndpoint ? vibeReferences.take(1).toList() : const [],
-      preciseReferences: isIkunEndpoint ? preciseReferences : const [],
+      vibeReferences: supportsVibeReferences &&
+              generationMode == GenerationMode.textToImage &&
+              referenceMode == ReferenceMode.vibe
+          ? vibeReferences
+          : const [],
+      preciseReferences: supportsPreciseReferences &&
+              generationMode == GenerationMode.textToImage &&
+              referenceMode == ReferenceMode.precise
+          ? preciseReferences
+          : const [],
       status: 'pending',
       createdAt: DateTime.now(),
       mode: generationMode,
       sourceImagePath:
           generationMode == GenerationMode.inpainting ? sourceImagePath : null,
-      maskImagePath: maskImagePath,
+      maskImagePath:
+          generationMode == GenerationMode.inpainting ? maskImagePath : null,
       gptImagePaths: (provider == ImageProviderType.gpt ||
                   provider == ImageProviderType.nanoBanana) &&
               gptImagePaths.isNotEmpty
@@ -1147,12 +1269,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       providerType: provider,
     );
 
+    if (effectiveImg2ImgPath != null && img2ImgMode == Img2ImgMode.tiled) {
+      await _generateTiledImg2Img(task, effectiveImg2ImgPath);
+      return;
+    }
+
     errorMessage = null;
     // 重置批次结果区
     sessionResults = [];
     selectedResultTaskId = null;
     _userPickedResult = false;
-    final count = batchCount.clamp(1, 15);
+    final count = batchCount.clamp(1, AppConstants.maxBatchCount);
     _batchRemaining = count;
     notifyListeners();
 
@@ -1198,12 +1325,59 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
+  Future<void> _generateTiledImg2Img(
+      GenerationTask task, String sourcePath) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      errorMessage = '图生图源图已失效，请重新选择';
+      notifyListeners();
+      return;
+    }
+
+    sessionResults = [];
+    selectedResultTaskId = null;
+    _userPickedResult = false;
+    _cancelTiled = false;
+    errorMessage = null;
+    await BackgroundKeepAliveService.instance.acquire(
+      notificationText: '准备分块重绘…',
+    );
+    try {
+      final outputPath = await _tiledImg2Img.execute(
+        baseTask: task,
+        sourcePath: sourcePath,
+        strength: img2imgStrength,
+        isCancelled: () => _cancelTiled,
+        onProgress: (progress) async {
+          _tiledCompleted = progress.completed;
+          _tiledTotal = progress.total;
+          await BackgroundKeepAliveService.instance.updateNotification(
+            '分块重绘 ${progress.completed}/${progress.total}',
+          );
+          notifyListeners();
+        },
+      );
+      final completed = task.copyWith(
+        taskId: const Uuid().v4(),
+        status: AppConstants.taskSuccess,
+        imagePath: outputPath,
+        completedAt: DateTime.now(),
+      );
+      await _applyCompletedTask(completed);
+    } on TiledImg2ImgCancelled {
+      errorMessage = '已取消分块重绘';
+      notifyListeners();
+    } finally {
+      await BackgroundKeepAliveService.instance.release();
+    }
+  }
+
   /// 独立订阅队列，返回指定 taskId 的最终成功/失败任务。
   Future<GenerationTask> _awaitTaskComplete(String taskId) => _queue.taskStream
       .firstWhere((task) => task.taskId == taskId && _isFinalTask(task));
 
   Future<void> updateBatchCount(int value) async {
-    final v = value.clamp(1, 15);
+    final v = value.clamp(1, AppConstants.maxBatchCount);
     if (v == batchCount) return;
     batchCount = v;
     await _manageSettings.setBatchCount(v);
@@ -1361,15 +1535,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       prompt = task.prompt;
       negativePrompt = task.negativePrompt ?? '';
       characters = task.characters ?? [];
-      preciseReferences = [...task.preciseReferences];
-      if (preciseReferences.isNotEmpty) {
+      if (task.preciseReferences.isNotEmpty) {
+        referenceMode = ReferenceMode.precise;
+        preciseReferences = [...task.preciseReferences];
         vibeReferences = const [];
+      } else if (task.vibeReferences.isNotEmpty) {
+        referenceMode = ReferenceMode.vibe;
+        vibeReferences = [...task.vibeReferences];
+        preciseReferences = const [];
+      } else {
+        vibeReferences = const [];
+        preciseReferences = const [];
       }
-      await _manageSettings.setPromptDraft(prompt);
-      await _manageSettings.setNegativePromptDraft(negativePrompt);
-      await _manageSettings.setPreciseReferencesDraft(preciseReferences);
-      await _manageSettings.setVibeReferencesDraft(vibeReferences);
-      await _saveCharactersDraft();
+      await Future.wait([
+        _manageSettings.setPromptDraft(prompt),
+        _manageSettings.setNegativePromptDraft(negativePrompt),
+        _manageSettings.setReferenceModeDraft(referenceMode),
+        _manageSettings.setPreciseReferencesDraft(preciseReferences),
+        _manageSettings.setVibeReferencesDraft(vibeReferences),
+        _saveCharactersDraft(),
+      ]);
     }
 
     notifyListeners();

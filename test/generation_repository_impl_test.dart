@@ -4,9 +4,13 @@ import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
+import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
 
 void main() {
   test(
@@ -37,6 +41,7 @@ void main() {
       gptApiService: GptApiService(Dio()),
       nanoApiService: NanoBananaApiService(Dio()),
       settingsRepo: settings,
+      vibeEncodingRepo: _FakeVibeEncodingRepository(),
     );
 
     await repository.submitGeneration(_task(endpointId: 'selected'));
@@ -44,11 +49,84 @@ void main() {
     expect(service.apiKey, 'selected-key');
     expect(service.baseUrl, 'https://selected.example');
   });
+
+  test('ikun task restores library Vibe encoding before submit', () async {
+    final service = _RecordingNovelAiService();
+    final repository = GenerationRepositoryImpl(
+      apiService: service,
+      gptApiService: GptApiService(Dio()),
+      nanoApiService: NanoBananaApiService(Dio()),
+      settingsRepo: _FakeSettingsRepository(
+        endpoints: const [],
+        activeId: '',
+      ),
+      vibeEncodingRepo: _FakeVibeEncodingRepository(
+        saved: VibeEncoding(
+          id: 7,
+          title: 'saved vibe',
+          thumbnailPath: 'thumb.jpg',
+          sourceImagePath: 'source.png',
+          encodedVibe: 'encoded-vibe',
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026),
+        ),
+      ),
+    );
+
+    await repository.submitGeneration(
+      _task(
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        vibeReferences: const [
+          CharacterReferenceImage(path: '', vibeLibraryId: 7),
+        ],
+      ),
+    );
+
+    final reference = service.task!.vibeReferences.single;
+    expect(reference.encodedVibe, 'encoded-vibe');
+    expect(reference.thumbnailPath, 'thumb.jpg');
+    expect(reference.title, 'saved vibe');
+  });
+
+  test('ikun rejects img2img with Vibe instead of dropping the reference',
+      () async {
+    final repository = GenerationRepositoryImpl(
+      apiService: _RecordingNovelAiService(),
+      gptApiService: GptApiService(Dio()),
+      nanoApiService: NanoBananaApiService(Dio()),
+      settingsRepo: _FakeSettingsRepository(endpoints: const [], activeId: ''),
+      vibeEncodingRepo: _FakeVibeEncodingRepository(),
+    );
+
+    expect(
+      () => repository.submitGeneration(
+        _task(
+          protocol: AppConstants.novelAiImageGenerationsProtocol,
+          img2imgSourceImagePath: 'source.png',
+          vibeReferences: const [CharacterReferenceImage(path: 'vibe.png')],
+        ),
+      ),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'VIBE_IMG2IMG_UNSUPPORTED_IKUN',
+        ),
+      ),
+    );
+  });
 }
 
-GenerationTask _task({String? endpointId}) => GenerationTask(
+GenerationTask _task({
+  String? endpointId,
+  String protocol = AppConstants.novelAiChatCompletionsProtocol,
+  List<CharacterReferenceImage> vibeReferences = const [],
+  String? img2imgSourceImagePath,
+}) =>
+    GenerationTask(
       taskId: 'task',
       endpointId: endpointId,
+      protocol: protocol,
       model: 'model',
       prompt: '1girl',
       width: 832,
@@ -59,6 +137,8 @@ GenerationTask _task({String? endpointId}) => GenerationTask(
       noiseSchedule: 'native',
       status: 'pending',
       createdAt: DateTime(2026),
+      vibeReferences: vibeReferences,
+      img2imgSourceImagePath: img2imgSourceImagePath,
     );
 
 class _RecordingNovelAiService extends NovelAiApiService {
@@ -66,6 +146,7 @@ class _RecordingNovelAiService extends NovelAiApiService {
 
   String? apiKey;
   String? baseUrl;
+  GenerationTask? task;
 
   @override
   Future<GenerationTask> generateImage(
@@ -75,8 +156,25 @@ class _RecordingNovelAiService extends NovelAiApiService {
   ) async {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
+    this.task = task;
     return task;
   }
+}
+
+class _FakeVibeEncodingRepository implements VibeEncodingRepository {
+  final VibeEncoding? saved;
+
+  _FakeVibeEncodingRepository({this.saved});
+
+  @override
+  Future<VibeEncoding?> getById(int id) async => saved?.id == id ? saved : null;
+
+  @override
+  Future<VibeEncoding?> findBySourceImagePath(String path) async =>
+      saved?.sourceImagePath == path ? saved : null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakeSettingsRepository implements SettingsRepository {
@@ -92,6 +190,13 @@ class _FakeSettingsRepository implements SettingsRepository {
   @override
   Future<ApiEndpoint?> getActiveEndpoint(ImageProviderType p) async =>
       endpoints.where((endpoint) => endpoint.id == activeId).firstOrNull;
+
+  @override
+  Future<String> getImageProviderNovelAiBaseUrl() async =>
+      'https://novelai.test';
+
+  @override
+  Future<String?> getImageProviderNovelAiApiKey() async => 'novelai-key';
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

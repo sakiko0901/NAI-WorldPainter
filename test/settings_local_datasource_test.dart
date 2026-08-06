@@ -61,6 +61,24 @@ void main() {
     expect(saved[1].name, '可编辑的 ikun');
   });
 
+  test('参考模式与批量数量会使用合法范围', () async {
+    SharedPreferences.setMockInitialValues({
+      AppConstants.keyReferenceModeDraft: 'precise',
+      AppConstants.keyBatchCount: 99,
+    });
+    final preferences = await SharedPreferences.getInstance();
+    final datasource = SettingsLocalDatasource(preferences);
+
+    expect(datasource.getReferenceModeDraft(), ReferenceMode.precise);
+    expect(datasource.getBatchCount(), AppConstants.maxBatchCount);
+
+    await datasource.setReferenceModeDraft(ReferenceMode.vibe);
+    await datasource.setBatchCount(0);
+
+    expect(datasource.getReferenceModeDraft(), ReferenceMode.vibe);
+    expect(datasource.getBatchCount(), 1);
+  });
+
   test('旧 Precise 草稿会保留有效字段并移除可变 fidelity', () async {
     SharedPreferences.setMockInitialValues({
       AppConstants.keyPreciseReferencesDraft: jsonEncode([

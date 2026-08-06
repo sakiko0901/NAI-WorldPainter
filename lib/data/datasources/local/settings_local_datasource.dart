@@ -149,7 +149,7 @@ class SettingsLocalDatasource {
     final list = jsonDecode(raw) as List;
     return list
         .map((item) => CharacterReferenceImage.fromJson(
-              item as Map<String, dynamic>,
+              Map<String, dynamic>.from(item as Map),
             ))
         .toList();
   }
@@ -161,6 +161,17 @@ class SettingsLocalDatasource {
       AppConstants.keyVibeReferencesDraft,
       jsonEncode(value.map((reference) => reference.toJson()).toList()),
     );
+  }
+
+  ReferenceMode getReferenceModeDraft() {
+    return switch (_prefs.getString(AppConstants.keyReferenceModeDraft)) {
+      'precise' => ReferenceMode.precise,
+      _ => ReferenceMode.vibe,
+    };
+  }
+
+  Future<void> setReferenceModeDraft(ReferenceMode value) async {
+    await _prefs.setString(AppConstants.keyReferenceModeDraft, value.name);
   }
 
   Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async {
@@ -658,9 +669,10 @@ class SettingsLocalDatasource {
   }
 
   // 批量生成数量
-  int getBatchCount() => _prefs.getInt(AppConstants.keyBatchCount) ?? 1;
+  int getBatchCount() => (_prefs.getInt(AppConstants.keyBatchCount) ?? 1)
+      .clamp(1, AppConstants.maxBatchCount);
   Future<void> setBatchCount(int value) async {
-    final clamped = value.clamp(1, 15);
+    final clamped = value.clamp(1, AppConstants.maxBatchCount);
     await _prefs.setInt(AppConstants.keyBatchCount, clamped);
   }
 }
