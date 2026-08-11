@@ -94,15 +94,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   bool get isIkunEndpoint =>
       currentModelOption?.protocol ==
-      AppConstants.novelAiImageGenerationsProtocol;
+          AppConstants.novelAiImageGenerationsProtocol ||
+      selectedModel.startsWith('nai:ikun:');
 
   bool get is7877Endpoint =>
       currentModelOption?.protocol ==
-      AppConstants.novelAiChatCompletionsProtocol;
+          AppConstants.novelAiChatCompletionsProtocol ||
+      selectedModel.startsWith('nai:7877:');
 
   bool get supportsVibeReferences => is7877Endpoint || isIkunEndpoint;
 
-  bool get supportsPreciseReferences => is7877Endpoint || isIkunEndpoint;
+  int get maxVibeReferences => isIkunEndpoint
+      ? AppConstants.maxIkunVibeReferences
+      : AppConstants.maxVibeReferences;
+
+  bool get supportsPreciseReferences {
+    if (!isIkunEndpoint) return false;
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    return !_isLimitModel(model) && _supportsPreciseReference(model);
+  }
 
   List<ImageModelOption> imageModelOptions = [];
 
@@ -253,6 +264,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final savedMode = referenceMode;
     final savedVibeReferences = vibeReferences;
     final savedPreciseReferences = preciseReferences;
+    if (vibeReferences.length > maxVibeReferences) {
+      vibeReferences = vibeReferences.take(maxVibeReferences).toList();
+    }
     if (vibeReferences.isNotEmpty && preciseReferences.isEmpty) {
       referenceMode = ReferenceMode.vibe;
     } else if (preciseReferences.isNotEmpty && vibeReferences.isEmpty) {
@@ -798,6 +812,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       await _manageSettings.setStepsDraft(steps);
     }
     await _ensureResolutionForCurrentProvider();
+    if (vibeReferences.length > maxVibeReferences) {
+      vibeReferences = vibeReferences.take(maxVibeReferences).toList();
+      await _manageSettings.setVibeReferencesDraft(vibeReferences);
+    }
     // Nano Banana 不支持局部重绘，自动回退至文生图
     if (isNanoProvider && generationMode == GenerationMode.inpainting) {
       generationMode = GenerationMode.textToImage;
@@ -883,40 +901,71 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> setVibeReference(String path) async {
-    if (!supportsVibeReferences) return;
-    final current = vibeReferences.isEmpty ? null : vibeReferences.first;
-    referenceMode = ReferenceMode.vibe;
-    vibeReferences = [
-      CharacterReferenceImage(
-        path: path,
-        strength: current?.strength ?? 0.6,
-        informationExtracted: current?.informationExtracted ?? 1.0,
-      ),
-    ];
-    preciseReferences = const [];
-    await Future.wait([
-      _manageSettings.setReferenceModeDraft(referenceMode),
-      _manageSettings.setVibeReferencesDraft(vibeReferences),
-      _manageSettings.setPreciseReferencesDraft(preciseReferences),
-    ]);
-    notifyListeners();
+    if (vibeReferences.isEmpty) {
+      await addVibeReferences([path]);
+    } else {
+      await replaceVibeReferenceWithPath(0, path);
+    }
   }
 
   Future<void> selectVibeEncoding(VibeEncoding encoding) async {
-    if (!supportsVibeReferences || encoding.id == null) return;
-    final current = vibeReferences.isEmpty ? null : vibeReferences.first;
-    referenceMode = ReferenceMode.vibe;
-    vibeReferences = [
-      CharacterReferenceImage(
+    if (vibeReferences.isEmpty) {
+      await addVibeEncodings([encoding]);
+    } else {
+      await replaceVibeReferenceWithEncoding(0, encoding);
+    }
+  }
+
+  Future<int> addVibeReferences(Iterable<String> paths) async {
+    if (!supportsVibeReferences || vibeReferences.length >= maxVibeReferences) {
+      return 0;
+    }
+    final existingPaths =
+        vibeReferences.map((reference) => reference.path).toSet();
+    final additions = <CharacterReferenceImage>[];
+    for (final path in paths) {
+      if (vibeReferences.length + additions.length >= maxVibeReferences) {
+        break;
+      }
+      if (path.isEmpty || existingPaths.contains(path)) continue;
+      existingPaths.add(path);
+      additions.add(CharacterReferenceImage(path: path));
+    }
+    return _appendVibeReferences(additions);
+  }
+
+  Future<int> addVibeEncodings(Iterable<VibeEncoding> encodings) async {
+    if (!supportsVibeReferences || vibeReferences.length >= maxVibeReferences) {
+      return 0;
+    }
+    final existingIds = vibeReferences
+        .map((reference) => reference.vibeLibraryId)
+        .whereType<int>()
+        .toSet();
+    final additions = <CharacterReferenceImage>[];
+    for (final encoding in encodings) {
+      if (vibeReferences.length + additions.length >= maxVibeReferences) {
+        break;
+      }
+      final id = encoding.id;
+      if (id == null || existingIds.contains(id)) continue;
+      existingIds.add(id);
+      additions.add(CharacterReferenceImage(
         path: encoding.sourceImagePath ?? '',
-        strength: current?.strength ?? 0.6,
-        informationExtracted: current?.informationExtracted ?? 1.0,
-        vibeLibraryId: encoding.id,
-        encodedVibe: encoding.encodedVibe,
+        vibeLibraryId: id,
         thumbnailPath: encoding.thumbnailPath,
         title: encoding.title,
-      ),
-    ];
+      ));
+    }
+    return _appendVibeReferences(additions);
+  }
+
+  Future<int> _appendVibeReferences(
+    List<CharacterReferenceImage> additions,
+  ) async {
+    if (additions.isEmpty) return 0;
+    referenceMode = ReferenceMode.vibe;
+    vibeReferences = [...vibeReferences, ...additions];
     preciseReferences = const [];
     await Future.wait([
       _manageSettings.setReferenceModeDraft(referenceMode),
@@ -924,6 +973,40 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       _manageSettings.setPreciseReferencesDraft(preciseReferences),
     ]);
     notifyListeners();
+    return additions.length;
+  }
+
+  Future<void> replaceVibeReferenceWithPath(int index, String path) async {
+    if (index < 0 || index >= vibeReferences.length || path.isEmpty) return;
+    final current = vibeReferences[index];
+    await updateVibeReference(
+      index,
+      CharacterReferenceImage(
+        path: path,
+        strength: current.strength,
+        informationExtracted: current.informationExtracted,
+      ),
+    );
+  }
+
+  Future<void> replaceVibeReferenceWithEncoding(
+    int index,
+    VibeEncoding encoding,
+  ) async {
+    if (index < 0 || index >= vibeReferences.length || encoding.id == null)
+      return;
+    final current = vibeReferences[index];
+    await updateVibeReference(
+      index,
+      CharacterReferenceImage(
+        path: encoding.sourceImagePath ?? '',
+        strength: current.strength,
+        informationExtracted: current.informationExtracted,
+        vibeLibraryId: encoding.id,
+        thumbnailPath: encoding.thumbnailPath,
+        title: encoding.title,
+      ),
+    );
   }
 
   Future<void> addPreciseReference(String path) async {
@@ -972,17 +1055,21 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateVibeReference(
+    int index,
     CharacterReferenceImage reference,
   ) async {
-    if (vibeReferences.isEmpty) return;
-    vibeReferences = [reference];
+    if (index < 0 || index >= vibeReferences.length) return;
+    final references = [...vibeReferences];
+    references[index] = reference;
+    vibeReferences = references;
     await _manageSettings.setVibeReferencesDraft(vibeReferences);
     notifyListeners();
   }
 
-  Future<void> removeVibeReference() async {
-    if (vibeReferences.isEmpty) return;
-    vibeReferences = const [];
+  Future<void> removeVibeReference([int index = 0]) async {
+    if (index < 0 || index >= vibeReferences.length) return;
+    final references = [...vibeReferences]..removeAt(index);
+    vibeReferences = references;
     await _manageSettings.setVibeReferencesDraft(vibeReferences);
     notifyListeners();
   }
@@ -1492,21 +1579,30 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> loadFromHistory(GenerationTask task) async {
-    // 优先在已加载的 imageModelOptions 中找匹配的 endpoint+model 组合
-    String? matched;
-    for (final opt in imageModelOptions) {
-      if (opt.provider != task.providerType) continue;
-      if (_resolveActualModelId(opt.modelId) == task.model) {
-        matched = opt.modelId;
-        break;
-      }
-    }
-    selectedModel = matched ??
+    // 历史任务保存了 endpointId 时，必须先恢复同一渠道，避免同名模型落到另一个 NovelAI 协议。
+    final candidates = imageModelOptions.where(
+      (option) =>
+          option.provider == task.providerType &&
+          option.actualModel == task.model,
+    );
+    final matched = task.endpointId == null
+        ? candidates.firstOrNull
+        : candidates
+                .where((option) => option.endpointId == task.endpointId)
+                .firstOrNull ??
+            candidates.firstOrNull;
+    selectedModel = matched?.modelId ??
         switch (task.providerType) {
           ImageProviderType.gpt => 'gpt:${task.model}',
           ImageProviderType.nanoBanana => 'nano:${task.model}',
           ImageProviderType.novelAi => task.model,
         };
+    if (matched?.endpointId != null) {
+      await _manageSettings.setActiveEndpointId(
+        matched!.provider,
+        matched.endpointId,
+      );
+    }
     selectedResolution = task.size ?? '${task.width}x${task.height}';
     scale = task.scale;
     cfgRescale = task.cfgRescale;
@@ -1645,6 +1741,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
     if (selectedModelId.startsWith('nano:')) {
       return stripPrefix('nano:');
+    }
+    if (selectedModelId.startsWith('nai:')) {
+      final parts = selectedModelId.split(':');
+      if (parts.length >= 3 &&
+          (parts[1] == AppConstants.novelAiImageGenerationsEndpointId ||
+              parts[1] == AppConstants.novelAiChatCompletionsEndpointId)) {
+        return parts.sublist(2).join(':');
+      }
     }
     return selectedModelId;
   }

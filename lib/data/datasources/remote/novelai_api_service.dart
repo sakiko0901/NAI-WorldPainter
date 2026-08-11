@@ -400,7 +400,7 @@ class NovelAiApiService {
       final response = await _dio.post(
         ApiConstants.imageGenerations,
         data: {
-          'model': _normalize7877Model(task.model),
+          'model': _vibeEncodingModel(task),
           'extra': 'encode-vibe',
           'image': image,
           'information_extracted': reference.informationExtracted,
@@ -433,7 +433,6 @@ class NovelAiApiService {
             ? task.responseFormat!
             : 'b64_json';
     final characters = _build7877Characters(task.characters);
-    final preciseReferences = await _build7877PreciseReferences(task);
     final vibe = await _encode7877VibeReferences(task);
     final sourcePath = task.img2imgSourceImagePath;
     String? sourceImage;
@@ -464,8 +463,6 @@ class NovelAiApiService {
       if (task.seed != null) 'seed': task.seed,
       'response_format': responseFormat,
       if (characters.isNotEmpty) 'characters': characters,
-      if (preciseReferences.isNotEmpty)
-        'character_references': preciseReferences,
       if (vibe.images.isNotEmpty) 'reference_image_multiple': vibe.images,
       if (vibe.images.isNotEmpty) 'reference_strength_multiple': vibe.strengths,
       if (vibe.images.isNotEmpty)
@@ -487,28 +484,6 @@ class NovelAiApiService {
               'enabled': character.enabled,
             })
         .toList();
-  }
-
-  Future<List<Map<String, dynamic>>> _build7877PreciseReferences(
-    GenerationTask task,
-  ) async {
-    final references = <Map<String, dynamic>>[];
-    for (var index = 0; index < task.preciseReferences.length; index++) {
-      final referenceImage =
-          await _readPreciseReferenceIfAvailable(task.preciseReferences[index]);
-      if (referenceImage == null) {
-        throw ApiException(message: '精密参照图像 ${index + 1} 不可用，请重新选择');
-      }
-      final reference = task.preciseReferences[index];
-      references.add({
-        'image': referenceImage,
-        'type': reference.referenceType,
-        'strength': reference.strength,
-        'fidelity': 1.0,
-        'information_extracted': 1.0,
-      });
-    }
-    return references;
   }
 
   Future<
@@ -536,7 +511,7 @@ class NovelAiApiService {
       final response = await _dio.post(
         ApiConstants.imageGenerations,
         data: {
-          'model': _normalize7877Model(task.model),
+          'model': _vibeEncodingModel(task),
           'extra': 'encode-vibe',
           'image': image,
           'information_extracted': reference.informationExtracted,
@@ -560,6 +535,12 @@ class NovelAiApiService {
       strengths: strengths,
       informationExtracted: informationExtracted,
     );
+  }
+
+  String _vibeEncodingModel(GenerationTask task) {
+    return task.protocol == AppConstants.novelAiChatCompletionsProtocol
+        ? _normalize7877Model(task.model)
+        : task.model;
   }
 
   String _normalize7877Model(String model) {
@@ -615,6 +596,12 @@ class NovelAiApiService {
 
   Future<Map<String, dynamic>> _buildImageGenerationsBody(
       GenerationTask task) async {
+    if (task.vibeReferences.length > AppConstants.maxIkunVibeReferences) {
+      throw ApiException(
+        message: 'ikun 渠道当前仅支持 1 条 Vibe 氛围参考，请移除多余参考图',
+        code: 'IKUN_VIBE_LIMIT',
+      );
+    }
     final reference =
         task.vibeReferences.isEmpty ? null : task.vibeReferences.first;
     final referenceImage = reference == null
@@ -622,6 +609,10 @@ class NovelAiApiService {
         : reference.encodedVibe?.isNotEmpty == true
             ? reference.encodedVibe
             : await _readReferenceIfAvailable(reference);
+    if (reference != null &&
+        (referenceImage == null || referenceImage.isEmpty)) {
+      throw ApiException(message: '氛围参考图像不可用，请重新选择');
+    }
     final characterPrompts = _buildCharacterPrompts(task.characters);
     final responseFormat =
         const {'b64_json', 'url'}.contains(task.responseFormat)

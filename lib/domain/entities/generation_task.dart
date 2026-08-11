@@ -235,7 +235,7 @@ class CharacterReferenceImage extends Equatable {
 
   const CharacterReferenceImage({
     required this.path,
-    this.strength = 0.6,
+    this.strength = 0.3,
     this.informationExtracted = 1.0,
     this.vibeLibraryId,
     this.encodedVibe,
@@ -274,7 +274,7 @@ class CharacterReferenceImage extends Equatable {
   factory CharacterReferenceImage.fromJson(Map<String, dynamic> json) =>
       CharacterReferenceImage(
         path: json['path'] as String? ?? '',
-        strength: (json['strength'] as num?)?.toDouble() ?? 0.6,
+        strength: (json['strength'] as num?)?.toDouble() ?? 0.3,
         informationExtracted:
             (json['information_extracted'] as num?)?.toDouble() ?? 1.0,
         vibeLibraryId: (json['vibe_library_id'] as num?)?.toInt(),

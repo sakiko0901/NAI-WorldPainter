@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 
@@ -134,6 +135,7 @@ void main() {
     final firstEncoding = _body(requests[0]);
     final secondEncoding = _body(requests[1]);
     expect(firstEncoding['extra'], 'encode-vibe');
+    expect(firstEncoding['model'], 'nai-diffusion-4-5-full');
     expect(firstEncoding['image'], base64Encode(const [1]));
     expect(secondEncoding['extra'], 'encode-vibe');
     expect(secondEncoding['image'], base64Encode(const [2]));
@@ -215,7 +217,7 @@ void main() {
     expect(body['model'], 'nai-diffusion-4-5-full');
   });
 
-  test('ikun 原图 Vibe 继续使用单数参考字段', () async {
+  test('ikun 原图 Vibe 保留单数参考字段', () async {
     final directory = await Directory.systemTemp.createTemp('nai_ikun_vibe_');
     addTearDown(() => directory.delete(recursive: true));
     final source = File('${directory.path}/vibe.png');
@@ -244,14 +246,37 @@ void main() {
     expect(body, isNot(contains('reference_image_multiple')));
   });
 
+  test('ikun Vibe 编码请求保留渠道模型名', () async {
+    final directory = await Directory.systemTemp.createTemp('nai_ikun_encode_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/vibe.png');
+    await source.writeAsBytes(const [7, 8, 9]);
+    final service = NovelAiApiService(Dio());
+    final task = _task(
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+    );
+
+    await service.encode7877VibeReference(
+      task: task,
+      reference: CharacterReferenceImage(path: source.path),
+      apiKey: 'key',
+      baseUrl: baseUri.toString(),
+    );
+
+    expect(requests, hasLength(1));
+    final body = _body(requests.single);
+    expect(body['extra'], 'encode-vibe');
+    expect(body['model'], 'nai-v4.5-full');
+  });
+
   test('ikun 预编码 Vibe 直接复用到单数参考字段', () async {
     final service = NovelAiApiService(Dio());
 
     await service.generateImage(
       _task(
         protocol: AppConstants.novelAiImageGenerationsProtocol,
-        vibeReferences: [
-          const CharacterReferenceImage(
+        vibeReferences: const [
+          CharacterReferenceImage(
             path: '',
             encodedVibe: 'saved-ikun-vibe',
             strength: 0.45,
@@ -270,6 +295,66 @@ void main() {
     expect(body['reference_information_extracted'], 0.85);
     expect(body, isNot(contains('extra')));
     expect(body, isNot(contains('reference_image_multiple')));
+  });
+
+  test('ikun 拒绝多条 Vibe，避免静默忽略参考图', () async {
+    final service = NovelAiApiService(Dio());
+
+    await expectLater(
+      service.generateImage(
+        _task(
+          protocol: AppConstants.novelAiImageGenerationsProtocol,
+          vibeReferences: const [
+            CharacterReferenceImage(path: '', encodedVibe: 'first'),
+            CharacterReferenceImage(path: '', encodedVibe: 'second'),
+          ],
+        ),
+        'key',
+        baseUri.toString(),
+      ),
+      throwsA(isA<ApiException>().having(
+        (error) => error.code,
+        'code',
+        'IKUN_VIBE_LIMIT',
+      )),
+    );
+    expect(requests, isEmpty);
+  });
+
+  test('ikun 精密参考走 precise-reference 操作', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('nai_ikun_precise_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/reference.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    final service = NovelAiApiService(Dio());
+
+    await service.generateImage(
+      _task(
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        preciseReferences: [
+          PreciseReferenceImage(
+            path: source.path,
+            referenceType: 'character',
+            strength: 0.7,
+          ),
+        ],
+      ),
+      'key',
+      baseUri.toString(),
+    );
+
+    final body = _body(requests.single);
+    expect(body['novelai_operation'], 'precise-reference');
+    expect(body['model'], 'nai-v4.5-full');
+    expect(body['references'], [
+      {
+        'reference_image': base64Encode(const [1, 2, 3]),
+        'reference_type': 'character',
+        'strength': 0.7,
+        'fidelity': 1.0,
+      },
+    ]);
   });
 
   test('ikun 保留现有 unified operation 契约', () async {
@@ -299,6 +384,7 @@ GenerationTask _task({
   String? sourceImagePath,
   String? maskImagePath,
   List<CharacterReferenceImage> vibeReferences = const [],
+  List<PreciseReferenceImage> preciseReferences = const [],
 }) =>
     GenerationTask(
       taskId: 'task',
@@ -319,6 +405,7 @@ GenerationTask _task({
       sourceImagePath: sourceImagePath,
       maskImagePath: maskImagePath,
       vibeReferences: vibeReferences,
+      preciseReferences: preciseReferences,
     );
 
 class _CapturedRequest {

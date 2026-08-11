@@ -293,6 +293,7 @@ void main() {
     expect(viewModel.vibeReferences.single.path, 'first.png');
 
     await viewModel.updateVibeReference(
+      0,
       viewModel.vibeReferences.single.copyWith(
         strength: 0.8,
         informationExtracted: 0.4,
@@ -310,6 +311,51 @@ void main() {
 
     expect(viewModel.vibeReferences, isEmpty);
     expect(settings.savedVibeReferences, isEmpty);
+  });
+
+  test('Vibe references accept four items and reject a fifth', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'model',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+    ];
+
+    final added = await viewModel.addVibeReferences(
+      ['one.png', 'two.png', 'three.png', 'four.png', 'five.png'],
+    );
+
+    expect(added, AppConstants.maxVibeReferences);
+    expect(viewModel.vibeReferences.map((reference) => reference.path), [
+      'one.png',
+      'two.png',
+      'three.png',
+      'four.png',
+    ]);
+    expect(await viewModel.addVibeReferences(['five.png']), 0);
+    await viewModel.removeVibeReference(1);
+    expect(viewModel.vibeReferences.map((reference) => reference.path), [
+      'one.png',
+      'three.png',
+      'four.png',
+    ]);
+    expect(settings.savedVibeReferences, viewModel.vibeReferences);
   });
 
   test('Precise Reference accepts V4 and V4.5 models', () async {
@@ -358,11 +404,9 @@ void main() {
     }
   });
 
-  test('Precise Reference rejects unsupported and limit models', () async {
-    for (final entry in const {
-      'nai-v3': 'V4/V4.5',
-      'nai-v4.5-full-limit': '-limit',
-    }.entries) {
+  test('Precise Reference is unavailable for unsupported and limit models',
+      () async {
+    for (final model in const ['nai-v3', 'nai-v4.5-full-limit']) {
       final history = _MemoryHistoryRepository();
       final repository = _CapturingGenerationRepository('unused');
       final queue = GenerationQueue(repository, history);
@@ -377,25 +421,27 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       viewModel.imageModelOptions = [
         ImageModelOption(
-          modelId: entry.key,
-          displayName: entry.key,
-          actualModel: entry.key,
+          modelId: model,
+          displayName: model,
+          actualModel: model,
           provider: ImageProviderType.novelAi,
           protocol: AppConstants.novelAiImageGenerationsProtocol,
         ),
       ];
-      viewModel.selectedModel = entry.key;
+      viewModel.selectedModel = model;
       viewModel.prompt = '1girl';
       await viewModel.addPreciseReference('reference.png');
 
       await viewModel.generate();
 
-      expect(repository.submitted, isEmpty);
-      expect(viewModel.errorMessage, contains(entry.value));
+      expect(viewModel.supportsPreciseReferences, isFalse);
+      expect(viewModel.preciseReferences, isEmpty);
+      expect(repository.submitted, hasLength(1));
+      expect(repository.submitted.single.preciseReferences, isEmpty);
     }
   });
 
-  test('7877 支持 Vibe 与精密参考两种模式', () async {
+  test('7877 仅支持 Vibe，不显示或添加精密参考', () async {
     final settings = _SettingsRepository();
     final history = _MemoryHistoryRepository();
     final repository = _CapturingGenerationRepository('unused');
@@ -423,6 +469,7 @@ void main() {
 
     await viewModel.setVibeReference('vibe.png');
     await viewModel.updateVibeReference(
+      0,
       viewModel.vibeReferences.single.copyWith(
         strength: 0.8,
         informationExtracted: 0.4,
@@ -431,7 +478,7 @@ void main() {
     await viewModel.generate();
 
     expect(viewModel.supportsVibeReferences, isTrue);
-    expect(viewModel.supportsPreciseReferences, isTrue);
+    expect(viewModel.supportsPreciseReferences, isFalse);
     expect(settings.savedVibeReferences.single.path, 'vibe.png');
     expect(repository.submitted, hasLength(1));
     expect(repository.submitted.single.vibeReferences, hasLength(1));
@@ -442,8 +489,8 @@ void main() {
     );
 
     await viewModel.addPreciseReference('precise.png');
-    expect(viewModel.vibeReferences, isEmpty);
-    expect(viewModel.preciseReferences.single.path, 'precise.png');
+    expect(viewModel.vibeReferences, hasLength(1));
+    expect(viewModel.preciseReferences, isEmpty);
   });
 
   test('7877 支持组合图生图与 Vibe 参考', () async {
@@ -657,6 +704,65 @@ void main() {
     expect(settings.savedReferenceMode, ReferenceMode.precise);
     expect(settings.savedPreciseReferences, task.preciseReferences);
     expect(settings.savedVibeReferences, isEmpty);
+  });
+
+  test('loadFromHistory keeps iku endpoint for matching model names', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:7877:nai-v4.5-full',
+        displayName: '7877 V4.5',
+        actualModel: 'nai-v4.5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: '7877',
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+      ImageModelOption(
+        modelId: 'nai:ikun:nai-v4.5-full',
+        displayName: 'ikun V4.5',
+        actualModel: 'nai-v4.5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: 'ikun',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    final task = GenerationTask(
+      taskId: 'history-ikun',
+      model: 'nai-v4.5-full',
+      endpointId: 'ikun',
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+      prompt: 'history prompt',
+      width: 832,
+      height: 1216,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'native',
+      preciseReferences: const [
+        PreciseReferenceImage(path: 'history-reference.png'),
+      ],
+      status: 'success',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+
+    await viewModel.loadFromHistory(task);
+
+    expect(viewModel.selectedModel, 'nai:ikun:nai-v4.5-full');
+    expect(viewModel.isIkunEndpoint, isTrue);
+    expect(viewModel.supportsPreciseReferences, isTrue);
+    expect(viewModel.preciseReferences, task.preciseReferences);
   });
 }
 
@@ -892,6 +998,10 @@ class _SettingsRepository implements SettingsRepository {
 
   @override
   Future<void> setBatchCount(int value) async => savedBatchCount = value;
+
+  @override
+  Future<void> setActiveEndpointId(
+      ImageProviderType provider, String? id) async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

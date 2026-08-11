@@ -5,7 +5,10 @@ class VibeEncoding extends Equatable {
   final String title;
   final String thumbnailPath;
   final String? sourceImagePath;
+
+  /// 编码正文仅在生成前按需从 App 私有文件读取；列表加载时为空。
   final String encodedVibe;
+  final String? encodedVibePath;
   final String? encodedModel;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -15,7 +18,8 @@ class VibeEncoding extends Equatable {
     required this.title,
     required this.thumbnailPath,
     this.sourceImagePath,
-    required this.encodedVibe,
+    this.encodedVibe = '',
+    this.encodedVibePath,
     this.encodedModel,
     required this.createdAt,
     required this.updatedAt,
@@ -27,6 +31,7 @@ class VibeEncoding extends Equatable {
     String? thumbnailPath,
     String? sourceImagePath,
     String? encodedVibe,
+    String? encodedVibePath,
     String? encodedModel,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -37,6 +42,7 @@ class VibeEncoding extends Equatable {
         thumbnailPath: thumbnailPath ?? this.thumbnailPath,
         sourceImagePath: sourceImagePath ?? this.sourceImagePath,
         encodedVibe: encodedVibe ?? this.encodedVibe,
+        encodedVibePath: encodedVibePath ?? this.encodedVibePath,
         encodedModel: encodedModel ?? this.encodedModel,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -49,6 +55,7 @@ class VibeEncoding extends Equatable {
         thumbnailPath,
         sourceImagePath,
         encodedVibe,
+        encodedVibePath,
         encodedModel,
         createdAt,
         updatedAt,

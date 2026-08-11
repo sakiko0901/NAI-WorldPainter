@@ -807,32 +807,6 @@ class _GeneratePageState extends State<GeneratePage> {
                   SizedBox(height: 16),
                 ],
 
-                // GPT / Nano 文生图参考图（可选）
-                if (_vm.isNonNovelAiProvider &&
-                    _vm.generationMode == GenerationMode.textToImage) ...[
-                  _buildGptReferenceImageSection(),
-                  SizedBox(height: 16),
-                ],
-
-                // 模型与基础参数
-                _buildModelSection(),
-                SizedBox(height: 16),
-
-                if (!_vm.isNonNovelAiProvider &&
-                    _vm.generationMode == GenerationMode.textToImage) ...[
-                  // 角色控制
-                  _CharacterControlSection(vm: _vm),
-                  SizedBox(height: 16),
-                  if (_vm.supportsVibeReferences) ...[
-                    _CharacterReferenceSection(
-                      vm: _vm,
-                      imagePicker: _imagePicker,
-                      onShowMessage: _showToast,
-                    ),
-                    SizedBox(height: 16),
-                  ],
-                ],
-
                 // 最新结果卡片
                 _buildResultSection(),
               ],
@@ -1304,12 +1278,29 @@ class _GeneratePageState extends State<GeneratePage> {
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w600)),
                 const Spacer(),
-                TextButton.icon(
-                  onPressed: () => setState(() => _isFullscreenMask = true),
-                  icon: Icon(CupertinoIcons.fullscreen, size: 16),
-                  label: Text('放大涂抹', style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.primary),
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => _openImagePreview(
+                        context,
+                        imagePath: _vm.sourceImagePath,
+                      ),
+                      icon: const Icon(CupertinoIcons.eye, size: 16),
+                      label: const Text('查看原图', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _isFullscreenMask = true),
+                      icon: const Icon(CupertinoIcons.fullscreen, size: 16),
+                      label: const Text('放大涂抹', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1488,9 +1479,22 @@ class _GeneratePageState extends State<GeneratePage> {
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.file(File(images[index]), fit: BoxFit.cover),
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _openImagePreview(
+                          context,
+                          imagePath: images[index],
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.file(
+                            File(images[index]),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
                     ),
                     Positioned(
                       top: 2,
@@ -2203,6 +2207,22 @@ class _GeneratePageState extends State<GeneratePage> {
             ButtonSegment(value: Img2ImgMode.tiled, label: Text('分块高清重绘')),
           ],
           selected: {_vm.img2ImgMode},
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.resolveWith((states) =>
+                states.contains(WidgetState.selected)
+                    ? const Color(0xFFF5D57A)
+                    : theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.45)),
+            foregroundColor: WidgetStateProperty.resolveWith((states) =>
+                states.contains(WidgetState.selected)
+                    ? Colors.black
+                    : theme.colorScheme.onSurfaceVariant),
+            side: WidgetStateProperty.resolveWith((states) => BorderSide(
+                  color: states.contains(WidgetState.selected)
+                      ? const Color(0xFFF5D57A)
+                      : theme.colorScheme.outline.withValues(alpha: 0.28),
+                )),
+          ),
           onSelectionChanged: (selection) =>
               _vm.updateImg2ImgMode(selection.first),
         ),
@@ -2222,9 +2242,7 @@ class _GeneratePageState extends State<GeneratePage> {
                   children: [
                     InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: _isPreparingImg2Img || isTiled
-                          ? null
-                          : _recropImg2ImgSource,
+                      onTap: () => _openImagePreview(context, imagePath: path),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: Image.file(file!,
@@ -2240,10 +2258,7 @@ class _GeneratePageState extends State<GeneratePage> {
                               style:
                                   const TextStyle(fontWeight: FontWeight.w600)),
                           const SizedBox(height: 4),
-                          Text(
-                              isTiled
-                                  ? '将整张原图分块高清重绘，约放大 1.6 倍'
-                                  : '点击缩略图可重新选择裁剪区域',
+                          Text(isTiled ? '将整张原图分块高清重绘，约放大 1.6 倍' : '点击缩略图可查看大图',
                               style: TextStyle(
                                   fontSize: 11,
                                   color: theme.colorScheme.onSurfaceVariant)),
@@ -2251,6 +2266,13 @@ class _GeneratePageState extends State<GeneratePage> {
                           Wrap(
                             spacing: 4,
                             children: [
+                              if (!isTiled)
+                                TextButton(
+                                  onPressed: _isPreparingImg2Img
+                                      ? null
+                                      : _recropImg2ImgSource,
+                                  child: const Text('重新裁剪'),
+                                ),
                               TextButton(
                                 onPressed: _isPreparingImg2Img
                                     ? null
@@ -2308,11 +2330,11 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  Widget _buildModelSection() {
+  Widget _buildModelSection({bool initiallyExpanded = true}) {
     return _PremiumAccordion(
       title: '模型与基础参数',
       icon: CupertinoIcons.cube_box,
-      initiallyExpanded: true,
+      initiallyExpanded: initiallyExpanded,
       children: [
         Text('AI 模型',
             style: TextStyle(
@@ -2740,138 +2762,348 @@ class _GeneratePageState extends State<GeneratePage> {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           decoration: BoxDecoration(
             color: barColor,
             border: Border(top: BorderSide(color: barBorder, width: 0.5)),
           ),
           child: SafeArea(
             top: false,
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                if (widget.onNavigate != null) ...[
-                  IconButton(
-                    icon: Icon(CupertinoIcons.clock, color: navIconColor),
-                    onPressed: () => widget.onNavigate!(0),
-                  ),
-                  SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: GestureDetector(
-                    onTap: _vm.isGenerating
-                        ? () => _vm.isTiledImg2Img
-                            ? _vm.cancelTiledImg2Img()
-                            : _vm.cancelBatch()
-                        : () => _vm.generate(),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      height: 56,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: _vm.isGenerating
-                              ? [
-                                  primary.withValues(alpha: 0.28),
-                                  primary.withValues(alpha: 0.16)
-                                ]
-                              : idleButtonColors,
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: _vm.isGenerating
-                            ? null
-                            : [
-                                BoxShadow(
-                                  color: primary.withValues(alpha: 0.3),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
+                _buildGenerationSettingsButton(),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    if (widget.onNavigate != null) ...[
+                      IconButton(
+                        icon: Icon(CupertinoIcons.clock, color: navIconColor),
+                        onPressed: () => widget.onNavigate!(0),
                       ),
-                      child: Center(
-                        child: _vm.isGenerating
-                            ? Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface)),
-                                  SizedBox(width: 12),
-                                  Text(
-                                    _vm.isTiledImg2Img
-                                        ? (_vm.isTiledCancelling
-                                            ? '取消中…'
-                                            : '取消分块重绘 ${_vm.tiledCompleted}/${_vm.tiledTotal}')
-                                        : (_vm.isBatchCancelling
-                                            ? '取消中…'
-                                            : (_vm.batchCount > 1
-                                                ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
-                                                : '取消生成')),
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 16),
-                                  ),
-                                ],
-                              )
-                            : Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(CupertinoIcons.wand_rays,
-                                      color: buttonTextColor, size: 20),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Generate',
-                                    style: TextStyle(
-                                      color: buttonTextColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                  if (_vm.pendingCount > 0) ...[
-                                    SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                            alpha: isDark ? 0.2 : 0.16),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        '${_vm.pendingCount} in queue',
-                                        style: TextStyle(
-                                            color: buttonTextColor,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold),
-                                      ),
+                      SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: _vm.isGenerating
+                            ? () => _vm.isTiledImg2Img
+                                ? _vm.cancelTiledImg2Img()
+                                : _vm.cancelBatch()
+                            : () => _vm.generate(),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          height: 56,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: _vm.isGenerating
+                                  ? [
+                                      primary.withValues(alpha: 0.28),
+                                      primary.withValues(alpha: 0.16)
+                                    ]
+                                  : idleButtonColors,
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(28),
+                            boxShadow: _vm.isGenerating
+                                ? null
+                                : [
+                                    BoxShadow(
+                                      color: primary.withValues(alpha: 0.3),
+                                      blurRadius: 20,
+                                      offset: const Offset(0, 8),
                                     ),
                                   ],
-                                ],
-                              ),
+                          ),
+                          child: Center(
+                            child: _vm.isGenerating
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface)),
+                                      SizedBox(width: 12),
+                                      Text(
+                                        _vm.isTiledImg2Img
+                                            ? (_vm.isTiledCancelling
+                                                ? '取消中…'
+                                                : '取消分块重绘 ${_vm.tiledCompleted}/${_vm.tiledTotal}')
+                                            : (_vm.isBatchCancelling
+                                                ? '取消中…'
+                                                : (_vm.batchCount > 1
+                                                    ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
+                                                    : '取消生成')),
+                                        style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 16),
+                                      ),
+                                    ],
+                                  )
+                                : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(CupertinoIcons.wand_rays,
+                                          color: buttonTextColor, size: 20),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Generate',
+                                        style: TextStyle(
+                                          color: buttonTextColor,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                      if (_vm.pendingCount > 0) ...[
+                                        SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(
+                                                alpha: isDark ? 0.2 : 0.16),
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            '${_vm.pendingCount} in queue',
+                                            style: TextStyle(
+                                                color: buttonTextColor,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    if (widget.onNavigate != null) ...[
+                      SizedBox(width: 8),
+                      IconButton(
+                        icon:
+                            Icon(CupertinoIcons.settings, color: navIconColor),
+                        onPressed: () => widget.onNavigate!(2),
+                      ),
+                    ],
+                  ],
                 ),
-                if (widget.onNavigate != null) ...[
-                  SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(CupertinoIcons.settings, color: navIconColor),
-                    onPressed: () => widget.onNavigate!(2),
-                  ),
-                ],
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildGenerationSettingsButton() {
+    final option = _vm.currentModelOption;
+    final model =
+        option?.displayName.isNotEmpty == true ? option!.displayName : '生成设置';
+    final referenceCount = _vm.isNonNovelAiProvider
+        ? _vm.gptImagePaths.length
+        : _vm.referenceMode == ReferenceMode.vibe
+            ? _vm.vibeReferences.length
+            : _vm.preciseReferences.length;
+    final details = <String>[
+      model,
+      _vm.resolutionLabel(_vm.selectedResolution),
+      if (referenceCount > 0) '$referenceCount 张参考图',
+      if (_vm.generationMode == GenerationMode.textToImage &&
+          _vm.supportsPreciseReferences &&
+          _vm.preciseReferences.isEmpty)
+        '可添加精密参照',
+    ];
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openGenerationSettings,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context)
+                .colorScheme
+                .surfaceContainerHighest
+                .withValues(alpha: 0.58),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.1),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(CupertinoIcons.slider_horizontal_3,
+                  size: 18, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              const Text('生成设置',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  details.join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(CupertinoIcons.chevron_up,
+                  size: 15,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openGenerationSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _GenerationSettingsSheet(
+        vm: _vm,
+        buildModelSection: () => _buildModelSection(initiallyExpanded: false),
+        buildCharacterSection: () => _CharacterControlSection(vm: _vm),
+        buildReferenceSection: () => _CharacterReferenceSection(
+          vm: _vm,
+          imagePicker: _imagePicker,
+          onShowMessage: _showToast,
+        ),
+        buildGptReferenceSection: _buildGptReferenceImageSection,
+      ),
+    );
+  }
+}
+
+class _GenerationSettingsSheet extends StatelessWidget {
+  final GenerationViewModel vm;
+  final Widget Function() buildModelSection;
+  final Widget Function() buildCharacterSection;
+  final Widget Function() buildReferenceSection;
+  final Widget Function() buildGptReferenceSection;
+
+  const _GenerationSettingsSheet({
+    required this.vm,
+    required this.buildModelSection,
+    required this.buildCharacterSection,
+    required this.buildReferenceSection,
+    required this.buildGptReferenceSection,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final maxHeight = (media.size.height - media.viewInsets.bottom) * 0.9;
+    final theme = Theme.of(context);
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+      child: AnimatedBuilder(
+        animation: vm,
+        builder: (context, _) {
+          final isNovelAiTextToImage = !vm.isNonNovelAiProvider &&
+              vm.generationMode == GenerationMode.textToImage;
+          final isExternalTextToImage = vm.isNonNovelAiProvider &&
+              vm.generationMode == GenerationMode.textToImage;
+          return Align(
+            alignment: Alignment.bottomCenter,
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeInOutCubic,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 42,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text('生成设置',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: theme.colorScheme.onSurface,
+                            )),
+                        const SizedBox(height: 12),
+                        KeyedSubtree(
+                          key: const ValueKey('generation_settings_model'),
+                          child: buildModelSection(),
+                        ),
+                        if (isNovelAiTextToImage) ...[
+                          const SizedBox(height: 12),
+                          KeyedSubtree(
+                            key:
+                                const ValueKey('generation_settings_character'),
+                            child: buildCharacterSection(),
+                          ),
+                          const SizedBox(height: 12),
+                          KeyedSubtree(
+                            key:
+                                const ValueKey('generation_settings_reference'),
+                            child: buildReferenceSection(),
+                          ),
+                        ],
+                        if (isExternalTextToImage) ...[
+                          const SizedBox(height: 12),
+                          KeyedSubtree(
+                            key:
+                                const ValueKey('generation_settings_reference'),
+                            child: buildGptReferenceSection(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -3072,7 +3304,7 @@ class _CharacterReferenceSection extends StatelessWidget {
       initiallyExpanded: false,
       children: [
         _ReferenceModePanel(
-          title: '氛围转移',
+          title: '氛围转移（${vm.vibeReferences.length}/${vm.maxVibeReferences}）',
           icon: CupertinoIcons.photo,
           isActive: vibeActive,
           onTap: () => _switchMode(context, ReferenceMode.vibe),
@@ -3080,7 +3312,9 @@ class _CharacterReferenceSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               OutlinedButton.icon(
-                onPressed: () => _showVibeSourceMenu(context),
+                onPressed: vm.vibeReferences.length >= vm.maxVibeReferences
+                    ? null
+                    : () => _showVibeSourceMenu(context),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: colors.primary,
                   side: BorderSide(
@@ -3090,24 +3324,22 @@ class _CharacterReferenceSection extends StatelessWidget {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                icon: Icon(
-                  vm.vibeReferences.isEmpty
-                      ? CupertinoIcons.photo
-                      : CupertinoIcons.arrow_2_circlepath,
-                  size: 17,
-                ),
-                label: Text(
-                  vm.vibeReferences.isEmpty ? '选择氛围参考图' : '替换氛围参考图',
-                ),
+                icon: const Icon(CupertinoIcons.add, size: 17),
+                label:
+                    Text(vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加氛围参考图'),
               ),
-              if (vm.vibeReferences.isNotEmpty)
+              for (final entry in vm.vibeReferences.asMap().entries)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: _ReferenceImageCard(
-                    image: vm.vibeReferences.first,
-                    onReplace: () => _showVibeSourceMenu(context),
-                    onUpdate: vm.updateVibeReference,
-                    onDelete: vm.removeVibeReference,
+                    image: entry.value,
+                    onReplace: () => _showVibeSourceMenu(
+                      context,
+                      replaceIndex: entry.key,
+                    ),
+                    onUpdate: (reference) =>
+                        vm.updateVibeReference(entry.key, reference),
+                    onDelete: () => vm.removeVibeReference(entry.key),
                   ),
                 ),
             ],
@@ -3188,7 +3420,10 @@ class _CharacterReferenceSection extends StatelessWidget {
     onShowMessage(target == ReferenceMode.vibe ? '已切换为氛围转移' : '已切换为精密参照图像');
   }
 
-  Future<void> _showVibeSourceMenu(BuildContext context) async {
+  Future<void> _showVibeSourceMenu(
+    BuildContext context, {
+    int? replaceIndex,
+  }) async {
     final source = await showCupertinoModalPopup<String>(
       context: context,
       builder: (context) => CupertinoActionSheet(
@@ -3210,79 +3445,60 @@ class _CharacterReferenceSection extends StatelessWidget {
       ),
     );
     if (source == 'image') {
-      await _pickVibe();
+      await _pickVibes(replaceIndex: replaceIndex);
     } else if (source == 'library' && context.mounted) {
-      final selected = await _showVibeLibraryPicker(context);
-      if (selected != null) await vm.selectVibeEncoding(selected);
+      final selected = await _showVibeLibraryPicker(
+        context,
+        maxSelection: replaceIndex == null
+            ? vm.maxVibeReferences - vm.vibeReferences.length
+            : 1,
+      );
+      if (selected.isEmpty) return;
+      if (replaceIndex == null) {
+        final added = await vm.addVibeEncodings(selected);
+        if (context.mounted && added < selected.length) {
+          onShowMessage('已添加 $added 条氛围参考，最多 ${vm.maxVibeReferences} 条');
+        }
+      } else {
+        await vm.replaceVibeReferenceWithEncoding(replaceIndex, selected.first);
+      }
     }
   }
 
-  Future<VibeEncoding?> _showVibeLibraryPicker(BuildContext context) async {
+  Future<List<VibeEncoding>> _showVibeLibraryPicker(
+    BuildContext context, {
+    required int maxSelection,
+  }) async {
     final viewModel = sl<VibeEncodingViewModel>();
     await viewModel.load();
-    if (!context.mounted) return null;
-    return showModalBottomSheet<VibeEncoding>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => ListenableBuilder(
-        listenable: viewModel,
-        builder: (context, _) {
-          if (viewModel.encodings.isEmpty) {
-            return const SizedBox(
-              height: 180,
-              child: Center(child: Text('暂无已保存的氛围编码')),
-            );
-          }
-          return GridView.builder(
-            padding: const EdgeInsets.all(16),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.78,
-            ),
-            itemCount: viewModel.encodings.length,
-            itemBuilder: (context, index) {
-              final encoding = viewModel.encodings[index];
-              return InkWell(
-                onTap: () => Navigator.pop(context, encoding),
-                borderRadius: BorderRadius.circular(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.file(
-                          File(encoding.thumbnailPath),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            CupertinoIcons.photo,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      encoding.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
+    if (!context.mounted) return const [];
+    return await showModalBottomSheet<List<VibeEncoding>>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (_) => _VibeEncodingMultiPicker(
+            encodings: viewModel.encodings,
+            maxSelection: maxSelection,
+          ),
+        ) ??
+        const [];
   }
 
-  Future<void> _pickVibe() async {
+  Future<void> _pickVibes({int? replaceIndex}) async {
+    if (replaceIndex == null) {
+      final images = await imagePicker.pickMultiImage();
+      final added = await vm.addVibeReferences(
+        images.map((image) => image.path),
+      );
+      if (images.isNotEmpty && added < images.length) {
+        onShowMessage('已添加 $added 条氛围参考，最多 ${vm.maxVibeReferences} 条');
+      }
+      return;
+    }
     final image = await imagePicker.pickImage(source: ImageSource.gallery);
-    if (image != null) await vm.setVibeReference(image.path);
+    if (image != null) {
+      await vm.replaceVibeReferenceWithPath(replaceIndex, image.path);
+    }
   }
 
   Future<void> _addPreciseReference() async {
@@ -3293,6 +3509,146 @@ class _CharacterReferenceSection extends StatelessWidget {
   Future<void> _replacePreciseReference(int index) async {
     final picked = await imagePicker.pickImage(source: ImageSource.gallery);
     if (picked != null) await vm.replacePreciseReference(index, picked.path);
+  }
+}
+
+class _VibeEncodingMultiPicker extends StatefulWidget {
+  final List<VibeEncoding> encodings;
+  final int maxSelection;
+
+  const _VibeEncodingMultiPicker({
+    required this.encodings,
+    required this.maxSelection,
+  });
+
+  @override
+  State<_VibeEncodingMultiPicker> createState() =>
+      _VibeEncodingMultiPickerState();
+}
+
+class _VibeEncodingMultiPickerState extends State<_VibeEncodingMultiPicker> {
+  final Set<int> _selectedIds = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      top: false,
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.72,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('选择 Vibe 编码',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800)),
+                  ),
+                  Text('${_selectedIds.length}/${widget.maxSelection}',
+                      style: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      )),
+                ],
+              ),
+            ),
+            Expanded(
+              child: widget.encodings.isEmpty
+                  ? const Center(child: Text('暂无已保存的氛围编码'))
+                  : GridView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 0.78,
+                      ),
+                      itemCount: widget.encodings.length,
+                      itemBuilder: (context, index) {
+                        final encoding = widget.encodings[index];
+                        final id = encoding.id;
+                        final selected =
+                            id != null && _selectedIds.contains(id);
+                        return InkWell(
+                          onTap: id == null
+                              ? null
+                              : () => setState(() {
+                                    if (selected) {
+                                      _selectedIds.remove(id);
+                                    } else if (_selectedIds.length <
+                                        widget.maxSelection) {
+                                      _selectedIds.add(id);
+                                    }
+                                  }),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.file(
+                                        File(encoding.thumbnailPath),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(CupertinoIcons.photo),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    encoding.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                              if (selected)
+                                Positioned(
+                                  top: 6,
+                                  right: 6,
+                                  child: Icon(
+                                      CupertinoIcons.check_mark_circled_solid,
+                                      color: theme.colorScheme.primary,
+                                      size: 24),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _selectedIds.isEmpty
+                      ? null
+                      : () => Navigator.pop(
+                            context,
+                            widget.encodings
+                                .where((encoding) =>
+                                    encoding.id != null &&
+                                    _selectedIds.contains(encoding.id))
+                                .toList(),
+                          ),
+                  child: Text('添加 ${_selectedIds.length} 条编码'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -3416,7 +3772,10 @@ class _ReferenceImageCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: onReplace,
+                onTap: () => showFullscreenImagePreview(
+                  context,
+                  imagePath: previewPath,
+                ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
@@ -3460,19 +3819,6 @@ class _ReferenceImageCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    _ReferenceSlider(
-                      label: '参考强度',
-                      value: image.strength,
-                      onChanged: (value) =>
-                          onUpdate(image.copyWith(strength: value)),
-                    ),
-                    _ReferenceSlider(
-                      label: '信息提取',
-                      value: image.informationExtracted,
-                      onChanged: (value) => onUpdate(
-                        image.copyWith(informationExtracted: value),
-                      ),
-                    ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
@@ -3493,6 +3839,18 @@ class _ReferenceImageCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          _ReferenceSlider(
+            label: '参考强度',
+            value: image.strength,
+            onChanged: (value) => onUpdate(image.copyWith(strength: value)),
+          ),
+          _ReferenceSlider(
+            label: '信息提取',
+            value: image.informationExtracted,
+            onChanged: (value) =>
+                onUpdate(image.copyWith(informationExtracted: value)),
           ),
         ],
       ),
@@ -3592,7 +3950,10 @@ class _PreciseReferenceCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: onReplace,
+                onTap: () => showFullscreenImagePreview(
+                  context,
+                  imagePath: image.path,
+                ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
@@ -3614,28 +3975,23 @@ class _PreciseReferenceCard extends StatelessWidget {
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  children: [
-                    _PreciseReferenceSlider(
-                      label: '强度',
-                      value: image.strength,
-                      onChanged: (value) =>
-                          onUpdate(image.copyWith(strength: value)),
-                    ),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: onReplace,
-                        icon: const Icon(CupertinoIcons.arrow_2_circlepath,
-                            size: 15),
-                        label: const Text('替换图片'),
-                      ),
-                    ),
-                  ],
+                child: Align(
+                  alignment: Alignment.bottomRight,
+                  child: TextButton.icon(
+                    onPressed: onReplace,
+                    icon:
+                        const Icon(CupertinoIcons.arrow_2_circlepath, size: 15),
+                    label: const Text('替换图片'),
+                  ),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          _PreciseReferenceSlider(
+            label: '强度',
+            value: image.strength,
+            onChanged: (value) => onUpdate(image.copyWith(strength: value)),
           ),
         ],
       ),

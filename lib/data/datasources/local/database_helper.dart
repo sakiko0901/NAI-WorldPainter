@@ -118,7 +118,8 @@ class DatabaseHelper {
         title TEXT NOT NULL,
         thumbnail_path TEXT NOT NULL,
         source_image_path TEXT,
-        encoded_vibe TEXT NOT NULL,
+        encoded_vibe TEXT NOT NULL DEFAULT '',
+        encoded_vibe_path TEXT,
         encoded_model TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -336,9 +337,31 @@ class DatabaseHelper {
         );
       }
     }
+    if (oldVersion < 15) {
+      await _ensureVibeEncodingTable(db);
+    }
   }
 
-  Future<void> _onOpen(Database db) => _ensureGenerationHistoryColumns(db);
+  Future<void> _onOpen(Database db) async {
+    await _ensureGenerationHistoryColumns(db);
+    await _ensureVibeEncodingTable(db);
+  }
+
+  Future<void> _ensureVibeEncodingTable(Database db) async {
+    await _createVibeEncodingTables(db);
+    final table = await db.rawQuery('PRAGMA table_info(vibe_encodings)');
+    final columns = table.map((column) => column['name'] as String).toSet();
+    if (!columns.contains('source_image_path')) {
+      await db.execute(
+        'ALTER TABLE vibe_encodings ADD COLUMN source_image_path TEXT',
+      );
+    }
+    if (!columns.contains('encoded_vibe_path')) {
+      await db.execute(
+        'ALTER TABLE vibe_encodings ADD COLUMN encoded_vibe_path TEXT',
+      );
+    }
+  }
 
   Future<void> _ensureGenerationHistoryColumns(Database db) async {
     final table = await db.rawQuery('PRAGMA table_info(generation_history)');

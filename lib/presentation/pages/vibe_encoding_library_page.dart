@@ -98,38 +98,54 @@ class _VibeEncodingLibraryPageState extends State<VibeEncodingLibraryPage> {
       appBar: AppBar(title: const Text('Vibe 编码库')),
       body: _vm.isLoading
           ? const Center(child: CupertinoActivityIndicator())
-          : _vm.encodings.isEmpty
+          : _vm.error != null
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      '暂无已保存的氛围编码\n首次使用本地氛围参考图完成编码后，会自动出现在这里。',
+                      _vm.error!,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         height: 1.5,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: Theme.of(context).colorScheme.error,
                       ),
                     ),
                   ),
                 )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 16,
-                    crossAxisSpacing: 16,
-                    childAspectRatio: 0.78,
-                  ),
-                  itemCount: _vm.encodings.length,
-                  itemBuilder: (context, index) {
-                    final encoding = _vm.encodings[index];
-                    return _VibeEncodingCard(
-                      encoding: encoding,
-                      onRename: () => _rename(encoding),
-                      onDelete: () => _delete(encoding),
-                    );
-                  },
-                ),
+              : _vm.encodings.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          '暂无已保存的氛围编码\n首次使用本地氛围参考图完成编码后，会自动出现在这里。',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            height: 1.5,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    )
+                  : GridView.builder(
+                      padding: const EdgeInsets.all(16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        mainAxisSpacing: 16,
+                        crossAxisSpacing: 16,
+                        childAspectRatio: 0.78,
+                      ),
+                      itemCount: _vm.encodings.length,
+                      itemBuilder: (context, index) {
+                        final encoding = _vm.encodings[index];
+                        return _VibeEncodingCard(
+                          encoding: encoding,
+                          onRename: () => _rename(encoding),
+                          onDelete: () => _delete(encoding),
+                        );
+                      },
+                    ),
     );
   }
 }

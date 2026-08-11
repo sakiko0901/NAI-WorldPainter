@@ -6,7 +6,7 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 14;
+  static const int dbVersion = 15;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
@@ -41,6 +41,8 @@ class AppConstants {
   static const String keyVibeReferencesDraft = 'vibe_references_draft';
   static const String keyPreciseReferencesDraft = 'precise_references_draft';
   static const String keyReferenceModeDraft = 'reference_mode_draft';
+  static const int maxVibeReferences = 4;
+  static const int maxIkunVibeReferences = 1;
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
   static const String keyInpaintNegativePromptDraft =
       'inpaint_negative_prompt_draft';
@@ -161,8 +163,7 @@ class AppConstants {
   /// 设计动机：部分 vision 中转站把 OpenAI tool 消息转 Gemini functionResponse
   /// 时丢 name 字段，导致 400 错误。vision 路径不再跑带 tools 的 agent，
   /// 把工具链交给更可控的 main 模型。
-  static const String defaultVisionDescribePrompt =
-      '你是图像识别助手。请用结构化中文描述这张图：\n'
+  static const String defaultVisionDescribePrompt = '你是图像识别助手。请用结构化中文描述这张图：\n'
       '1. 角色名（含作品，若可识别）\n'
       '2. 性别与人数\n'
       '3. 发色与发型\n'

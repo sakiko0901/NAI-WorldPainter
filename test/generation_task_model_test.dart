@@ -41,6 +41,21 @@ void main() {
     expect(GenerationTaskModel.fromDb(row).steps, 28);
   });
 
+  test('Vibe reference defaults to 0.3 and keeps explicit legacy strength', () {
+    expect(const CharacterReferenceImage(path: 'reference.png').strength, 0.3);
+    expect(
+      CharacterReferenceImage.fromJson(const {'path': 'reference.png'})
+          .strength,
+      0.3,
+    );
+    expect(
+      CharacterReferenceImage.fromJson(
+        const {'path': 'reference.png', 'strength': 0.6},
+      ).strength,
+      0.6,
+    );
+  });
+
   test('legacy Precise history ignores fidelity when reserialized', () {
     final row = GenerationTaskModel.fromEntity(task()).toDb()
       ..['precise_references'] = jsonEncode([
