@@ -1,6 +1,8 @@
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
+import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
 
 class ManageLlmChatUseCase {
@@ -9,10 +11,28 @@ class ManageLlmChatUseCase {
   ManageLlmChatUseCase(this._repo);
 
   Future<List<LlmSession>> listSessions() => _repo.listSessions();
-  Future<LlmSession> createSession({String? initialTitle}) =>
-      _repo.createSession(initialTitle: initialTitle);
+  Future<LlmSession> createSession({
+    String? initialTitle,
+    String scope = 'general',
+    String? contextKey,
+    NaiPromptVersion promptVersion = NaiPromptVersion.v45,
+  }) =>
+      _repo.createSession(
+        initialTitle: initialTitle,
+        scope: scope,
+        contextKey: contextKey,
+        promptVersion: promptVersion,
+      );
+
+  Future<LlmSession?> findSessionByContextKey(String contextKey) =>
+      _repo.findSessionByContextKey(contextKey);
   Future<void> renameSession(String id, String title) =>
       _repo.renameSession(id, title);
+  Future<void> setSessionPromptVersion(
+    String id,
+    NaiPromptVersion version,
+  ) =>
+      _repo.setSessionPromptVersion(id, version);
   Future<void> deleteSession(String id) => _repo.deleteSession(id);
   Future<void> deleteAllSessions() => _repo.deleteAllSessions();
   Future<List<LlmMessage>> listMessages(String sessionId) =>
@@ -36,17 +56,34 @@ class ManageLlmChatUseCase {
     required String assistantText,
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
+    LlmInteraction? interaction,
   }) =>
       _repo.saveAgentRunResult(
         sessionId: sessionId,
         assistantText: assistantText,
         toolCallsJson: toolCallsJson,
         agentTimeline: agentTimeline,
+        interaction: interaction,
       );
 
   /// 删除指定消息及其之后的所有消息
   Future<void> deleteMessagesFrom(int messageId, String sessionId) =>
       _repo.deleteMessagesFrom(messageId, sessionId);
+
+  Future<LlmMessage?> answerInteraction({
+    required String sessionId,
+    required int messageId,
+    required String interactionId,
+    String? optionId,
+    String? customAnswer,
+  }) =>
+      _repo.answerInteraction(
+        sessionId: sessionId,
+        messageId: messageId,
+        interactionId: interactionId,
+        optionId: optionId,
+        customAnswer: customAnswer,
+      );
 
   /// 仅落库 user + assistant 消息（不调 LLM，无 tool 调用的单次回复场景）
   Future<LlmMessage> saveUserAndAssistantMessages({

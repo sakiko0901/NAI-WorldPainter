@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 
 /// Agent 工具的执行结果
 @immutable
@@ -15,20 +18,27 @@ class ToolResult {
   /// 副产物：是否需要 LLM 再次思考（例如生成了新 prompt，可以提示 LLM）
   final String? followUpHint;
 
+  /// 需要用户回答的结构化交互。
+  final LlmInteraction? interaction;
+
   const ToolResult({
     required this.success,
     required this.text,
     required this.displayText,
     this.followUpHint,
+    this.interaction,
   });
 
   factory ToolResult.success(String text,
-      {String? displayText, String? followUpHint}) {
+      {String? displayText,
+      String? followUpHint,
+      LlmInteraction? interaction}) {
     return ToolResult(
       success: true,
       text: text,
       displayText: displayText ?? text,
       followUpHint: followUpHint,
+      interaction: interaction,
     );
   }
 
@@ -45,6 +55,7 @@ class ToolResult {
         'text': text,
         'displayText': displayText,
         if (followUpHint != null) 'followUpHint': followUpHint,
+        if (interaction != null) 'interaction': interaction!.toJson(),
       };
 
   static ToolResult fromJson(Map<String, dynamic> json) {
@@ -53,6 +64,9 @@ class ToolResult {
       text: json['text'] as String? ?? '',
       displayText: json['displayText'] as String? ?? '',
       followUpHint: json['followUpHint'] as String?,
+      interaction: json['interaction'] is Map
+          ? LlmInteraction.fromJsonString(jsonEncode(json['interaction']))
+          : null,
     );
   }
 }

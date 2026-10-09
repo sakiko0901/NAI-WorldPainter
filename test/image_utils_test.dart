@@ -133,6 +133,18 @@ void main() {
     );
   });
 
+  test('NovelAI mask preserves repaint strokes inside a latent cell', () {
+    final mask = img.Image(width: 8, height: 8, numChannels: 4);
+    img.fill(mask, color: img.ColorRgba8(0, 0, 0, 255));
+    mask.setPixelRgba(4, 4, 255, 255, 255, 255);
+
+    final decoded = img.decodePng(ImageUtils.encodeNovelAiMask(mask))!;
+
+    for (final pixel in decoded) {
+      expect(pixel.r, 255);
+    }
+  });
+
   test('NovelAI mask is grayscale, binary and aligned to 8px cells', () {
     final mask = img.Image(width: 16, height: 16, numChannels: 4);
     img.fill(mask, color: img.ColorRgba8(0, 0, 0, 255));

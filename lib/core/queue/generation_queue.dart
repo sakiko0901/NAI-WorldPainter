@@ -40,6 +40,19 @@ class GenerationQueue {
     _processNext();
   }
 
+  /// 入队内部任务并等待终态，供漫画等项目级编排安全关联候选结果。
+  Future<GenerationTask> enqueueTransientAndWait(GenerationTask task) {
+    final completion = Completer<GenerationTask>();
+    _queue.add(_QueuedTask(
+      task,
+      persistHistory: false,
+      completion: completion,
+    ));
+    _notifyState();
+    _processNext();
+    return completion.future;
+  }
+
   /// 批量入队
   Future<void> enqueueAll(List<GenerationTask> tasks) async {
     _queue.addAll(tasks.map((task) => _QueuedTask(task, persistHistory: true)));
@@ -51,7 +64,12 @@ class GenerationQueue {
   bool cancel(String taskId) {
     final index = _queue.indexWhere((entry) => entry.task.taskId == taskId);
     if (index >= 0) {
-      _queue.removeAt(index);
+      final removed = _queue.removeAt(index);
+      removed.completion?.complete(removed.task.copyWith(
+        status: 'failed',
+        errorMessage: '任务已取消',
+        completedAt: DateTime.now(),
+      ));
       _notifyState();
       return true;
     }
@@ -60,6 +78,13 @@ class GenerationQueue {
 
   /// 清空队列
   void clear() {
+    for (final queuedTask in _queue) {
+      queuedTask.completion?.complete(queuedTask.task.copyWith(
+        status: 'failed',
+        errorMessage: '任务已取消',
+        completedAt: DateTime.now(),
+      ));
+    }
     _queue.clear();
     _notifyState();
   }
@@ -85,6 +110,7 @@ class GenerationQueue {
         await _historyRepo.updateTask(completedTask);
       }
       _taskController.add(completedTask);
+      queuedTask.completion?.complete(completedTask);
     } on ApiException catch (e) {
       final failedTask = _currentTask!.copyWith(
         status: 'failed',
@@ -92,6 +118,7 @@ class GenerationQueue {
         completedAt: DateTime.now(),
       );
       await _publishFailedTask(failedTask, queuedTask.persistHistory);
+      queuedTask.completion?.complete(failedTask);
     } catch (e) {
       final failedTask = _currentTask!.copyWith(
         status: 'failed',
@@ -99,6 +126,7 @@ class GenerationQueue {
         completedAt: DateTime.now(),
       );
       await _publishFailedTask(failedTask, queuedTask.persistHistory);
+      queuedTask.completion?.complete(failedTask);
     } finally {
       _currentTask = null;
       _isProcessing = false;
@@ -139,8 +167,13 @@ class GenerationQueue {
 class _QueuedTask {
   final GenerationTask task;
   final bool persistHistory;
+  final Completer<GenerationTask>? completion;
 
-  const _QueuedTask(this.task, {required this.persistHistory});
+  const _QueuedTask(
+    this.task, {
+    required this.persistHistory,
+    this.completion,
+  });
 }
 
 class QueueState {

@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
@@ -11,6 +13,15 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
+
+const _ikunEndpoint = ApiEndpoint(
+  id: AppConstants.novelAiImageGenerationsEndpointId,
+  name: 'ikun',
+  baseUrl: 'https://ikun.example',
+  apiKey: 'ikun-key',
+  models: ['model'],
+  protocol: AppConstants.novelAiImageGenerationsProtocol,
+);
 
 void main() {
   test(
@@ -38,6 +49,8 @@ void main() {
     );
     final repository = GenerationRepositoryImpl(
       apiService: service,
+      officialApiService: OfficialNovelAiApiService(Dio()),
+      officialTokenStore: OfficialNovelAiTokenStore(),
       gptApiService: GptApiService(Dio()),
       nanoApiService: NanoBananaApiService(Dio()),
       settingsRepo: settings,
@@ -54,6 +67,8 @@ void main() {
     final service = _RecordingNovelAiService();
     final repository = GenerationRepositoryImpl(
       apiService: service,
+      officialApiService: OfficialNovelAiApiService(Dio()),
+      officialTokenStore: OfficialNovelAiTokenStore(),
       gptApiService: GptApiService(Dio()),
       nanoApiService: NanoBananaApiService(Dio()),
       settingsRepo: _FakeSettingsRepository(
@@ -88,20 +103,54 @@ void main() {
     expect(reference.title, 'saved vibe');
   });
 
+  test('ikun raw Vibe is passed to gateway without 7877 pre-encoding',
+      () async {
+    final service = _RecordingNovelAiService();
+    final repository = GenerationRepositoryImpl(
+      apiService: service,
+      officialApiService: OfficialNovelAiApiService(Dio()),
+      officialTokenStore: OfficialNovelAiTokenStore(),
+      gptApiService: GptApiService(Dio()),
+      nanoApiService: NanoBananaApiService(Dio()),
+      settingsRepo: _FakeSettingsRepository(
+        endpoints: const [_ikunEndpoint],
+        activeId: AppConstants.novelAiImageGenerationsEndpointId,
+      ),
+      vibeEncodingRepo: _FakeVibeEncodingRepository(),
+    );
+
+    await repository.submitGeneration(
+      _task(
+        endpointId: AppConstants.novelAiImageGenerationsEndpointId,
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+        vibeReferences: const [CharacterReferenceImage(path: 'vibe.png')],
+      ),
+    );
+
+    expect(service.task!.vibeReferences.single.path, 'vibe.png');
+    expect(service.task!.vibeReferences.single.encodedVibe, isNull);
+  });
+
   test('ikun rejects img2img with Vibe instead of dropping the reference',
       () async {
     final repository = GenerationRepositoryImpl(
       apiService: _RecordingNovelAiService(),
+      officialApiService: OfficialNovelAiApiService(Dio()),
+      officialTokenStore: OfficialNovelAiTokenStore(),
       gptApiService: GptApiService(Dio()),
       nanoApiService: NanoBananaApiService(Dio()),
-      settingsRepo: _FakeSettingsRepository(endpoints: const [], activeId: ''),
+      settingsRepo: _FakeSettingsRepository(
+        endpoints: const [_ikunEndpoint],
+        activeId: AppConstants.novelAiImageGenerationsEndpointId,
+      ),
       vibeEncodingRepo: _FakeVibeEncodingRepository(),
     );
 
     expect(
       () => repository.submitGeneration(
         _task(
-          protocol: AppConstants.novelAiImageGenerationsProtocol,
+          endpointId: AppConstants.novelAiImageGenerationsEndpointId,
+          protocol: AppConstants.novelAiChatCompletionsProtocol,
           img2imgSourceImagePath: 'source.png',
           vibeReferences: const [CharacterReferenceImage(path: 'vibe.png')],
         ),

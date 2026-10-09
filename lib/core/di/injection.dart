@@ -3,19 +3,23 @@ import 'package:sqflite/sqflite.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:nai_huishi/data/datasources/local/asset_prompting_skill_loader.dart';
 import 'package:nai_huishi/data/datasources/local/database_helper.dart';
+import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/local/settings_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/bing_search_service.dart';
 import 'package:nai_huishi/data/datasources/remote/danbooru_api_service.dart';
-import 'package:nai_huishi/data/datasources/remote/duckduckgo_search_service.dart';
 import 'package:nai_huishi/data/datasources/remote/wd_tagger_api_service.dart';
-import 'package:nai_huishi/data/datasources/remote/wikipedia_search_service.dart';
+import 'package:nai_huishi/core/services/comic_asset_store.dart';
 import 'package:nai_huishi/data/repositories/artist_prompt_repository_impl.dart';
+import 'package:nai_huishi/data/repositories/comic_project_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/history_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/llm_chat_repository_impl.dart';
@@ -32,13 +36,14 @@ import 'package:nai_huishi/domain/agents/tools/save_memory_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/read_current_prompts_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/remove_character_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/write_prompt_tool.dart';
-import 'package:nai_huishi/domain/agents/tools/web_search_tool.dart';
+import 'package:nai_huishi/domain/agents/tools/ask_user_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/search_danbooru_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/generate_image_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/upscale_image_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/save_image_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/upload_to_pixiv_tool.dart';
 import 'package:nai_huishi/domain/repositories/artist_prompt_repository.dart';
+import 'package:nai_huishi/domain/repositories/comic_project_repository.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
@@ -49,7 +54,12 @@ import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/domain/repositories/style_preset_repository.dart';
 import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
 import 'package:nai_huishi/domain/usecases/manage_artist_prompts.dart';
+import 'package:nai_huishi/domain/usecases/manage_comic_projects.dart';
 import 'package:nai_huishi/domain/usecases/generate_image.dart';
+import 'package:nai_huishi/domain/services/comic_generation_coordinator.dart';
+import 'package:nai_huishi/domain/services/prompting_skill_loader.dart';
+import 'package:nai_huishi/domain/services/comic_rasterizer.dart';
+import 'package:nai_huishi/domain/services/comic_task_builder.dart';
 import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
 import 'package:nai_huishi/domain/usecases/get_history.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
@@ -70,6 +80,7 @@ import 'package:nai_huishi/data/repositories/super_resolution_repository_impl.da
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/core/network/robust_http_adapter.dart';
 import 'package:nai_huishi/presentation/viewmodels/artist_prompt_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/comic_project_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/director_tools_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/history_viewmodel.dart';
@@ -109,21 +120,21 @@ Future<void> configureDependencies() async {
 
   final db = await DatabaseHelper.instance.database;
   sl.registerSingleton<Database>(db);
+  sl.registerSingleton<DailyStatsLocalDatasource>(
+      DailyStatsLocalDatasource(db));
 
   sl.registerSingleton<Dio>(createRobustDio());
 
   sl.registerSingleton<SettingsLocalDatasource>(
       SettingsLocalDatasource(sl<SharedPreferences>()));
+  sl.registerSingleton<OfficialNovelAiTokenStore>(OfficialNovelAiTokenStore());
+  sl.registerSingleton<OfficialNovelAiApiService>(OfficialNovelAiApiService());
   sl.registerSingleton<NovelAiApiService>(NovelAiApiService(sl<Dio>()));
   sl.registerSingleton<GptApiService>(GptApiService(sl<Dio>()));
   sl.registerSingleton<NanoBananaApiService>(NanoBananaApiService(sl<Dio>()));
   sl.registerSingleton<LlmApiService>(LlmApiService(sl<Dio>()));
   sl.registerSingleton<BingSearchService>(BingSearchService());
   sl.registerSingleton<DanbooruApiService>(DanbooruApiService());
-  sl.registerSingleton<DuckDuckGoSearchService>(
-      DuckDuckGoSearchService(sl<Dio>()));
-  sl.registerSingleton<WikipediaSearchService>(
-      WikipediaSearchService(sl<Dio>()));
   sl.registerSingleton<WdTaggerApiService>(WdTaggerApiService(sl<Dio>()));
   sl.registerSingleton<LlmChatLocalDatasource>(
       LlmChatLocalDatasource(sl<Database>()));
@@ -137,8 +148,14 @@ Future<void> configureDependencies() async {
 
   sl.registerSingleton<VibeEncodingRepository>(
       VibeEncodingRepositoryImpl(sl<Database>()));
+  sl.registerSingleton<ComicAssetStore>(ComicAssetStore());
+  sl.registerSingleton<ComicProjectRepository>(
+    ComicProjectRepositoryImpl(sl<Database>(), sl<ComicAssetStore>()),
+  );
   sl.registerSingleton<GenerationRepository>(GenerationRepositoryImpl(
     apiService: sl<NovelAiApiService>(),
+    officialApiService: sl<OfficialNovelAiApiService>(),
+    officialTokenStore: sl<OfficialNovelAiTokenStore>(),
     gptApiService: sl<GptApiService>(),
     nanoApiService: sl<NanoBananaApiService>(),
     settingsRepo: sl<SettingsRepository>(),
@@ -166,6 +183,15 @@ Future<void> configureDependencies() async {
   ));
   sl.registerSingleton<TiledImg2ImgService>(
       TiledImg2ImgService(sl<GenerationQueue>()));
+  sl.registerSingleton<ComicTaskBuilder>(ComicTaskBuilder());
+  sl.registerSingleton<ComicGenerationCoordinator>(
+    ComicGenerationCoordinator(
+      sl<GenerationQueue>(),
+      sl<ComicAssetStore>(),
+      sl<ComicTaskBuilder>(),
+    ),
+  );
+  sl.registerSingleton<ComicRasterizer>(ComicRasterizer());
 
   sl.registerSingleton<GenerateImageUseCase>(GenerateImageUseCase(
     sl<HistoryRepository>(),
@@ -184,6 +210,8 @@ Future<void> configureDependencies() async {
       ManageStylePresetsUseCase(sl<StylePresetRepository>()));
   sl.registerSingleton<ManageVibeEncodingsUseCase>(
       ManageVibeEncodingsUseCase(sl<VibeEncodingRepository>()));
+  sl.registerSingleton<ManageComicProjectsUseCase>(
+      ManageComicProjectsUseCase(sl<ComicProjectRepository>()));
   sl.registerSingleton<ManageArtistPromptsUseCase>(
       ManageArtistPromptsUseCase(sl<ArtistPromptRepository>()));
   sl.registerSingleton<ManageLlmChatUseCase>(
@@ -238,6 +266,9 @@ Future<void> configureDependencies() async {
         saveImage: sl<SaveImageUseCase>(),
         queue: sl<GenerationQueue>(),
         tiledImg2Img: sl<TiledImg2ImgService>(),
+        officialApi: sl<OfficialNovelAiApiService>(),
+        officialTokenStore: sl<OfficialNovelAiTokenStore>(),
+        dailyStats: sl<DailyStatsLocalDatasource>(),
       ));
   sl.registerFactory<SuperResolutionViewModel>(() => SuperResolutionViewModel(
         sl<UpscaleImageUseCase>(),
@@ -245,6 +276,8 @@ Future<void> configureDependencies() async {
       ));
   sl.registerFactory<DirectorToolsViewModel>(() => DirectorToolsViewModel(
         sl<NovelAiApiService>(),
+        sl<OfficialNovelAiApiService>(),
+        sl<OfficialNovelAiTokenStore>(),
         sl<ManageSettingsUseCase>(),
         sl<SaveImageUseCase>(),
       ));
@@ -264,12 +297,22 @@ Future<void> configureDependencies() async {
       () => VibeEncodingViewModel(sl<ManageVibeEncodingsUseCase>()));
   sl.registerFactory<ArtistPromptViewModel>(
       () => ArtistPromptViewModel(sl<ManageArtistPromptsUseCase>()));
+  sl.registerFactory<ComicProjectViewModel>(() => ComicProjectViewModel(
+        manage: sl<ManageComicProjectsUseCase>(),
+        coordinator: sl<ComicGenerationCoordinator>(),
+        rasterizer: sl<ComicRasterizer>(),
+        assetStore: sl<ComicAssetStore>(),
+        saveImage: sl<SaveImageUseCase>(),
+        generation: sl<GenerationViewModel>(),
+      ));
   // 图片解析
   sl.registerFactory<ImageTagViewModel>(() => ImageTagViewModel(
         useCase: sl<AnalyzeImageTagsUseCase>(),
       ));
 
   // ── Agent 工具与循环 ──
+  sl.registerLazySingleton<PromptingSkillLoader>(
+      () => AssetPromptingSkillLoader());
   final toolRegistry = ToolRegistry()
     ..register(GetMemoriesTool(sl<ManagePromptMemoriesUseCase>()))
     ..register(SaveMemoryTool(sl<ManagePromptMemoriesUseCase>()))
@@ -277,8 +320,7 @@ Future<void> configureDependencies() async {
     ..register(WritePromptTool(sl<GenerationViewModel>()))
     ..register(RemoveCharacterTool(sl<GenerationViewModel>()))
     ..register(ClearCharactersTool(sl<GenerationViewModel>()))
-    ..register(WebSearchTool(
-        sl<DuckDuckGoSearchService>(), sl<WikipediaSearchService>()))
+    ..register(AskUserTool())
     ..register(SearchDanbooruTool(sl<DanbooruApiService>()))
     ..register(GenerateImageTool(sl<GenerationViewModel>()))
     ..register(UpscaleImageTool(sl<UpscaleImageUseCase>()))
@@ -300,9 +342,9 @@ Future<void> configureDependencies() async {
       manageChat: sl<ManageLlmChatUseCase>(),
       manageSettings: sl<ManageSettingsUseCase>(),
       memories: sl<ManagePromptMemoriesUseCase>(),
-      agentLoopFactory: () => sl<AgentLoop>(),
       genVm: sl<GenerationViewModel>(),
       analyzeImageTags: sl<AnalyzeImageTagsUseCase>(),
+      promptingSkillLoader: sl<PromptingSkillLoader>(),
     );
   });
 

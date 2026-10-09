@@ -316,7 +316,9 @@ class ImageUtils {
       gray.setPixelR(pixel.x, pixel.y, pixel.r);
     }
 
-    // 2) 最近邻降采样到 latent 网格（ceil(width/8) × ceil(height/8)）。
+    // 2) 聚合到 latent 网格（ceil(width/8) × ceil(height/8)）。
+    // 单元内任一像素被画为白色，就保留整个重绘单元，避免细笔迹因
+    // 左上角像素恰好为黑色而被静默丢弃。
     final latentW = (gray.width + naiLatentCell - 1) ~/ naiLatentCell;
     final latentH = (gray.height + naiLatentCell - 1) ~/ naiLatentCell;
     final latent = img.Image(
@@ -326,10 +328,20 @@ class ImageUtils {
     );
     for (var ly = 0; ly < latentH; ly++) {
       for (var lx = 0; lx < latentW; lx++) {
-        // 取该 8×8 单元左上角像素值（最近邻）。
-        final sx = (lx * naiLatentCell).clamp(0, gray.width - 1);
-        final sy = (ly * naiLatentCell).clamp(0, gray.height - 1);
-        latent.setPixelR(lx, ly, gray.getPixel(sx, sy).r);
+        final xStart = lx * naiLatentCell;
+        final yStart = ly * naiLatentCell;
+        final xEnd = (xStart + naiLatentCell).clamp(0, gray.width);
+        final yEnd = (yStart + naiLatentCell).clamp(0, gray.height);
+        var repaint = false;
+        for (var y = yStart; y < yEnd && !repaint; y++) {
+          for (var x = xStart; x < xEnd; x++) {
+            if (gray.getPixel(x, y).r >= 128) {
+              repaint = true;
+              break;
+            }
+          }
+        }
+        latent.setPixelR(lx, ly, repaint ? 255 : 0);
       }
     }
 

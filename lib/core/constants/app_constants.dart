@@ -6,13 +6,14 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 15;
+  static const int dbVersion = 22;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';
   static const String stylePresetsDirName = 'style_presets';
   static const String artistPromptsDirName = 'artist_prompts';
   static const String vibeEncodingsDirName = 'vibe_encodings';
+  static const String comicProjectsDirName = 'comic_projects';
 
   // 设置 key
   static const String keyApiKey = 'api_key';
@@ -24,12 +25,15 @@ class AppConstants {
   static const String keyDefaultCfgRescale = 'default_cfg_rescale';
   static const String keyDefaultNoiseSchedule = 'default_noise_schedule';
 
-  // 默认提示词（Agent 设置页配置，每次生图时自动拼接到 prompt 前面）
+  // Agent 默认画风词（按 NovelAI 版本分别保存）
   static const String keyDefaultStyleWords = 'default_style_words';
+  static const String keyDefaultStyleWordsV5 = 'default_style_words_v5';
+  static const String keyDefaultStyleWordsV45 = 'default_style_words_v4_5';
   static const String keyPromptDraft = 'prompt_draft';
   static const String keyNegativePromptDraft = 'negative_prompt_draft';
   static const String keySelectedModelDraft = 'selected_model_draft';
   static const String keySelectedResolutionDraft = 'selected_resolution_draft';
+  static const String keyCustomResolutions = 'custom_resolutions';
   static const String keySelectedSamplerDraft = 'selected_sampler_draft';
   static const String keySelectedNoiseScheduleDraft =
       'selected_noise_schedule_draft';
@@ -42,7 +46,7 @@ class AppConstants {
   static const String keyPreciseReferencesDraft = 'precise_references_draft';
   static const String keyReferenceModeDraft = 'reference_mode_draft';
   static const int maxVibeReferences = 4;
-  static const int maxIkunVibeReferences = 1;
+  static const int maxIkunVibeReferences = 4;
   static const String keyInpaintPromptDraft = 'inpaint_prompt_draft';
   static const String keyInpaintNegativePromptDraft =
       'inpaint_negative_prompt_draft';
@@ -66,9 +70,6 @@ class AppConstants {
   // 知识库
   static const String keyNsfwBookPath = 'nsfw_book_path';
 
-  // 联网搜索（手动开关，跨会话持久化）
-  static const String keyWebSearchEnabled = 'llm_web_search_enabled';
-
   // Danbooru 智能校准
   static const String keyDanbooruCalibrationEnabled =
       'danbooru_calibration_enabled';
@@ -87,8 +88,8 @@ class AppConstants {
       '## 工具使用时机\n'
       '- `read_current_prompts`：当用户说"在现有基础上改"、"加个 XX 效果"、"换成夜晚"等涉及修改现有提示词的请求时，先调用此工具读取 4 个提示词框的当前内容（positive/negative/inpaint_positive/inpaint_negative）。\n'
       '- `write_prompt`：编排好新提示词后，调用此工具写入对应框。mode=append 用于追加（默认），mode=replace 用于覆盖。target 取值：positive / negative / inpaint_positive / inpaint_negative。新对话开始时若用户没说"在现有基础上改"，不要主动调 read_current_prompts——提示词框可能是上次生图遗留的。\n'
-      '- `web_search`：用户问实时信息、角色最新设定、不确定的事实时调用。\n'
       '- `search_danbooru`：用户提及角色/画风/场景，需要找 Danbooru 真实 tag 时调用。返回真实存在的 tag 池，**不要凭空创造 tag**。单次检索返回最多 30 个 tag，足够覆盖一个角色的全部常见特征（发色/瞳色/服装等），不需要为每个细节单独搜。只有切换到不同角色/不同场景/不同画风时才需要再次调用。\n'
+      '- `ask_user`：缺少会实质影响生成结果的关键信息时调用。提供 2 到 6 个明确、互斥的单选项；用户会点击后自动继续任务。实时事实、角色版本或作品归属无法可靠确认时，必须询问用户，不能猜测。\n'
       '- `get_memories`：查询本地学习记忆库。用户曾纠正过的"触发词→正确内容"映射会命中。优先级高于 Danbooru 与模型常识。\n'
       '- `save_memory`：用户明确纠正人名、角色特征、画风知识时调用。例如用户说"记住：纳西妲是青绿眼"。保存角色名、角色特征、画风时，content 必须是经 `search_danbooru` 确认存在的英文 Danbooru canonical tag，使用 lowercase 与 underscore 格式；trigger 可保留用户使用的中文或英文别名以便召回。\n'
       '- `generate_image` / `upscale_image` / `save_image` / `upload_to_pixiv`：用户明确要求时调用，会弹窗让用户确认。\n'
@@ -151,6 +152,7 @@ class AppConstants {
       '- 添加新元素到现有提示词尾部时，用 mode=append（自动去重，但仍建议先 read 确认）。\n'
       '- 用户明确纠正人名/特征/画风时：调 `save_memory`，然后回复确认。\n'
       '- 不要在 tool 调用之间凭空想象 tag，所有 tag 必须来自 Danbooru 检索结果或用户本地记忆。\n'
+      '- 信息不足时先 `ask_user`，不要用模糊假设填补角色、作品、画风版本或构图偏好。用户回答后继续当前任务，不要重新开始。\n'
       '- 多角色场景（2 人及以上）**禁止单纯把全部特征写入 positive**，必须按角色拆分到 character_1、character_2…；positive 只放通用画质词与画风词，角色独有特征（角色名、发色、瞳色、服装、动作）一律进 character_N。\n'
       '\n'
       '## 任务完成标志\n'
@@ -196,11 +198,14 @@ class AppConstants {
       'image_provider_nano_api_key';
   static const String keyImageProviderNanoModel = 'image_provider_nano_model';
 
-  // NovelAI 固定双槽定义
+  // NovelAI 固定渠道定义
   static const String novelAiChatCompletionsEndpointId = '7877';
   static const String novelAiChatCompletionsProtocol = 'chat-completions';
   static const String novelAiImageGenerationsEndpointId = 'ikun';
   static const String novelAiImageGenerationsProtocol = 'image-generations';
+  static const String novelAiOfficialEndpointId = 'official';
+  static const String novelAiOfficialProtocol = 'official';
+  static const String keyNovelAiOfficialToken = 'novelai_official_token';
 
   // 图像 API 供应商配置 — v2 多中转站结构
   static const String keyImageProviderNovelAiEndpoints =

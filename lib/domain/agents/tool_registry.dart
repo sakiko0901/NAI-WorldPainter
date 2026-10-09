@@ -17,6 +17,23 @@ class ToolRegistry {
   }
 
   bool get isEmpty => _tools.isEmpty;
+
+  ToolRegistry subset(Iterable<String> names) {
+    final allowed = names.toSet();
+    final result = ToolRegistry();
+    for (final tool in _tools.values) {
+      if (allowed.contains(tool.name)) result.register(tool);
+    }
+    return result;
+  }
+
+  ToolRegistry copy() {
+    final result = ToolRegistry();
+    for (final tool in _tools.values) {
+      result.register(tool);
+    }
+    return result;
+  }
 }
 
 /// 工具执行回调。AgentLoop 用它向 ViewModel 请求用户确认。

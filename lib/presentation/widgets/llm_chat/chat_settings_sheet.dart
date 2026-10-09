@@ -37,11 +37,11 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
   late final TextEditingController _systemPromptController;
   late final TextEditingController _contextLimitController;
   late final TextEditingController _nsfwBookPathController;
-  late final TextEditingController _defaultStyleWordsController;
+  late final TextEditingController _defaultStyleWordsV5Controller;
+  late final TextEditingController _defaultStyleWordsV45Controller;
 
   bool _nsfwBookLoaded = false;
   String _nsfwBookStatus = '';
-  bool _webSearchEnabled = false;
 
   @override
   void initState() {
@@ -52,9 +52,10 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
     _contextLimitController =
         TextEditingController(text: vm.contextLimit.toString());
     _nsfwBookPathController = TextEditingController(text: '');
-    _defaultStyleWordsController =
-        TextEditingController(text: vm.defaultStyleWords);
-    _webSearchEnabled = vm.webSearchEnabled;
+    _defaultStyleWordsV5Controller =
+        TextEditingController(text: vm.defaultStyleWordsV5);
+    _defaultStyleWordsV45Controller =
+        TextEditingController(text: vm.defaultStyleWordsV45);
 
     _loadNsfwBookStatus();
   }
@@ -73,7 +74,8 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
     _systemPromptController.dispose();
     _contextLimitController.dispose();
     _nsfwBookPathController.dispose();
-    _defaultStyleWordsController.dispose();
+    _defaultStyleWordsV5Controller.dispose();
+    _defaultStyleWordsV45Controller.dispose();
     super.dispose();
   }
 
@@ -452,19 +454,21 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
             ],
           ),
           const SizedBox(height: 16),
-          SwitchListTile(
-            title: const Text('联网搜索'),
-            subtitle: const Text('让 Agent 能用 DuckDuckGo 联网查信息'),
-            value: _webSearchEnabled,
-            onChanged: (v) async {
-              await widget.vm.setWebSearchEnabled(v);
-              setState(() => _webSearchEnabled = v);
-            },
-          ),
-          const SizedBox(height: 16),
-          _Label('默认画风画师词'),
+          _Label('V5 默认画风画师词'),
           TextField(
-            controller: _defaultStyleWordsController,
+            controller: _defaultStyleWordsV5Controller,
+            maxLines: 3,
+            minLines: 1,
+            decoration: const InputDecoration(
+              hintText: '如：masterpiece, best quality, artist:xxx',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _Label('V4.5 默认画风画师词'),
+          TextField(
+            controller: _defaultStyleWordsV45Controller,
             maxLines: 3,
             minLines: 1,
             decoration: const InputDecoration(
@@ -475,7 +479,7 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
           ),
           const SizedBox(height: 4),
           Text(
-            '每次生图时自动拼到正向 prompt 最前面；空则不拼。',
+            '新会话选择的版本决定使用哪一串，并会自动拼到正向 prompt 最前面；空则不拼。',
             style: TextStyle(
               fontSize: 11,
               color: theme.colorScheme.onSurfaceVariant,
@@ -487,8 +491,10 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
               const Spacer(),
               FilledButton(
                 onPressed: () async {
-                  await widget.vm.setDefaultStyleWords(
-                      _defaultStyleWordsController.text.trim());
+                  await widget.vm.setDefaultStyleWordsV5(
+                      _defaultStyleWordsV5Controller.text.trim());
+                  await widget.vm.setDefaultStyleWordsV45(
+                      _defaultStyleWordsV45Controller.text.trim());
                   if (mounted) showFloatingToast(context, '已保存');
                 },
                 child: const Text('保存'),

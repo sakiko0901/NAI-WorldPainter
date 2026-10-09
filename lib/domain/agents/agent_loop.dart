@@ -132,9 +132,18 @@ class AgentLoop {
           try {
             final result = await tool.call(call.arguments);
             final done = running.copyWith(
-                status: result.success ? 'done' : 'error', result: result);
+                status: result.interaction != null
+                    ? 'awaiting_user'
+                    : result.success
+                        ? 'done'
+                        : 'error',
+                result: result);
             _replaceLast(timeline, done);
             onEvent?.call(done);
+
+            if (result.interaction != null) {
+              return AgentResult.awaitingUser(result.interaction!, timeline);
+            }
 
             if (!result.success) {
               failCounts[call.name] = (failCounts[call.name] ?? 0) + 1;

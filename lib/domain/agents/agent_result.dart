@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 
 /// Agent 循环的最终输出
 @immutable
@@ -19,12 +20,16 @@ class AgentResult {
   /// 错误信息（failed=true 时有值）
   final String? error;
 
+  /// Agent 当前暂停等待用户选择的问题。
+  final LlmInteraction? pendingInteraction;
+
   const AgentResult({
     required this.finalContent,
     required this.timeline,
     this.hitMaxIterations = false,
     this.failed = false,
     this.error,
+    this.pendingInteraction,
   });
 
   factory AgentResult.success(String content, List<AgentEvent> timeline) {
@@ -50,4 +55,17 @@ class AgentResult {
       hitMaxIterations: true,
     );
   }
+
+  factory AgentResult.awaitingUser(
+    LlmInteraction interaction,
+    List<AgentEvent> timeline,
+  ) {
+    return AgentResult(
+      finalContent: interaction.question,
+      timeline: List.unmodifiable(timeline),
+      pendingInteraction: interaction,
+    );
+  }
+
+  bool get awaitingUserInput => pendingInteraction != null;
 }

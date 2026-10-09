@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/domain/agents/agent_loop.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
+import 'package:nai_huishi/domain/agents/tools/ask_user_tool.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
@@ -35,6 +36,37 @@ void main() {
       registry: ToolRegistry()..register(_ThrowingTool()),
     );
     _expectNamedToolResponse(api, 'throw_error');
+  });
+
+  test('ask_user pauses the agent loop with a structured interaction',
+      () async {
+    final api = _CapturingLlmApiService(
+      'ask_user',
+      arguments: {
+        'question': '请选择画面时间',
+        'options': [
+          {'id': 'day', 'label': '白天'},
+          {'id': 'night', 'label': '夜晚'},
+        ],
+      },
+    );
+    final result = await AgentLoop(
+      api: api,
+      registry: ToolRegistry()..register(AskUserTool()),
+    ).run(
+      apiKey: 'key',
+      baseUrl: 'https://example.com',
+      model: 'model',
+      initialMessages: const [
+        {'role': 'user', 'content': '帮我画一个场景'},
+      ],
+    );
+
+    expect(result.awaitingUserInput, isTrue);
+    expect(result.pendingInteraction?.question, '请选择画面时间');
+    expect(result.pendingInteraction?.options, hasLength(2));
+    expect(api.requests, hasLength(1));
+    expect(result.timeline.single.status, 'awaiting_user');
   });
 }
 
@@ -79,9 +111,11 @@ void _expectNamedToolResponse(_CapturingLlmApiService api, String name) {
 }
 
 class _CapturingLlmApiService extends LlmApiService {
-  _CapturingLlmApiService(this.toolName) : super(Dio());
+  _CapturingLlmApiService(this.toolName, {this.arguments = const {}})
+      : super(Dio());
 
   final String toolName;
+  final Map<String, dynamic> arguments;
   final List<List<Map<String, dynamic>>> requests = [];
 
   @override
@@ -98,7 +132,7 @@ class _CapturingLlmApiService extends LlmApiService {
       return LlmResponse(
         content: '',
         toolCalls: [
-          ToolCall(id: 'call-1', name: toolName, arguments: const {}),
+          ToolCall(id: 'call-1', name: toolName, arguments: arguments),
         ],
         finishReason: 'tool_calls',
       );

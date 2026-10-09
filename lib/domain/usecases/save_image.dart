@@ -40,6 +40,20 @@ class SaveImageUseCase {
     throw Exception('图片下载失败');
   }
 
+  Future<String> saveTransient(GenerationTask task) async {
+    if (task.imagePath != null && await File(task.imagePath!).exists()) {
+      return task.imagePath!;
+    }
+    if (task.imageUrl == null || task.imageUrl!.isEmpty) {
+      throw Exception('没有可保存的图片');
+    }
+    final filename = ImageUtils.generateFilename();
+    final dir = await ImageUtils.getImageDirectory();
+    final filePath = p.join(dir.path, filename);
+    await Dio().download(task.imageUrl!, filePath);
+    return filePath;
+  }
+
   Future<bool> saveToGallery(String filePath) async {
     final result = await ImageGallerySaverPlus.saveFile(filePath);
     if (result is Map) {

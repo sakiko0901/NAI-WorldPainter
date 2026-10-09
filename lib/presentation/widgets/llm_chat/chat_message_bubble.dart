@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
     show showFloatingToast;
@@ -15,6 +16,8 @@ class ChatMessageBubble extends StatefulWidget {
   final int messageIndex;
   final VoidCallback? onRetry;
   final void Function(String newText)? onEditAndResend;
+  final void Function(String? optionId, String? customAnswer)?
+      onAnswerInteraction;
 
   const ChatMessageBubble({
     super.key,
@@ -22,6 +25,7 @@ class ChatMessageBubble extends StatefulWidget {
     required this.messageIndex,
     this.onRetry,
     this.onEditAndResend,
+    this.onAnswerInteraction,
   });
 
   @override
@@ -151,6 +155,14 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                                 color: theme.colorScheme.onSurface,
                               ),
                             ),
+                    if (!isUser && message.interaction != null)
+                      Padding(
+                        padding: EdgeInsets.only(top: hasText ? 10 : 0),
+                        child: _InteractionOptions(
+                          interaction: message.interaction!,
+                          onAnswer: widget.onAnswerInteraction,
+                        ),
+                      ),
                     if (isPlaceholder)
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -277,6 +289,140 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _InteractionOptions extends StatefulWidget {
+  final LlmInteraction interaction;
+  final void Function(String? optionId, String? customAnswer)? onAnswer;
+
+  const _InteractionOptions({required this.interaction, this.onAnswer});
+
+  @override
+  State<_InteractionOptions> createState() => _InteractionOptionsState();
+}
+
+class _InteractionOptionsState extends State<_InteractionOptions> {
+  bool _showCustomField = false;
+  bool _submitting = false;
+  late final TextEditingController _customController;
+
+  @override
+  void initState() {
+    super.initState();
+    _customController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _customController.dispose();
+    super.dispose();
+  }
+
+  void _submit(String? optionId, String? customAnswer) {
+    if (_submitting || widget.interaction.isAnswered) return;
+    setState(() => _submitting = true);
+    widget.onAnswer?.call(optionId, customAnswer);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final interaction = widget.interaction;
+    final theme = Theme.of(context);
+    if (interaction.isAnswered) {
+      return Text(
+        '已选择：${interaction.answerText ?? '已回答'}',
+        style: TextStyle(
+          fontSize: 12,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    final enabled = !_submitting && widget.onAnswer != null;
+    final buttonShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(10),
+    );
+    const buttonPadding =
+        EdgeInsets.symmetric(horizontal: 12, vertical: 10);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final option in interaction.options) ...[
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: enabled ? () => _submit(option.id, null) : null,
+              style: OutlinedButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                minimumSize: const Size.fromHeight(42),
+                padding: buttonPadding,
+                shape: buttonShape,
+                side: BorderSide(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.45),
+                ),
+              ),
+              child: Text(
+                option.label,
+                softWrap: true,
+                textAlign: TextAlign.left,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+        ],
+        if (interaction.allowCustom)
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: enabled
+                  ? () => setState(() => _showCustomField = !_showCustomField)
+                  : null,
+              icon: const Icon(CupertinoIcons.pencil, size: 16),
+              label: const Text('自定义回答'),
+              style: OutlinedButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                minimumSize: const Size.fromHeight(42),
+                padding: buttonPadding,
+                shape: buttonShape,
+                side: BorderSide(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.45),
+                ),
+              ),
+            ),
+          ),
+        if (_showCustomField) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customController,
+                  enabled: enabled,
+                  minLines: 1,
+                  maxLines: 3,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: interaction.customPlaceholder ?? '输入你的要求',
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: enabled && _customController.text.trim().isNotEmpty
+                    ? () => _submit(null, _customController.text.trim())
+                    : null,
+                tooltip: '提交自定义回答',
+                icon: const Icon(CupertinoIcons.arrow_up_circle_fill),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -448,7 +594,8 @@ class _RoundBlockState extends State<_RoundBlock> {
     final hasRunning = widget.events.any((e) =>
         e.status == 'running' ||
         e.status == 'pending' ||
-        e.status == 'awaiting_confirm');
+        e.status == 'awaiting_confirm' ||
+        e.status == 'awaiting_user');
     if (hasRunning) return '执行中';
     final allDone = widget.events
         .every((e) => e.status == 'done' || e.status == 'cancelled');
@@ -703,6 +850,13 @@ class _EventRow extends StatelessWidget {
               size: 12, color: Colors.amber),
           Colors.amber,
           '待确认',
+        );
+      case 'awaiting_user':
+        return (
+          Icon(CupertinoIcons.question_circle_fill,
+              size: 12, color: Colors.amber),
+          Colors.amber,
+          '等待回答',
         );
       default:
         return (

@@ -68,7 +68,27 @@ void main() {
     final columns = await db.rawQuery('PRAGMA table_info(generation_history)');
     final names = columns.map((column) => column['name']).toSet();
     expect(
-        names, containsAll(['endpoint_id', 'protocol', 'steps', 'use_coords']));
+      names,
+      containsAll([
+        'endpoint_id',
+        'protocol',
+        'size',
+        'steps',
+        'use_coords',
+        'vibe_references',
+        'precise_references',
+        'mode',
+        'source_image_path',
+        'mask_image_path',
+        'inpaint_strength',
+        'img2img_source_image_path',
+        'img2img_strength',
+        'response_format',
+        'provider_type',
+        'disabled_original_image',
+        'color_correct',
+      ]),
+    );
 
     final legacyRows = await db.query(
       'generation_history',
@@ -92,8 +112,19 @@ void main() {
       cfgRescale: 0,
       sampler: 'k_euler',
       noiseSchedule: 'native',
+      size: '1024x1024',
       steps: 32,
       useCoords: false,
+      mode: GenerationMode.inpainting,
+      sourceImagePath: 'source.png',
+      maskImagePath: 'mask.png',
+      inpaintStrength: 0.8,
+      responseFormat: 'b64_json',
+      disabledOriginalImage: true,
+      colorCorrect: false,
+      vibeReferences: const [
+        CharacterReferenceImage(path: 'vibe.png', strength: 0.4),
+      ],
       status: 'pending',
       createdAt: DateTime.fromMillisecondsSinceEpoch(2000),
     );
@@ -110,5 +141,15 @@ void main() {
     expect(inserted.single['protocol'], 'openai');
     expect(inserted.single['steps'], 32);
     expect(inserted.single['use_coords'], 0);
+    expect(inserted.single['size'], '1024x1024');
+    expect(inserted.single['mode'], 'inpainting');
+    expect(inserted.single['source_image_path'], 'source.png');
+    expect(inserted.single['mask_image_path'], 'mask.png');
+    expect(inserted.single['inpaint_strength'], 0.8);
+    expect(inserted.single['response_format'], 'b64_json');
+    expect(inserted.single['provider_type'], 'novelAi');
+    expect(inserted.single['disabled_original_image'], 1);
+    expect(inserted.single['color_correct'], 0);
+    expect(inserted.single['vibe_references'], isNotNull);
   });
 }

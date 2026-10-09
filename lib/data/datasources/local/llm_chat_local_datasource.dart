@@ -3,6 +3,8 @@ import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
+import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 
 class LlmChatLocalDatasource {
   final Database _db;
@@ -56,10 +58,24 @@ class LlmChatLocalDatasource {
     return _sessionFromRow(rows.first);
   }
 
+  Future<LlmSession?> findSessionByContextKey(String contextKey) async {
+    final rows = await _db.query(
+      'llm_sessions',
+      where: 'context_key = ?',
+      whereArgs: [contextKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _sessionFromRow(rows.first);
+  }
+
   Future<void> insertSession(LlmSession session) async {
     await _db.insert('llm_sessions', {
       'id': session.id,
       'title': session.title,
+      'scope': session.scope,
+      'context_key': session.contextKey,
+      'prompt_version': session.promptVersion.value,
       'created_at': session.createdAt.millisecondsSinceEpoch,
       'updated_at': session.updatedAt.millisecondsSinceEpoch,
     });
@@ -70,6 +86,9 @@ class LlmChatLocalDatasource {
       'llm_sessions',
       {
         'title': session.title,
+        'scope': session.scope,
+        'context_key': session.contextKey,
+        'prompt_version': session.promptVersion.value,
         'updated_at': session.updatedAt.millisecondsSinceEpoch,
       },
       where: 'id = ?',
@@ -130,6 +149,7 @@ class LlmChatLocalDatasource {
       'content': message.content,
       'image_path': message.imagePath,
       'tool_calls': toolCallsJson,
+      'interaction_json': message.interaction?.toJsonString(),
       'created_at': message.createdAt.millisecondsSinceEpoch,
     });
   }
@@ -140,6 +160,65 @@ class LlmChatLocalDatasource {
     final path = rows.isNotEmpty ? rows.first['image_path'] as String? : null;
     await _db.delete('llm_messages', where: 'id = ?', whereArgs: [id]);
     await _deleteImageFile(path);
+  }
+
+  Future<LlmMessage?> answerInteraction({
+    required String sessionId,
+    required int messageId,
+    required String interactionId,
+    String? optionId,
+    String? customAnswer,
+  }) async {
+    return _db.transaction((txn) async {
+      final rows = await txn.query(
+        'llm_messages',
+        where: 'id = ? AND session_id = ? AND role = ?',
+        whereArgs: [messageId, sessionId, 'assistant'],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      final current = _messageFromRow(rows.first);
+      final interaction = current.interaction;
+      if (interaction == null ||
+          interaction.id != interactionId ||
+          interaction.isAnswered) {
+        return null;
+      }
+
+      final next = optionId != null
+          ? interaction.answerOption(optionId)
+          : interaction.answerCustom(customAnswer ?? '');
+      final answer = next.answerText;
+      if (!next.isAnswered || answer == null) return null;
+
+      await txn.update(
+        'llm_messages',
+        {'interaction_json': next.toJsonString()},
+        where: 'id = ?',
+        whereArgs: [messageId],
+      );
+      final now = DateTime.now();
+      final content = '针对“${interaction.question}”，我选择：$answer。';
+      final userId = await txn.insert('llm_messages', {
+        'session_id': sessionId,
+        'role': 'user',
+        'content': content,
+        'created_at': now.millisecondsSinceEpoch,
+      });
+      await txn.update(
+        'llm_sessions',
+        {'updated_at': now.millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: [sessionId],
+      );
+      return LlmMessage(
+        id: userId,
+        sessionId: sessionId,
+        role: LlmMessageRole.user,
+        content: content,
+        createdAt: now,
+      );
+    });
   }
 
   /// 删除指定消息及之后的所有消息（按 id >= messageId 条件）
@@ -161,6 +240,10 @@ class LlmChatLocalDatasource {
     return LlmSession(
       id: row['id'] as String,
       title: row['title'] as String,
+      scope: row['scope'] as String? ?? 'general',
+      contextKey: row['context_key'] as String?,
+      promptVersion:
+          NaiPromptVersion.fromValue(row['prompt_version'] as String?),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
     );
@@ -168,6 +251,9 @@ class LlmChatLocalDatasource {
 
   LlmMessage _messageFromRow(Map<String, Object?> row) {
     final toolCallsJson = row['tool_calls'] as String?;
+    final interaction = LlmInteraction.fromJsonString(
+      row['interaction_json'] as String?,
+    );
     return LlmMessage(
       id: row['id'] as int?,
       sessionId: row['session_id'] as String,
@@ -176,6 +262,7 @@ class LlmChatLocalDatasource {
       imagePath: row['image_path'] as String?,
       toolCallsJson: toolCallsJson,
       agentTimeline: AgentEvent.fromJsonList(toolCallsJson),
+      interaction: interaction,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
     );
   }

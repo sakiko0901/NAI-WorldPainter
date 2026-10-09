@@ -6,8 +6,10 @@ import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
 
 class LlmChatRepositoryImpl implements LlmChatRepository {
@@ -28,17 +30,29 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   Future<List<LlmSession>> listSessions() => _local.listSessions();
 
   @override
-  Future<LlmSession> createSession({String? initialTitle}) async {
+  Future<LlmSession> createSession({
+    String? initialTitle,
+    String scope = 'general',
+    String? contextKey,
+    NaiPromptVersion promptVersion = NaiPromptVersion.v45,
+  }) async {
     final now = DateTime.now();
     final session = LlmSession(
       id: _uuid.v4(),
       title: initialTitle ?? '新对话',
+      scope: scope,
+      contextKey: contextKey,
+      promptVersion: promptVersion,
       createdAt: now,
       updatedAt: now,
     );
     await _local.insertSession(session);
     return session;
   }
+
+  @override
+  Future<LlmSession?> findSessionByContextKey(String contextKey) =>
+      _local.findSessionByContextKey(contextKey);
 
   @override
   Future<void> renameSession(String id, String title) async {
@@ -49,6 +63,19 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       updatedAt: DateTime.now(),
     );
     await _local.updateSession(updated);
+  }
+
+  @override
+  Future<void> setSessionPromptVersion(
+    String id,
+    NaiPromptVersion version,
+  ) async {
+    final session = await _local.getSession(id);
+    if (session == null) return;
+    await _local.updateSession(session.copyWith(
+      promptVersion: version,
+      updatedAt: DateTime.now(),
+    ));
   }
 
   @override
@@ -107,6 +134,7 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
     required String assistantText,
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
+    LlmInteraction? interaction,
   }) async {
     final replyTime = DateTime.now();
     final processed = await _tryExtractAndDownloadAssistantImage(assistantText);
@@ -121,6 +149,7 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
               ? AgentEvent.toJsonList(agentTimeline)
               : null),
       agentTimeline: agentTimeline,
+      interaction: interaction,
     );
     final assistantId = await _local.insertMessage(assistantMessage);
     await _local.touchSession(sessionId, replyTime);
@@ -133,6 +162,7 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       imagePath: processed.imagePath,
       toolCallsJson: toolCallsJson,
       agentTimeline: agentTimeline ?? const [],
+      interaction: interaction,
     );
   }
 
@@ -167,6 +197,22 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   @override
   Future<void> deleteMessagesFrom(int messageId, String sessionId) =>
       _local.deleteMessagesFrom(messageId, sessionId);
+
+  @override
+  Future<LlmMessage?> answerInteraction({
+    required String sessionId,
+    required int messageId,
+    required String interactionId,
+    String? optionId,
+    String? customAnswer,
+  }) =>
+      _local.answerInteraction(
+        sessionId: sessionId,
+        messageId: messageId,
+        interactionId: interactionId,
+        optionId: optionId,
+        customAnswer: customAnswer,
+      );
 
   @override
   Future<LlmMessage> saveUserAndAssistantMessages({

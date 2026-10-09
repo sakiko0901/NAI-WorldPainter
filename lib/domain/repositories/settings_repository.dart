@@ -32,6 +32,10 @@ abstract class SettingsRepository {
 
   Future<String> getDefaultStyleWords();
   Future<void> setDefaultStyleWords(String value);
+  Future<String> getDefaultStyleWordsV5();
+  Future<void> setDefaultStyleWordsV5(String value);
+  Future<String> getDefaultStyleWordsV45();
+  Future<void> setDefaultStyleWordsV45(String value);
 
   Future<String> getPromptDraft();
   Future<void> setPromptDraft(String value);
@@ -44,6 +48,9 @@ abstract class SettingsRepository {
 
   Future<String> getSelectedResolutionDraft();
   Future<void> setSelectedResolutionDraft(String value);
+
+  Future<List<String>> getCustomResolutions();
+  Future<void> setCustomResolutions(List<String> value);
 
   Future<String> getSelectedSamplerDraft();
   Future<void> setSelectedSamplerDraft(String value);
@@ -115,10 +122,6 @@ abstract class SettingsRepository {
   // 知识库
   Future<String?> getNsfwBookPath();
   Future<void> setNsfwBookPath(String? value);
-
-  // 联网搜索开关
-  Future<bool> getWebSearchEnabled();
-  Future<void> setWebSearchEnabled(bool value);
 
   // Danbooru 智能校准
   Future<bool> getDanbooruCalibrationEnabled();

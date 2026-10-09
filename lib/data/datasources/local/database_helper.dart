@@ -39,6 +39,7 @@ class DatabaseHelper {
         negative_prompt TEXT,
         width INTEGER NOT NULL,
         height INTEGER NOT NULL,
+        size TEXT,
         scale REAL NOT NULL,
         cfg_rescale REAL NOT NULL,
         sampler TEXT NOT NULL,
@@ -47,7 +48,18 @@ class DatabaseHelper {
         use_coords INTEGER NOT NULL DEFAULT 1,
         seed INTEGER,
         characters TEXT,
+        vibe_references TEXT,
         precise_references TEXT,
+        mode TEXT NOT NULL DEFAULT 'textToImage',
+        source_image_path TEXT,
+        mask_image_path TEXT,
+        inpaint_strength REAL,
+        img2img_source_image_path TEXT,
+        img2img_strength REAL,
+        response_format TEXT,
+        provider_type TEXT NOT NULL DEFAULT 'novelAi',
+        disabled_original_image INTEGER NOT NULL DEFAULT 0,
+        color_correct INTEGER NOT NULL DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'pending',
         image_path TEXT,
         image_url TEXT,
@@ -109,6 +121,64 @@ class DatabaseHelper {
     await _createPromptAssistantTables(db);
     await _createArtistPromptTables(db);
     await _createVibeEncodingTables(db);
+    await _createComicTables(db);
+  }
+
+  Future<void> _createComicTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS comic_projects (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        project_json_path TEXT NOT NULL,
+        canvas_width INTEGER NOT NULL,
+        canvas_height INTEGER NOT NULL,
+        panel_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        cover_path TEXT,
+        last_export_path TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS comic_panels (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        panel_index INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        candidate_count INTEGER NOT NULL DEFAULT 0,
+        selected_candidate_id TEXT,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS comic_candidates (
+        id TEXT PRIMARY KEY,
+        panel_id TEXT NOT NULL,
+        task_id TEXT UNIQUE NOT NULL,
+        image_path TEXT,
+        task_snapshot_path TEXT,
+        status TEXT NOT NULL,
+        seed INTEGER,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        is_selected INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_comic_projects_updated '
+      'ON comic_projects(updated_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_comic_panels_project '
+      'ON comic_panels(project_id, panel_index)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_comic_candidates_panel '
+      'ON comic_candidates(panel_id, created_at)',
+    );
   }
 
   Future<void> _createVibeEncodingTables(Database db) async {
@@ -136,6 +206,9 @@ class DatabaseHelper {
       CREATE TABLE llm_sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'general',
+        context_key TEXT,
+        prompt_version TEXT NOT NULL DEFAULT 'v5',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -148,6 +221,7 @@ class DatabaseHelper {
         content TEXT NOT NULL,
         image_path TEXT,
         tool_calls TEXT,
+        interaction_json TEXT,
         created_at INTEGER NOT NULL,
         FOREIGN KEY (session_id) REFERENCES llm_sessions(id) ON DELETE CASCADE
       )
@@ -156,6 +230,8 @@ class DatabaseHelper {
         'CREATE INDEX idx_llm_messages_session ON llm_messages(session_id, created_at)');
     await db.execute(
         'CREATE INDEX idx_llm_sessions_updated ON llm_sessions(updated_at)');
+    await db.execute(
+        'CREATE INDEX idx_llm_sessions_context ON llm_sessions(context_key)');
   }
 
   Future<void> _createPromptAssistantTables(Database db) async {
@@ -285,19 +361,17 @@ class DatabaseHelper {
       await _createArtistPromptTables(db);
     }
     if (oldVersion < 7) {
-      await db.execute('ALTER TABLE llm_messages ADD COLUMN image_path TEXT');
+      await _ensureColumn(db, 'llm_messages', 'image_path TEXT');
     }
     if (oldVersion < 8) {
-      await db.execute(
-          'ALTER TABLE prompt_memories ADD COLUMN scope TEXT NOT NULL DEFAULT \'user\'');
-      await db.execute(
-          'ALTER TABLE prompt_memories ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0');
-      await db.execute(
-          'ALTER TABLE prompt_memories ADD COLUMN last_hit_at INTEGER');
-      await db.execute(
-          'ALTER TABLE prompt_memories ADD COLUMN weight REAL NOT NULL DEFAULT 1.0');
-      await db.execute(
-          'ALTER TABLE prompt_memories ADD COLUMN superseded_by INTEGER');
+      await _ensureColumn(
+          db, 'prompt_memories', 'scope TEXT NOT NULL DEFAULT \'user\'');
+      await _ensureColumn(
+          db, 'prompt_memories', 'hit_count INTEGER NOT NULL DEFAULT 0');
+      await _ensureColumn(db, 'prompt_memories', 'last_hit_at INTEGER');
+      await _ensureColumn(
+          db, 'prompt_memories', 'weight REAL NOT NULL DEFAULT 1.0');
+      await _ensureColumn(db, 'prompt_memories', 'superseded_by INTEGER');
       await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_prompt_memories_scope ON prompt_memories(scope)');
       await db.execute(
@@ -313,8 +387,8 @@ class DatabaseHelper {
     }
     if (oldVersion < 9) {
       // Agent 化：llm_messages 加 tool_calls 列保存工具调用历史；prompt_memories 加 embedding 列（向量记忆预留）
-      await db.execute('ALTER TABLE llm_messages ADD COLUMN tool_calls TEXT');
-      await db.execute('ALTER TABLE prompt_memories ADD COLUMN embedding BLOB');
+      await _ensureColumn(db, 'llm_messages', 'tool_calls TEXT');
+      await _ensureColumn(db, 'prompt_memories', 'embedding BLOB');
     }
     if (oldVersion < 10) {
       await _ensureGenerationHistoryColumns(db);
@@ -340,12 +414,100 @@ class DatabaseHelper {
     if (oldVersion < 15) {
       await _ensureVibeEncodingTable(db);
     }
+    if (oldVersion < 16) {
+      await _createComicTables(db);
+    }
+    if (oldVersion < 17) {
+      await _ensureLlmSessionColumns(db);
+    }
+    if (oldVersion < 18) {
+      await _ensureLlmInteractionColumns(db);
+    }
+    if (oldVersion < 20) {
+      await _ensureGenerationHistoryColumns(db);
+    }
+    if (oldVersion < 21) {
+      await _ensureGenerationHistoryColumns(db);
+    }
+    if (oldVersion < 22) {
+      await _createDailyStatsTable(db);
+    }
   }
 
   Future<void> _onOpen(Database db) async {
     await _ensureGenerationHistoryColumns(db);
     await _ensureVibeEncodingTable(db);
+    await _ensureComicTables(db);
+    await _ensureLlmSessionColumns(db);
+    await _ensureLlmInteractionColumns(db);
+    await _createDailyStatsTable(db);
   }
+
+  /// 每日生成成功统计表。独立于 generation_history（后者会被裁剪到 200 条），
+  /// 按天累加计数，长期保留。日期格式 yyyy-MM-dd（本地时区）。
+  Future<void> _createDailyStatsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS daily_generation_stats (
+        date TEXT PRIMARY KEY,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _ensureLlmSessionColumns(Database db) async {
+    final table = await db.rawQuery('PRAGMA table_info(llm_sessions)');
+    if (table.isEmpty) return;
+    final columns = table.map((column) => column['name'] as String).toSet();
+    if (!columns.contains('scope')) {
+      await db.execute(
+        "ALTER TABLE llm_sessions ADD COLUMN scope TEXT NOT NULL DEFAULT 'general'",
+      );
+    }
+    if (!columns.contains('context_key')) {
+      await db.execute('ALTER TABLE llm_sessions ADD COLUMN context_key TEXT');
+    }
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_llm_sessions_context ON llm_sessions(context_key)',
+    );
+  }
+
+  Future<void> _ensureColumn(
+    Database db,
+    String table,
+    String definition,
+  ) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    final name = definition.split(RegExp(r'\s+')).first;
+    if (!columns.any((column) => column['name'] == name)) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $definition');
+    }
+  }
+
+  Future<void> _ensureLlmInteractionColumns(Database db) async {
+    final sessions = await db.rawQuery('PRAGMA table_info(llm_sessions)');
+    if (sessions.isNotEmpty) {
+      final columns =
+          sessions.map((column) => column['name'] as String).toSet();
+      if (!columns.contains('prompt_version')) {
+        await db.execute(
+          "ALTER TABLE llm_sessions ADD COLUMN prompt_version TEXT NOT NULL DEFAULT 'v5'",
+        );
+      }
+    }
+    final messages = await db.rawQuery('PRAGMA table_info(llm_messages)');
+    if (messages.isNotEmpty) {
+      final columns =
+          messages.map((column) => column['name'] as String).toSet();
+      if (!columns.contains('interaction_json')) {
+        await db.execute(
+          'ALTER TABLE llm_messages ADD COLUMN interaction_json TEXT',
+        );
+      }
+    }
+  }
+
+  Future<void> _ensureComicTables(Database db) => _createComicTables(db);
 
   Future<void> _ensureVibeEncodingTable(Database db) async {
     await _createVibeEncodingTables(db);
@@ -371,9 +533,21 @@ class DatabaseHelper {
     final definitions = <String, String>{
       'endpoint_id': 'TEXT',
       'protocol': 'TEXT',
+      'size': 'TEXT',
       'steps': 'INTEGER NOT NULL DEFAULT 28',
       'use_coords': 'INTEGER NOT NULL DEFAULT 1',
+      'vibe_references': 'TEXT',
       'precise_references': 'TEXT',
+      'mode': "TEXT NOT NULL DEFAULT 'textToImage'",
+      'source_image_path': 'TEXT',
+      'mask_image_path': 'TEXT',
+      'inpaint_strength': 'REAL',
+      'img2img_source_image_path': 'TEXT',
+      'img2img_strength': 'REAL',
+      'response_format': 'TEXT',
+      'provider_type': "TEXT NOT NULL DEFAULT 'novelAi'",
+      'disabled_original_image': 'INTEGER NOT NULL DEFAULT 0',
+      'color_correct': 'INTEGER NOT NULL DEFAULT 1',
     };
     for (final entry in definitions.entries) {
       if (!columns.contains(entry.key)) {

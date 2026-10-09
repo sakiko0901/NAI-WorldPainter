@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 
 Future<void> showChatSessionsPanel(
   BuildContext context, {
@@ -140,7 +141,9 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                   ),
                   FilledButton.tonalIcon(
                     onPressed: () async {
-                      await widget.vm.createNewSession();
+                      final version = await showPromptVersionDialog(context);
+                      if (version == null) return;
+                      await widget.vm.createNewSession(promptVersion: version);
                       if (context.mounted) Navigator.of(context).pop();
                     },
                     icon: Icon(CupertinoIcons.add, size: 16),

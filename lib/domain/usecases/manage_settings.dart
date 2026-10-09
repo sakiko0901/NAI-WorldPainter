@@ -38,6 +38,12 @@ class ManageSettingsUseCase {
 
   Future<String> getDefaultStyleWords() => _repo.getDefaultStyleWords();
   Future<void> setDefaultStyleWords(String v) => _repo.setDefaultStyleWords(v);
+  Future<String> getDefaultStyleWordsV5() => _repo.getDefaultStyleWordsV5();
+  Future<void> setDefaultStyleWordsV5(String v) =>
+      _repo.setDefaultStyleWordsV5(v);
+  Future<String> getDefaultStyleWordsV45() => _repo.getDefaultStyleWordsV45();
+  Future<void> setDefaultStyleWordsV45(String v) =>
+      _repo.setDefaultStyleWordsV45(v);
 
   Future<String> getPromptDraft() => _repo.getPromptDraft();
   Future<void> setPromptDraft(String value) => _repo.setPromptDraft(value);
@@ -54,6 +60,10 @@ class ManageSettingsUseCase {
       _repo.getSelectedResolutionDraft();
   Future<void> setSelectedResolutionDraft(String value) =>
       _repo.setSelectedResolutionDraft(value);
+
+  Future<List<String>> getCustomResolutions() => _repo.getCustomResolutions();
+  Future<void> setCustomResolutions(List<String> value) =>
+      _repo.setCustomResolutions(value);
 
   Future<String> getSelectedSamplerDraft() => _repo.getSelectedSamplerDraft();
   Future<void> setSelectedSamplerDraft(String value) =>
@@ -142,11 +152,6 @@ class ManageSettingsUseCase {
   // 知识库
   Future<String?> getNsfwBookPath() => _repo.getNsfwBookPath();
   Future<void> setNsfwBookPath(String? value) => _repo.setNsfwBookPath(value);
-
-  // 联网搜索开关
-  Future<bool> getWebSearchEnabled() => _repo.getWebSearchEnabled();
-  Future<void> setWebSearchEnabled(bool value) =>
-      _repo.setWebSearchEnabled(value);
 
   // Danbooru 智能校准
   Future<bool> getDanbooruCalibrationEnabled() =>

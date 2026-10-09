@@ -10,15 +10,22 @@ import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_sessions_panel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
 
 class ChatDrawer extends StatefulWidget {
   final VoidCallback onClose;
+  final Future<void> Function(LlmChatViewModel vm)? onInitializeScope;
+  final Future<void> Function(LlmChatViewModel vm)? onCloseScope;
+  final String? title;
 
   const ChatDrawer({
     super.key,
     required this.onClose,
+    this.onInitializeScope,
+    this.onCloseScope,
+    this.title,
   });
 
   @override
@@ -46,6 +53,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
 
   Future<void> _init() async {
     await _vm.ensureInitialized();
+    if (widget.onInitializeScope != null) {
+      await widget.onInitializeScope!(_vm);
+    }
     if (!mounted) return;
     setState(() => _ready = true);
     WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
@@ -152,6 +162,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
   void dispose() {
     _vm.removeListener(_onVmChanged);
     _vm.onRequireConfirmation = null;
+    if (widget.onCloseScope != null) {
+      widget.onCloseScope!(_vm);
+    }
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _inputController.dispose();
@@ -160,6 +173,12 @@ class _ChatDrawerState extends State<ChatDrawer> {
 
   Future<void> _openSessions() async {
     await showChatSessionsPanel(context, vm: _vm);
+  }
+
+  Future<void> _createNewSession() async {
+    final version = await showPromptVersionDialog(context);
+    if (version == null) return;
+    await _vm.createNewSession(promptVersion: version);
   }
 
   void _insertIntoInput(String text) {
@@ -282,11 +301,14 @@ class _ChatDrawerState extends State<ChatDrawer> {
                         ChatInputBar(
                           controller: _inputController,
                           isSending: _vm.isSending,
-                          webSearchEnabled: _vm.webSearchEnabled,
-                          onToggleWebSearch: () =>
-                              _vm.setWebSearchEnabled(!_vm.webSearchEnabled),
-                          onSend: (text, {String? imageBase64}) => _vm
-                              .sendUserMessage(text, imageBase64: imageBase64),
+                          onSend: (text,
+                                  {String? imageBase64,
+                                  String? textAttachment}) =>
+                              _vm.sendUserMessage(
+                            text,
+                            imageBase64: imageBase64,
+                            textAttachment: textAttachment,
+                          ),
                         ),
                       ],
                     ),
@@ -301,10 +323,21 @@ class _ChatDrawerState extends State<ChatDrawer> {
   }
 
   Widget _buildTopBar() {
+    final title = widget.title;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
       child: Row(
         children: [
+          if (title != null)
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+            ),
           IconButton(
             onPressed: _openSessions,
             tooltip: '会话列表',
@@ -323,9 +356,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
             icon: Icon(CupertinoIcons.book,
                 color: Theme.of(context).colorScheme.onSurface),
           ),
-          const Spacer(),
+          if (title == null) const Spacer(),
           IconButton(
-            onPressed: _vm.createNewSession,
+            onPressed: _createNewSession,
             tooltip: '新建会话',
             icon: Icon(CupertinoIcons.square_pencil,
                 color: Theme.of(context).colorScheme.onSurface),
@@ -363,7 +396,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                       .withValues(alpha: 0.5)),
               SizedBox(height: 12),
               Text(
-                '描述你想生成的画面，我来帮你整理成提示词。\n建议让模型按正向/负向两个代码块输出。',
+                '描述你想生成的画面，我来帮你整理成提示词。\n信息不足时会给出可点击选项确认。',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 14,
@@ -394,6 +427,12 @@ class _ChatDrawerState extends State<ChatDrawer> {
               onEditAndResend: message.role == LlmMessageRole.user
                   ? (newText) => _vm.editAndResend(index, newText)
                   : null,
+              onAnswerInteraction: (optionId, customAnswer) =>
+                  _vm.answerInteraction(
+                message: message,
+                optionId: optionId,
+                customAnswer: customAnswer,
+              ),
             );
           },
         ),

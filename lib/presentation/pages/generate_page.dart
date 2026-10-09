@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -17,110 +18,9 @@ import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart'
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 import 'package:nai_huishi/presentation/widgets/img2img_crop_dialog.dart';
-import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_apply_parser.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_capsule_sheet.dart';
-
-class _MaskStroke {
-  final List<Offset> points;
-  final double strokeWidth;
-
-  const _MaskStroke({required this.points, required this.strokeWidth});
-}
-
-class _MaskPainter extends CustomPainter {
-  final List<_MaskStroke> strokes;
-  final List<_MaskStroke>? erasedStrokes;
-  final bool preview;
-
-  const _MaskPainter(
-      {required this.strokes, required this.preview, this.erasedStrokes});
-
-  void _drawStrokes(
-      Canvas canvas, Size size, List<_MaskStroke> strokeList, Paint paint) {
-    for (final stroke in strokeList) {
-      if (stroke.points.isEmpty) continue;
-      final pixelStrokeWidth = stroke.strokeWidth * size.width;
-      paint.strokeWidth = pixelStrokeWidth;
-
-      if (stroke.points.length == 1) {
-        final p = stroke.points.first;
-        canvas.drawCircle(
-          Offset(p.dx * size.width, p.dy * size.height),
-          pixelStrokeWidth / 2,
-          paint..style = PaintingStyle.fill,
-        );
-        paint.style = PaintingStyle.stroke;
-        continue;
-      }
-      final path = Path()
-        ..moveTo(stroke.points.first.dx * size.width,
-            stroke.points.first.dy * size.height);
-      for (final point in stroke.points.skip(1)) {
-        path.lineTo(point.dx * size.width, point.dy * size.height);
-      }
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // 生成模式（非预览）：画纯黑背景 + 白色画笔笔迹 + 黑色橡皮擦笔迹
-    if (!preview) {
-      final fillPaint = Paint()
-        ..style = PaintingStyle.fill
-        ..color = Colors.black;
-      canvas.drawRect(Offset.zero & size, fillPaint);
-
-      final strokePaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..color = Colors.white;
-      _drawStrokes(canvas, size, strokes, strokePaint);
-
-      if (erasedStrokes != null && erasedStrokes!.isNotEmpty) {
-        final eraserPaint = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
-          ..color = Colors.black;
-        _drawStrokes(canvas, size, erasedStrokes!, eraserPaint);
-      }
-      return;
-    }
-
-    // 预览模式：用 saveLayer + BlendMode 实现橡皮擦真正擦除红色遮罩
-    canvas.saveLayer(Offset.zero & size, Paint());
-
-    // 画红色遮罩（画笔笔迹）
-    final strokePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = const Color(0xAAFF3333);
-    _drawStrokes(canvas, size, strokes, strokePaint);
-
-    // 用 clear 混合模式擦除橡皮擦区域（红色消失，露出底图）
-    if (erasedStrokes != null && erasedStrokes!.isNotEmpty) {
-      final eraserPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..blendMode = BlendMode.clear;
-      _drawStrokes(canvas, size, erasedStrokes!, eraserPaint);
-    }
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _MaskPainter oldDelegate) {
-    return oldDelegate.strokes != strokes ||
-        oldDelegate.preview != preview ||
-        oldDelegate.erasedStrokes != erasedStrokes;
-  }
-}
+import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
 
 class _ChatFab extends StatelessWidget {
   final VoidCallback onTap;
@@ -147,125 +47,6 @@ class _ChatFab extends StatelessWidget {
   }
 }
 
-class _MaskEditor extends StatelessWidget {
-  final String imagePath;
-  final List<_MaskStroke> strokes;
-  final List<_MaskStroke>? erasedStrokes;
-  final double strokeWidth;
-  final bool editable;
-  final void Function(DragStartDetails, Size)? onPanStart;
-  final void Function(DragUpdateDetails, Size)? onPanUpdate;
-  final VoidCallback? onPanEnd;
-  final double aspectRatio;
-
-  const _MaskEditor({
-    required this.imagePath,
-    required this.strokes,
-    this.erasedStrokes,
-    required this.strokeWidth,
-    this.editable = true,
-    this.onPanStart,
-    this.onPanUpdate,
-    this.onPanEnd,
-    required this.aspectRatio,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth;
-        // 按原图真实比例计算画布尺寸
-        double canvasWidth, canvasHeight;
-        if (aspectRatio >= 1) {
-          // 横向图
-          canvasWidth = maxWidth;
-          canvasHeight = maxWidth / aspectRatio;
-        } else {
-          // 纵向图
-          canvasHeight = maxWidth / aspectRatio > constraints.maxHeight
-              ? constraints.maxHeight
-              : maxWidth / aspectRatio;
-          canvasWidth = canvasHeight * aspectRatio;
-        }
-        final size = Size(canvasWidth, canvasHeight);
-
-        Widget canvas = ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.file(File(imagePath), fit: BoxFit.fill),
-              CustomPaint(
-                painter: _MaskPainter(
-                    strokes: strokes,
-                    preview: true,
-                    erasedStrokes: erasedStrokes),
-              ),
-              if (editable)
-                IgnorePointer(
-                  child: Align(
-                    alignment: Alignment.topRight,
-                    child: Container(
-                      margin: const EdgeInsets.all(10),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '笔刷 ${strokeWidth.toStringAsFixed(0)}',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-
-        if (editable &&
-            onPanStart != null &&
-            onPanUpdate != null &&
-            onPanEnd != null) {
-          canvas = Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) {
-              final details = DragStartDetails(
-                globalPosition: event.position,
-                localPosition: event.localPosition,
-              );
-              onPanStart!(details, size);
-            },
-            onPointerMove: (event) {
-              final details = DragUpdateDetails(
-                globalPosition: event.position,
-                localPosition: event.localPosition,
-                delta: event.delta,
-              );
-              onPanUpdate!(details, size);
-            },
-            onPointerUp: (_) => onPanEnd!(),
-            child: canvas,
-          );
-        }
-
-        return Center(
-          child: SizedBox(
-            width: canvasWidth,
-            height: canvasHeight,
-            child: canvas,
-          ),
-        );
-      },
-    );
-  }
-}
-
 class GeneratePage extends StatefulWidget {
   final ValueChanged<int>? onNavigate;
 
@@ -280,7 +61,6 @@ class _GeneratePageState extends State<GeneratePage> {
   late final ImagePicker _imagePicker;
   late final ScrollController _scrollController;
   int _promptSegmentIndex = 0; // 0: 正面, 1: 负面
-  bool _isDrawingMask = false; // 手绘遮罩时禁用 ListView 滚动
   bool _isPreparingImg2Img = false;
   String? _img2ImgOriginalPath;
 
@@ -298,19 +78,8 @@ class _GeneratePageState extends State<GeneratePage> {
     _inpaintPromptController.text = _vm.inpaintPrompt;
     _inpaintNegativeController.text = _vm.inpaintNegativePrompt;
     _vm.addListener(_onVmChanged);
+    InpaintWorkspaceCard.gestureActive.addListener(_onInpaintGestureChanged);
     _vm.loadModels();
-    _loadSourceImageAspect();
-  }
-
-  Future<void> _loadSourceImageAspect() async {
-    if (_vm.sourceImagePath != null &&
-        File(_vm.sourceImagePath!).existsSync()) {
-      final bytes = await File(_vm.sourceImagePath!).readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image != null && mounted) {
-        setState(() => _sourceImageAspect = image.width / image.height);
-      }
-    }
   }
 
   late final TextEditingController _promptController = TextEditingController();
@@ -324,8 +93,11 @@ class _GeneratePageState extends State<GeneratePage> {
   late final FocusNode _negativeFocusNode = FocusNode();
   late final FocusNode _inpaintPromptFocusNode = FocusNode();
   late final FocusNode _inpaintNegativeFocusNode = FocusNode();
-  final GlobalKey _maskPreviewKey = GlobalKey();
   final GlobalKey _resultSectionKey = GlobalKey();
+  final GlobalKey _inpaintSectionKey = GlobalKey();
+
+  /// 局部重绘工作区手势激活（绘制遮罩/拖框/移动图片）时锁定页面滚动。
+  bool _inpaintWorkspaceLocked = false;
   int _knownResultCount = 0;
   String? _shownGenerationError;
   bool _wasGenerating = false;
@@ -397,80 +169,15 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  final List<_MaskStroke> _maskStrokes = [];
-  final List<_MaskStroke> _maskErasedStrokes = []; // 橡皮擦笔迹
-  final List<bool> _strokeHistory = []; // true=画笔, false=橡皮擦, 用于撤销
-  List<Offset> _activeStroke = [];
-  double _maskBrushSize = 28;
-  double _sourceImageAspect = 1.0; // 原图宽高比
-  bool _isFullscreenMask = false; // 全屏涂抹模式
-  bool _isEraserMode = false; // 橡皮擦模式
-  int _activePointers = 0; // 当前触摸点数（用于区分单指画笔/双指缩放）
-  String? _toastMessage; // 悬浮提示消息
+  /// 局部重绘工作区手势激活状态变化 → 刷新页面（滚动锁定随之切换）。
+  void _onInpaintGestureChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  String? _toastMessage;
   bool _toastVisible = false;
   bool _isChatDrawerOpen = false;
-
-  void _startMaskStroke(DragStartDetails details, Size size) {
-    final point = details.localPosition;
-    if (point.dx < 0 ||
-        point.dy < 0 ||
-        point.dx > size.width ||
-        point.dy > size.height) return;
-    final normalized = Offset(point.dx / size.width, point.dy / size.height);
-    final normalizedBrush = _maskBrushSize / size.width;
-    setState(() {
-      _isDrawingMask = true;
-      _activeStroke = [normalized];
-      final stroke =
-          _MaskStroke(points: _activeStroke, strokeWidth: normalizedBrush);
-      if (_isEraserMode) {
-        _maskErasedStrokes.add(stroke);
-        _strokeHistory.add(false);
-      } else {
-        _maskStrokes.add(stroke);
-        _strokeHistory.add(true);
-      }
-    });
-  }
-
-  void _updateMaskStroke(DragUpdateDetails details, Size size) {
-    final point = details.localPosition;
-    if (point.dx < 0 ||
-        point.dy < 0 ||
-        point.dx > size.width ||
-        point.dy > size.height) return;
-    if (_activeStroke.isEmpty) return;
-    final normalized = Offset(point.dx / size.width, point.dy / size.height);
-    setState(() {
-      _activeStroke = [..._activeStroke, normalized];
-      final stroke = _MaskStroke(
-          points: _activeStroke, strokeWidth: _maskBrushSize / size.width);
-      if (_isEraserMode) {
-        _maskErasedStrokes[_maskErasedStrokes.length - 1] = stroke;
-      } else {
-        _maskStrokes[_maskStrokes.length - 1] = stroke;
-      }
-    });
-  }
-
-  void _endMaskStroke() {
-    _activeStroke = [];
-    setState(() => _isDrawingMask = false);
-  }
-
-  void _cancelActiveStroke() {
-    // 多指触摸时取消当前正在画的笔画
-    if (_maskStrokes.isNotEmpty || _maskErasedStrokes.isNotEmpty) {
-      if (_isEraserMode) {
-        _maskErasedStrokes.removeLast();
-      } else {
-        if (_maskStrokes.isNotEmpty) _maskStrokes.removeLast();
-      }
-      if (_strokeHistory.isNotEmpty) _strokeHistory.removeLast();
-    }
-    _activeStroke = [];
-    setState(() => _isDrawingMask = false);
-  }
 
   /// 弹选择器，返回写入目标：
   /// null = 用户取消
@@ -572,161 +279,15 @@ class _GeneratePageState extends State<GeneratePage> {
     });
   }
 
-  void _clearMaskStroke() {
-    setState(() {
-      _maskStrokes.clear();
-      _maskErasedStrokes.clear();
-      _strokeHistory.clear();
-      _activeStroke = [];
-    });
-    _vm.setMaskImagePath(null);
-  }
-
-  /// 撤销最近一次笔迹（画笔或橡皮擦）
-  void _undoLastStroke() {
-    if (_strokeHistory.isEmpty) return;
-    setState(() {
-      final wasBrush = _strokeHistory.removeLast();
-      if (wasBrush) {
-        if (_maskStrokes.isNotEmpty) _maskStrokes.removeLast();
-      } else {
-        if (_maskErasedStrokes.isNotEmpty) _maskErasedStrokes.removeLast();
-      }
-    });
-  }
-
-  Future<void> _applyDrawnMask() async {
-    if (_vm.sourceImagePath == null ||
-        (_maskStrokes.isEmpty && _maskErasedStrokes.isEmpty)) {
-      return;
-    }
-
-    // 用 image 包解码原图获取尺寸（比 ui.instantiateImageCodec 更轻量）
-    final sourceFile = File(_vm.sourceImagePath!);
-    final sourceBytes = await sourceFile.readAsBytes();
-    final sourceImage = img.decodeImage(sourceBytes);
-    if (sourceImage == null) return;
-    final sourceWidth = sourceImage.width;
-    final sourceHeight = sourceImage.height;
-
-    // 直接生成与原图同尺寸的遮罩
-    // NovelAI: 白色=重绘区域，黑色=保留区域
-    // GPT / Nano Banana: 透明(alpha=0)=重绘区域，不透明(alpha=255)=保留区域
-    final transparentMaskProvider = _vm.isGptProvider || _vm.isNanoProvider;
-
-    final retainColor = img.ColorRgba8(0, 0, 0, 255);
-    final repaintColor = transparentMaskProvider
-        ? img.ColorRgba8(0, 0, 0, 0)
-        : img.ColorRgba8(255, 255, 255, 255);
-
-    final mask =
-        img.Image(width: sourceWidth, height: sourceHeight, numChannels: 4);
-    img.fill(mask, color: retainColor); // 初始全部保留区域
-
-    // 画重绘区域——画笔笔迹
-    for (final stroke in _maskStrokes) {
-      if (stroke.points.isEmpty) continue;
-      final pixelStrokeWidth = (stroke.strokeWidth * sourceWidth).round();
-
-      if (stroke.points.length == 1) {
-        final p = stroke.points.first;
-        final cx = (p.dx * sourceWidth).round();
-        final cy = (p.dy * sourceHeight).round();
-        img.fillCircle(mask,
-            x: cx, y: cy, radius: pixelStrokeWidth ~/ 2, color: repaintColor);
-        continue;
-      }
-
-      for (int i = 0; i < stroke.points.length - 1; i++) {
-        final p1 = stroke.points[i];
-        final p2 = stroke.points[i + 1];
-        final x1 = (p1.dx * sourceWidth).round();
-        final y1 = (p1.dy * sourceHeight).round();
-        final x2 = (p2.dx * sourceWidth).round();
-        final y2 = (p2.dy * sourceHeight).round();
-        img.drawLine(mask,
-            x1: x1,
-            y1: y1,
-            x2: x2,
-            y2: y2,
-            color: repaintColor,
-            thickness: pixelStrokeWidth);
-      }
-    }
-
-    // 橡皮擦笔迹——恢复为保留区域
-    for (final stroke in _maskErasedStrokes) {
-      if (stroke.points.isEmpty) continue;
-      final pixelStrokeWidth = (stroke.strokeWidth * sourceWidth).round();
-
-      if (stroke.points.length == 1) {
-        final p = stroke.points.first;
-        final cx = (p.dx * sourceWidth).round();
-        final cy = (p.dy * sourceHeight).round();
-        img.fillCircle(mask,
-            x: cx, y: cy, radius: pixelStrokeWidth ~/ 2, color: retainColor);
-        continue;
-      }
-
-      for (int i = 0; i < stroke.points.length - 1; i++) {
-        final p1 = stroke.points[i];
-        final p2 = stroke.points[i + 1];
-        final x1 = (p1.dx * sourceWidth).round();
-        final y1 = (p1.dy * sourceHeight).round();
-        final x2 = (p2.dx * sourceWidth).round();
-        final y2 = (p2.dy * sourceHeight).round();
-        img.drawLine(mask,
-            x1: x1,
-            y1: y1,
-            x2: x2,
-            y2: y2,
-            color: retainColor,
-            thickness: pixelStrokeWidth);
-      }
-    }
-
-    // NovelAI 渠道：编码为单通道灰度 PNG 并对齐 8×8 latent 网格。
-    // GPT / Nano Banana：保留 RGBA 透明语义，直接编码 PNG。
-    final pngBytes = transparentMaskProvider
-        ? img.encodePng(mask)
-        : ImageUtils.encodeNovelAiMask(mask);
-
-    // 统计 mask 中重绘像素数量（NovelAI 看 R 通道，GPT/Nano 看 alpha）。
-    int whitePixelCount = 0;
-    for (int y = 0; y < mask.height; y++) {
-      for (int x = 0; x < mask.width; x++) {
-        final pixel = mask.getPixel(x, y);
-        final isRepaint =
-            transparentMaskProvider ? pixel.a == 0 : pixel.r == 255;
-        if (isRepaint) {
-          whitePixelCount++;
-        }
-      }
-    }
-    final totalPixels = mask.width * mask.height;
-    print(
-        '[NAI] mask: ${mask.width}x${mask.height}, repaint pixels: $whitePixelCount / $totalPixels (${(whitePixelCount / totalPixels * 100).toStringAsFixed(2)}%)');
-    print('[NAI] mask PNG size: ${pngBytes.length} bytes');
-
-    final dir = await Directory.systemTemp.createTemp('nai_mask_');
-    final file = File('${dir.path}${Platform.pathSeparator}mask.png');
-    await file.writeAsBytes(pngBytes, flush: true);
-    _vm.setMaskImagePath(file.path);
-    if (!mounted) return;
-    _showToast('已生成手绘遮罩');
-  }
-
   @override
   void dispose() {
     _vm.removeListener(_onVmChanged);
+    InpaintWorkspaceCard.gestureActive
+        .removeListener(_onInpaintGestureChanged);
     _promptController.dispose();
     _negativeController.dispose();
-    _inpaintPromptController.dispose();
-    _inpaintNegativeController.dispose();
     _promptFocusNode.dispose();
     _negativeFocusNode.dispose();
-    _inpaintPromptFocusNode.dispose();
-    _inpaintNegativeFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -783,8 +344,12 @@ class _GeneratePageState extends State<GeneratePage> {
             },
             child: ListView(
               controller: _scrollController,
-              physics:
-                  _isDrawingMask ? const NeverScrollableScrollPhysics() : null,
+              // 局部重绘工作区绘制/手势激活时锁定页面滚动，避免涂抹遮罩
+              // 时页面跟着移动。
+              physics: _vm.generationMode == GenerationMode.inpainting &&
+                      _inpaintWorkspaceLocked
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
               padding: EdgeInsets.only(
                 top: MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
                 bottom:
@@ -796,10 +361,9 @@ class _GeneratePageState extends State<GeneratePage> {
                 _buildModeSection(),
                 SizedBox(height: 16),
 
-                // 提示词区域
-                _vm.generationMode == GenerationMode.inpainting
-                    ? _buildInpaintPromptSection()
-                    : _buildPromptSection(),
+                // 提示词区域（局部重绘模式的提示词在工作区卡片内编辑）
+                if (_vm.generationMode != GenerationMode.inpainting)
+                  _buildPromptSection(),
                 SizedBox(height: 16),
 
                 if (_vm.generationMode == GenerationMode.inpainting) ...[
@@ -820,10 +384,6 @@ class _GeneratePageState extends State<GeneratePage> {
             bottom: 0,
             child: _buildFloatingBottomBar(),
           ),
-
-          // 全屏涂抹模式
-          if (_isFullscreenMask && _vm.sourceImagePath != null)
-            _buildFullscreenMaskEditor(),
 
           if (_isChatDrawerOpen)
             ChatDrawer(
@@ -882,269 +442,6 @@ class _GeneratePageState extends State<GeneratePage> {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildFullscreenMaskEditor() {
-    final screenSize = MediaQuery.sizeOf(context);
-    final canvasW = screenSize.width;
-    final canvasH = canvasW / _sourceImageAspect;
-    final canvasSize = Size(canvasW, canvasH);
-    final hasStrokes = _maskStrokes.isNotEmpty || _maskErasedStrokes.isNotEmpty;
-
-    return Container(
-      color: Colors.black,
-      child: SafeArea(
-        child: Column(
-          children: [
-            // 顶部工具栏
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => setState(() => _isFullscreenMask = false),
-                    icon: Icon(CupertinoIcons.xmark_circle_fill,
-                        color: Theme.of(context).colorScheme.onSurface,
-                        size: 28),
-                  ),
-                  // 画笔/橡皮擦切换
-                  SizedBox(width: 4),
-                  GestureDetector(
-                    onTap: () => setState(() => _isEraserMode = false),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: !_isEraserMode
-                            ? const Color(0xAAFF3333).withValues(alpha: 0.3)
-                            : Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: !_isEraserMode
-                              ? const Color(0xAAFF3333)
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(CupertinoIcons.paintbrush,
-                              size: 14,
-                              color: !_isEraserMode
-                                  ? const Color(0xAAFF3333)
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant),
-                          SizedBox(width: 4),
-                          Text('画笔',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: !_isEraserMode
-                                      ? const Color(0xAAFF3333)
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 6),
-                  GestureDetector(
-                    onTap: () => setState(() => _isEraserMode = true),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _isEraserMode
-                            ? const Color(0xAA3399FF).withValues(alpha: 0.3)
-                            : Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _isEraserMode
-                              ? const Color(0xAA3399FF)
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(CupertinoIcons.pencil_ellipsis_rectangle,
-                              size: 14,
-                              color: _isEraserMode
-                                  ? const Color(0xAA3399FF)
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant),
-                          SizedBox(width: 4),
-                          Text('橡皮擦',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: _isEraserMode
-                                      ? const Color(0xAA3399FF)
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  // 撤销按钮
-                  IconButton(
-                    onPressed: hasStrokes ? _undoLastStroke : null,
-                    icon: Icon(CupertinoIcons.arrow_uturn_left,
-                        color: hasStrokes
-                            ? Theme.of(context).colorScheme.onSurfaceVariant
-                            : Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant
-                                .withValues(alpha: 0.25),
-                        size: 20),
-                  ),
-                  IconButton(
-                    onPressed: _clearMaskStroke,
-                    icon: Icon(CupertinoIcons.trash,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        size: 20),
-                  ),
-                  SizedBox(width: 4),
-                  FilledButton(
-                    onPressed: hasStrokes
-                        ? () async {
-                            await _applyDrawnMask();
-                            if (mounted)
-                              setState(() => _isFullscreenMask = false);
-                          }
-                        : null,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: Text('应用遮罩'),
-                  ),
-                ],
-              ),
-            ),
-            // 笔刷大小
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  Text('笔刷 ',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant)),
-                  for (final size in [8.0, 16.0, 28.0, 40.0, 60.0])
-                    Padding(
-                      padding: const EdgeInsets.only(left: 6),
-                      child: GestureDetector(
-                        onTap: () => setState(() => _maskBrushSize = size),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: (_maskBrushSize - size).abs() < 0.1
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withValues(alpha: 0.3)
-                                : Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: (_maskBrushSize - size).abs() < 0.1
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.transparent,
-                            ),
-                          ),
-                          child: Center(
-                            child: Container(
-                              width: size / 3,
-                              height: size / 3,
-                              decoration: BoxDecoration(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
-                                  shape: BoxShape.circle),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // 可缩放的涂抹画布
-            Expanded(
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 5.0,
-                constrained: false,
-                panEnabled: _activePointers >= 2,
-                scaleEnabled: _activePointers >= 2,
-                child: SizedBox(
-                  width: canvasW,
-                  height: canvasH,
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (event) {
-                      _activePointers++;
-                      if (_activePointers == 1) {
-                        final details = DragStartDetails(
-                          globalPosition: event.position,
-                          localPosition: event.localPosition,
-                        );
-                        _startMaskStroke(details, canvasSize);
-                      } else {
-                        // 第二根手指按下，取消当前笔画，切换到缩放模式
-                        _cancelActiveStroke();
-                        setState(() {}); // 触发重建以更新 panEnabled/scaleEnabled
-                      }
-                    },
-                    onPointerMove: (event) {
-                      if (_activePointers == 1) {
-                        final details = DragUpdateDetails(
-                          globalPosition: event.position,
-                          localPosition: event.localPosition,
-                          delta: event.delta,
-                        );
-                        _updateMaskStroke(details, canvasSize);
-                      }
-                    },
-                    onPointerUp: (event) {
-                      if (_activePointers > 0) _activePointers--;
-                      if (_activePointers == 0) {
-                        _endMaskStroke();
-                      } else {
-                        setState(() {}); // 指针数变化，更新 panEnabled/scaleEnabled
-                      }
-                    },
-                    onPointerCancel: (event) {
-                      if (_activePointers > 0) _activePointers--;
-                      setState(() {});
-                    },
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.file(File(_vm.sourceImagePath!),
-                            fit: BoxFit.fill),
-                        CustomPaint(
-                          painter: _MaskPainter(
-                              strokes: _maskStrokes,
-                              preview: true,
-                              erasedStrokes: _maskErasedStrokes),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1227,190 +524,9 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildInpaintingSection() {
-    final hasSourceImage =
-        _vm.sourceImagePath != null && File(_vm.sourceImagePath!).existsSync();
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('局部重绘',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-          SizedBox(height: 8),
-          Text(
-            '选择原图，用手指涂抹需要重绘的区域（红色标记区域将被重绘）。',
-            style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                height: 1.5),
-          ),
-          SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: () => _pickImage(isMask: false),
-            icon: Icon(CupertinoIcons.photo, size: 16),
-            label: Text(_vm.sourceImagePath == null ? '选择原图' : '更换原图'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.primary,
-              side: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.45)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-          ),
-          if (hasSourceImage) ...[
-            SizedBox(height: 16),
-            Row(
-              children: [
-                Text('手绘遮罩',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600)),
-                const Spacer(),
-                Wrap(
-                  spacing: 4,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => _openImagePreview(
-                        context,
-                        imagePath: _vm.sourceImagePath,
-                      ),
-                      icon: const Icon(CupertinoIcons.eye, size: 16),
-                      label: const Text('查看原图', style: TextStyle(fontSize: 12)),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => setState(() => _isFullscreenMask = true),
-                      icon: const Icon(CupertinoIcons.fullscreen, size: 16),
-                      label: const Text('放大涂抹', style: TextStyle(fontSize: 12)),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            SizedBox(height: 8),
-            RepaintBoundary(
-              key: _maskPreviewKey,
-              child: _MaskEditor(
-                imagePath: _vm.sourceImagePath!,
-                strokes: _maskStrokes,
-                erasedStrokes: _maskErasedStrokes,
-                strokeWidth: _maskBrushSize,
-                editable: false,
-                aspectRatio: _sourceImageAspect,
-              ),
-            ),
-            SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _clearMaskStroke,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.primary,
-                      side: BorderSide(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withValues(alpha: 0.45)),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: Text('清空手绘'),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed:
-                        (_maskStrokes.isEmpty && _maskErasedStrokes.isEmpty)
-                            ? null
-                            : _applyDrawnMask,
-                    style: FilledButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: Text('应用手绘遮罩'),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 12),
-            Row(
-              children: [
-                Text('笔刷大小',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                const Spacer(),
-                for (final size in [8.0, 16.0, 28.0, 40.0, 60.0])
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: GestureDetector(
-                      onTap: () => setState(() => _maskBrushSize = size),
-                      child: Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: (_maskBrushSize - size).abs() < 0.1
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withValues(alpha: 0.2)
-                              : Theme.of(context).colorScheme.surface,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: (_maskBrushSize - size).abs() < 0.1
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withValues(alpha: 0.5)
-                                : Colors.transparent,
-                          ),
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: size / 3,
-                            height: size / 3,
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            SizedBox(height: 16),
-          ],
-          _PremiumSlider(
-            label: '重绘强度',
-            value: _vm.inpaintStrength,
-            min: 0.01,
-            max: 1.0,
-            divisions: 99,
-            onChanged: _vm.updateInpaintStrength,
-          ),
-        ],
-      ),
+    return KeyedSubtree(
+      key: _inpaintSectionKey,
+      child: const InpaintWorkspaceCard(),
     );
   }
 
@@ -1628,22 +744,6 @@ class _GeneratePageState extends State<GeneratePage> {
       if (mounted) setState(() => _isPreparingImg2Img = false);
     }
     return applied;
-  }
-
-  Future<void> _pickImage({required bool isMask}) async {
-    final file = await _imagePicker.pickImage(source: ImageSource.gallery);
-    if (file == null) return;
-    if (isMask) {
-      _vm.setMaskImagePath(file.path);
-    } else {
-      _vm.setSourceImagePath(file.path);
-      // 读取原图宽高比
-      final bytes = await File(file.path).readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image != null) {
-        _sourceImageAspect = image.width / image.height;
-      }
-    }
   }
 
   Future<void> _openPromptCapsule({
@@ -2003,144 +1103,6 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  int _inpaintPromptSegmentIndex = 0;
-
-  Widget _buildInpaintPromptSection() {
-    if (_vm.isNonNovelAiProvider) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08), width: 0.5),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: TextField(
-          controller: _inpaintPromptController,
-          focusNode: _inpaintPromptFocusNode,
-          minLines: 7,
-          maxLines: 14,
-          style: TextStyle(fontSize: 14, height: 1.5),
-          decoration: InputDecoration(
-            hintText: '描述编辑后想要的画面...',
-            hintStyle: TextStyle(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.55)),
-            fillColor: Colors.transparent,
-            border: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-          ),
-          onChanged: _vm.updateInpaintPrompt,
-        ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Icon(CupertinoIcons.paintbrush,
-                    size: 16,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('重绘提示词',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: CupertinoSlidingSegmentedControl<int>(
-              groupValue: _inpaintPromptSegmentIndex,
-              backgroundColor: Colors.black.withValues(alpha: 0.2),
-              thumbColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.8),
-              children: {
-                0: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '正面提示词',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _inpaintPromptSegmentIndex == 0
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                1: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '负面提示词',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _inpaintPromptSegmentIndex == 1
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              },
-              onValueChanged: (v) {
-                if (v != null) setState(() => _inpaintPromptSegmentIndex = v);
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: IndexedStack(
-              index: _inpaintPromptSegmentIndex,
-              children: [
-                _buildPromptField(
-                  controller: _inpaintPromptController,
-                  focusNode: _inpaintPromptFocusNode,
-                  hintText: '描述重绘区域想要的画面...',
-                  onChanged: _vm.updateInpaintPrompt,
-                  textColor: Theme.of(context).colorScheme.onSurface,
-                  editorTitle: '编辑重绘正面提示词',
-                  onExpandedSubmit: _vm.updateInpaintPrompt,
-                ),
-                _buildPromptField(
-                  controller: _inpaintNegativeController,
-                  focusNode: _inpaintNegativeFocusNode,
-                  hintText: '描述重绘区域不想要的画面...',
-                  onChanged: _vm.updateInpaintNegativePrompt,
-                  textColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                  editorTitle: '编辑重绘负面提示词',
-                  onExpandedSubmit: _vm.updateInpaintNegativePrompt,
-                ),
-              ],
-            ),
-          ),
-          _buildPromptCapsuleButton(
-            isInpaint: true,
-            isNegative: _inpaintPromptSegmentIndex == 1,
-          ),
-        ],
-      ),
-    );
-  }
-
   BoxDecoration _selectBoxDecoration(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return BoxDecoration(
@@ -2406,22 +1368,30 @@ class _GeneratePageState extends State<GeneratePage> {
           ],
         ),
         SizedBox(height: 8),
-        _dropdownShell(
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              isExpanded: true,
-              borderRadius: BorderRadius.circular(22),
-              value: _vm.selectedResolution,
-              icon: Icon(CupertinoIcons.chevron_down, size: 16),
-              dropdownColor: _dropdownColor(context),
-              style: _dropdownTextStyle(context),
-              items: _vm.availableResolutions
-                  .map((r) => DropdownMenuItem(
-                      value: r, child: Text(_vm.resolutionLabel(r))))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) _vm.updateSelectedResolution(v);
-              },
+        GestureDetector(
+          onLongPress: _showCustomResolutionDialog,
+          child: _dropdownShell(
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                borderRadius: BorderRadius.circular(22),
+                value: _vm.availableResolutions
+                        .contains(_vm.selectedResolution)
+                    ? _vm.selectedResolution
+                    : null,
+                hint: Text(_vm.resolutionLabel(_vm.selectedResolution),
+                    style: _dropdownTextStyle(context)),
+                icon: Icon(CupertinoIcons.chevron_down, size: 16),
+                dropdownColor: _dropdownColor(context),
+                style: _dropdownTextStyle(context),
+                items: _vm.availableResolutions
+                    .map((r) => DropdownMenuItem(
+                        value: r, child: Text(_vm.resolutionLabel(r))))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) _vm.updateSelectedResolution(v);
+                },
+              ),
             ),
           ),
         ),
@@ -2462,7 +1432,9 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ),
         ],
-        if ((_vm.is7877Endpoint || _vm.isIkunEndpoint) &&
+        if ((_vm.is7877Endpoint ||
+                _vm.isIkunEndpoint ||
+                _vm.isOfficialEndpoint) &&
             _vm.generationMode == GenerationMode.textToImage) ...[
           SizedBox(height: 20),
           _buildImg2ImgSection(),
@@ -2471,7 +1443,9 @@ class _GeneratePageState extends State<GeneratePage> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              '7877 渠道固定 28 步，仅支持普通尺寸；高级参数请从左上角进入。',
+              _vm.isV5Model
+                  ? 'V5 渠道固定单张生成，步数最多 28，画面总像素不超过 1024×1024；不支持 Vibe 与角色参考。'
+                  : '7877 使用 OpenAI Images 兼容接口；高级参数请从左上角进入。',
               style: TextStyle(
                 fontSize: 11,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -2479,6 +1453,26 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ),
         SizedBox(height: 20),
+        if (_vm.isOfficialEndpoint && _vm.officialCostPerImage != null) ...[
+          Row(
+            children: [
+              Text('预计消耗',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const Spacer(),
+              Text(
+                '${_vm.officialCostPerImage! * _vm.batchCount} Anlas'
+                '（${_vm.officialCostPerImage!}/张${_vm.batchCount > 1 ? ' × ${_vm.batchCount}' : ''}）',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          SizedBox(height: 4),
+        ],
         Row(
           children: [
             Text('批量生成',
@@ -2536,6 +1530,421 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
+  /// 工作台上方的官方超分按钮：点击弹出倍率选择（2x / 4x）。
+  /// 结果区的"局部重绘"按钮：把该图与当前正负提示词导入工作区并跳转。
+  Widget _buildInpaintImportButton() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: OutlinedButton.icon(
+        onPressed: _importResultToInpaint,
+        icon: Icon(CupertinoIcons.paintbrush,
+            size: 15, color: Theme.of(context).colorScheme.primary),
+        label: Text('局部重绘',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.primary)),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          side: BorderSide(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: 0.45)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importResultToInpaint() async {
+    final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
+    final path = displayTask?.imagePath;
+    if (path == null || !File(path).existsSync()) {
+      _showToast('当前图片不可用');
+      return;
+    }
+    _vm.setGenerationMode(GenerationMode.inpainting);
+    _vm.setSourceImagePath(path);
+    _vm.setMaskImagePath(null);
+    _showToast('已导入局部重绘');
+    await Future.delayed(const Duration(milliseconds: 60));
+    if (!mounted) return;
+    final context = _inpaintSectionKey.currentContext;
+    if (context != null) {
+      await Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
+    }
+  }
+
+  /// 长按尺寸框弹出的自定义画幅弹窗：输入宽×高，边长须为 64 的倍数。
+  Future<void> _showCustomResolutionDialog() async {
+    final widthController = TextEditingController();
+    final heightController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        String? errorText;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            void validateAndClose() {
+              final w = int.tryParse(widthController.text.trim());
+              final h = int.tryParse(heightController.text.trim());
+              if (w == null || h == null) {
+                setDialogState(() => errorText = '请输入有效的宽度和高度');
+                return;
+              }
+              if (w < 64 || h < 64 || w > 1920 || h > 1920) {
+                setDialogState(() => errorText = '边长需在 64 到 1920 之间');
+                return;
+              }
+              if (w % 64 != 0 || h % 64 != 0) {
+                setDialogState(() => errorText = '边长需为 64 的倍数');
+                return;
+              }
+              Navigator.pop(ctx, true);
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1C1C21),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              title: const Text('自定义画幅',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('边长需为 64 的倍数（64–1920）',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: widthController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: '宽度',
+                            hintText: '如 832',
+                          ),
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Text('×'),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: heightController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: '高度',
+                            hintText: '如 1216',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(errorText!,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(ctx).colorScheme.error)),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: validateAndClose,
+                  child: const Text('确定'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    final width = int.tryParse(widthController.text.trim());
+    final height = int.tryParse(heightController.text.trim());
+    if (width == null || height == null) return;
+    final error = await _vm.addCustomResolution(width, height);
+    if (!mounted) return;
+    if (error != null) {
+      _showToast(error);
+    } else {
+      _showToast('已添加自定义画幅 ${width}×$height');
+    }
+  }
+
+  /// 工作台的官方 Enhance 按钮：按提示词重绘放大（仅官方渠道显示）。
+  Widget _buildEnhanceButton() {
+    final busy = _vm.isOfficialEnhancing;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: OutlinedButton.icon(
+        onPressed: busy ? null : _showEnhanceSheet,
+        icon: busy
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(CupertinoIcons.wand_stars,
+                size: 15, color: Theme.of(context).colorScheme.primary),
+        label: Text(busy ? 'Enhance 中…' : 'Enhance',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.primary)),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          side: BorderSide(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: 0.45)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEnhanceSheet() async {
+    double magnitude = 0.3;
+    double noise = 0.1;
+    bool useMax = false;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Container(
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 18,
+                bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C21),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(28)),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Enhance · 重绘放大',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text('按当前提示词重绘放大，消耗 Anlas。',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color:
+                                Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 14),
+                    Text(
+                        '重绘幅度 ${(magnitude * 100).round()}%'
+                        '（低 ≈ 贴原图，高 ≈ 改得多）',
+                        style: const TextStyle(fontSize: 12)),
+                    Slider(
+                      value: magnitude,
+                      min: 0.05,
+                      max: 0.6,
+                      divisions: 55,
+                      onChanged: (v) => setSheetState(() => magnitude = v),
+                    ),
+                    Text('细节噪声 ${(noise * 100).round()}%',
+                        style: const TextStyle(fontSize: 12)),
+                    Slider(
+                      value: noise,
+                      min: 0,
+                      max: 0.5,
+                      divisions: 50,
+                      onChanged: (v) => setSheetState(() => noise = v),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: const Text('Max 放大（V5）',
+                          style: TextStyle(fontSize: 13)),
+                      subtitle: Text('服务端放大到 2× / 像素上限，Opus 也扣 Anlas',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                      value: useMax,
+                      onChanged: (v) => setSheetState(() => useMax = v),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('取消'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('开始 Enhance'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    final ok = await _vm.enhanceWithOfficial(
+      scale: useMax ? 1.0 : 1.5,
+      strength: magnitude,
+      noise: noise,
+      max: useMax,
+    );
+    if (!mounted) return;
+    if (ok) {
+      _showToast('Enhance 完成，已加入本次结果');
+    } else if (_vm.errorMessage != null) {
+      _showToast(_vm.errorMessage!);
+    }
+  }
+
+  Widget _buildOfficialUpscaleButton() {
+    final busy = _vm.isOfficialUpscaling;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: OutlinedButton.icon(
+        onPressed: busy ? null : _showOfficialUpscaleSheet,
+        icon: busy
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(CupertinoIcons.arrow_up_left_square,
+                size: 15, color: Theme.of(context).colorScheme.primary),
+        label: Text(busy ? '超分中…' : '超分',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.primary)),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          side: BorderSide(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: 0.45)),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showOfficialUpscaleSheet() async {
+    final scale = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 16,
+            bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C1C21),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border.all(
+                color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('官方超分',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text('使用 NovelAI 官方接口放大当前图片，消耗 Anlas。',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 12),
+                ListTile(
+                  leading: const Icon(CupertinoIcons.zoom_in),
+                  title: const Text('2 倍放大'),
+                  subtitle: const Text('单次超分，速度较快'),
+                  onTap: () => Navigator.of(ctx).pop(2),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(CupertinoIcons.arrow_up_right_square),
+                  title: const Text('4 倍放大'),
+                  subtitle: const Text('连续两遍超分，耗时更长'),
+                  onTap: () => Navigator.of(ctx).pop(4),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (scale == null || !mounted) return;
+    final ok = await _vm.upscaleWithOfficial(scale);
+    if (!mounted) return;
+    if (ok) {
+      _showToast('超分完成，已加入本次结果');
+    } else if (_vm.errorMessage != null) {
+      _showToast(_vm.errorMessage!);
+    }
+  }
+
   Widget _buildResultSection() {
     final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
     if (displayTask == null && _vm.errorMessage == null)
@@ -2553,11 +1962,23 @@ class _GeneratePageState extends State<GeneratePage> {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 8, bottom: 8),
-            child: Text(headerLabel,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            child: Row(
+              children: [
+                Text(headerLabel,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color:
+                            Theme.of(context).colorScheme.onSurfaceVariant)),
+                const Spacer(),
+                if (displayTask?.imagePath != null &&
+                    File(displayTask!.imagePath!).existsSync()) ...[
+                  _buildInpaintImportButton(),
+                  if (_vm.isOfficialEndpoint) _buildEnhanceButton(),
+                  _buildOfficialUpscaleButton(),
+                ],
+              ],
+            ),
           ),
           Container(
             decoration: BoxDecoration(
@@ -3075,18 +2496,23 @@ class _GenerationSettingsSheet extends StatelessWidget {
                           child: buildModelSection(),
                         ),
                         if (isNovelAiTextToImage) ...[
-                          const SizedBox(height: 12),
-                          KeyedSubtree(
-                            key:
-                                const ValueKey('generation_settings_character'),
-                            child: buildCharacterSection(),
-                          ),
-                          const SizedBox(height: 12),
-                          KeyedSubtree(
-                            key:
-                                const ValueKey('generation_settings_reference'),
-                            child: buildReferenceSection(),
-                          ),
+                          if (vm.supportsCharacterPrompts) ...[
+                            const SizedBox(height: 12),
+                            KeyedSubtree(
+                              key: const ValueKey(
+                                  'generation_settings_character'),
+                              child: buildCharacterSection(),
+                            ),
+                          ],
+                          if (vm.supportsVibeReferences ||
+                              vm.supportsPreciseReferences) ...[
+                            const SizedBox(height: 12),
+                            KeyedSubtree(
+                              key: const ValueKey(
+                                  'generation_settings_reference'),
+                              child: buildReferenceSection(),
+                            ),
+                          ],
                         ],
                         if (isExternalTextToImage) ...[
                           const SizedBox(height: 12),
@@ -4115,6 +3541,7 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
   Widget build(BuildContext context) {
     final characters = widget.vm.characters;
     final enabledCount = characters.where((c) => c.enabled).length;
+    if (!widget.vm.supportsCharacterPrompts) return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
@@ -4306,6 +3733,23 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                             widget.vm.setCharacterPositionAuto(entry.key),
                         onGridPosition: (row, col) => widget.vm
                             .setCharacterGridPosition(entry.key, row, col),
+                        onAddReference: (path) =>
+                            widget.vm.addCharacterReference(entry.key, path),
+                        onReplaceReference: (referenceIndex, path) =>
+                            widget.vm.replaceCharacterReference(
+                          entry.key,
+                          referenceIndex,
+                          path,
+                        ),
+                        onUpdateReference: (referenceIndex, reference) =>
+                            widget.vm.updateCharacterReference(
+                          entry.key,
+                          referenceIndex,
+                          reference,
+                        ),
+                        onRemoveReference: (referenceIndex) => widget.vm
+                            .removeCharacterReference(
+                                entry.key, referenceIndex),
                         onOpenExpandedEditor: ({
                           required title,
                           required initialValue,
@@ -4447,6 +3891,14 @@ class _CharacterCard extends StatefulWidget {
   final ValueChanged<CharacterSpec> onChanged;
   final VoidCallback onAutoPosition;
   final void Function(int row, int col) onGridPosition;
+  final Future<void> Function(String path) onAddReference;
+  final Future<void> Function(int referenceIndex, String path)
+      onReplaceReference;
+  final Future<void> Function(
+    int referenceIndex,
+    CharacterReferenceImage reference,
+  ) onUpdateReference;
+  final Future<void> Function(int referenceIndex) onRemoveReference;
   final Future<void> Function({
     required String title,
     required String initialValue,
@@ -4466,6 +3918,10 @@ class _CharacterCard extends StatefulWidget {
     required this.onChanged,
     required this.onAutoPosition,
     required this.onGridPosition,
+    required this.onAddReference,
+    required this.onReplaceReference,
+    required this.onUpdateReference,
+    required this.onRemoveReference,
     required this.onOpenExpandedEditor,
   });
 
@@ -4509,6 +3965,18 @@ class _CharacterCardState extends State<_CharacterCard> {
     _promptFocusNode.dispose();
     _ucFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickAndAddReference() async {
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image != null) await widget.onAddReference(image.path);
+  }
+
+  Future<void> _pickAndReplaceReference(int referenceIndex) async {
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      await widget.onReplaceReference(referenceIndex, image.path);
+    }
   }
 
   @override
@@ -4769,6 +4237,13 @@ class _CharacterCardState extends State<_CharacterCard> {
                         onAutoPosition: widget.onAutoPosition,
                         onGridPosition: widget.onGridPosition,
                       ),
+                      _CharacterReferencePanel(
+                        references: widget.character.referenceImages,
+                        onAdd: _pickAndAddReference,
+                        onReplace: _pickAndReplaceReference,
+                        onUpdate: widget.onUpdateReference,
+                        onDelete: widget.onRemoveReference,
+                      ),
                     ],
                   ),
                 ),
@@ -4848,6 +4323,159 @@ class _CharacterCardState extends State<_CharacterCard> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CharacterReferencePanel extends StatelessWidget {
+  final List<CharacterReferenceImage> references;
+  final Future<void> Function() onAdd;
+  final Future<void> Function(int referenceIndex) onReplace;
+  final Future<void> Function(
+    int referenceIndex,
+    CharacterReferenceImage reference,
+  ) onUpdate;
+  final Future<void> Function(int referenceIndex) onDelete;
+
+  const _CharacterReferencePanel({
+    required this.references,
+    required this.onAdd,
+    required this.onReplace,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '角色精细参考会在兼容渠道中作为全局角色参考提交。',
+          style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: onAdd,
+          icon: const Icon(CupertinoIcons.add, size: 17),
+          label: Text(references.isEmpty ? '添加角色精细参考' : '继续添加角色精细参考'),
+        ),
+        for (final entry in references.asMap().entries)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: _CharacterReferenceCard(
+              image: entry.value,
+              onReplace: () => onReplace(entry.key),
+              onUpdate: (reference) => onUpdate(entry.key, reference),
+              onDelete: () => onDelete(entry.key),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CharacterReferenceCard extends StatelessWidget {
+  final CharacterReferenceImage image;
+  final VoidCallback onReplace;
+  final ValueChanged<CharacterReferenceImage> onUpdate;
+  final VoidCallback onDelete;
+
+  const _CharacterReferenceCard({
+    required this.image,
+    required this.onReplace,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: () => showFullscreenImagePreview(
+                  context,
+                  imagePath: image.path,
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(image.path),
+                    width: 82,
+                    height: 108,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 82,
+                      height: 108,
+                      color: theme.colorScheme.errorContainer,
+                      child: Icon(
+                        CupertinoIcons.exclamationmark_triangle,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '角色精细参考',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextButton.icon(
+                      onPressed: onReplace,
+                      icon: const Icon(
+                        CupertinoIcons.arrow_2_circlepath,
+                        size: 15,
+                      ),
+                      label: const Text('替换图片'),
+                    ),
+                    IconButton(
+                      tooltip: '删除角色精细参考',
+                      onPressed: onDelete,
+                      icon: const Icon(CupertinoIcons.trash, size: 17),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _ReferenceSlider(
+            label: '参考强度',
+            value: image.strength,
+            onChanged: (value) => onUpdate(image.copyWith(strength: value)),
+          ),
+          _ReferenceSlider(
+            label: '信息提取',
+            value: image.informationExtracted,
+            onChanged: (value) =>
+                onUpdate(image.copyWith(informationExtracted: value)),
+          ),
+        ],
       ),
     );
   }

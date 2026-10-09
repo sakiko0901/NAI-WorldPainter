@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/pages/history_detail_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/history_viewmodel.dart';
@@ -22,11 +23,13 @@ class HistoryPage extends StatefulWidget {
 class _HistoryPageState extends State<HistoryPage> {
   late final HistoryViewModel _vm;
   final ScrollController _scrollController = ScrollController();
+  late final DailyStatsLocalDatasource _dailyStats;
 
   @override
   void initState() {
     super.initState();
     _vm = sl<HistoryViewModel>();
+    _dailyStats = sl<DailyStatsLocalDatasource>();
     _vm.addListener(_onVmChanged);
     _vm.loadHistory(refresh: true);
     _scrollController.addListener(_onScroll);
@@ -53,6 +56,149 @@ class _HistoryPageState extends State<HistoryPage> {
     super.dispose();
   }
 
+  /// 每日生成成功统计弹窗：今日数量 + 最近 7 天明细。
+  Future<void> _showDailyStatsSheet() async {
+    final now = DateTime.now().toLocal();
+    final todayCount = await _dailyStats.getSuccessCount(now);
+    final recent = await _dailyStats.getRecentCounts(days: 7);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 18,
+            bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C1C21),
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border.all(
+                color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('每日生成统计',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text('记录生成成功的图像数量，每日 0 点重置，长期保留。',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Icon(CupertinoIcons.sparkles,
+                        size: 22,
+                        color: Theme.of(ctx).colorScheme.primary),
+                    const SizedBox(width: 10),
+                    Text('$todayCount',
+                        style: TextStyle(
+                            fontSize: 30,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(ctx).colorScheme.primary)),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text('今日生成成功',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: Theme.of(ctx)
+                                  .colorScheme
+                                  .onSurfaceVariant)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (recent.isEmpty)
+                  Text('最近 7 天暂无记录',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant))
+                else ...[
+                  Text('最近 7 天',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 8),
+                  ...recent.entries.map((entry) {
+                    final parts = entry.key.split('-');
+                    final month = int.tryParse(parts[1]) ?? 0;
+                    final day = int.tryParse(parts[2]) ?? 0;
+                    final date = DateTime(
+                        int.tryParse(parts[0]) ?? now.year, month, day);
+                    final isToday = entry.key == _dateKey(now);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 92,
+                            child: Text(
+                              '$month/$day 周${weekdays[date.weekday - 1]}'
+                              '${isToday ? ' · 今' : ''}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(ctx)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: todayCount > 0
+                                    ? (entry.value / todayCount).clamp(0.0, 1.0)
+                                    : (entry.value > 0 ? 1.0 : 0.0),
+                                minHeight: 6,
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: 0.08),
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 40,
+                            child: Text('${entry.value}',
+                                textAlign: TextAlign.end,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static String _dateKey(DateTime time) {
+    final local = time.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -75,6 +221,11 @@ class _HistoryPageState extends State<HistoryPage> {
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
+        leading: IconButton(
+          tooltip: '每日生成统计',
+          icon: const Icon(CupertinoIcons.chart_bar, size: 20),
+          onPressed: _showDailyStatsSheet,
+        ),
         actions: [
           IconButton(
             tooltip: '清空历史',

@@ -9,12 +9,15 @@ import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/agents/agent_loop.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
+import 'package:nai_huishi/domain/agents/tools/read_prompting_reference_tool.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
+import 'package:nai_huishi/domain/services/prompting_skill_loader.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
@@ -26,23 +29,23 @@ class LlmChatViewModel extends ChangeNotifier {
   final ManageLlmChatUseCase _manageChat;
   final ManageSettingsUseCase _manageSettings;
   final ManagePromptMemoriesUseCase _memories;
-  final AgentLoop Function() _agentLoopFactory;
   final GenerationViewModel _genVm;
   final AnalyzeImageTagsUseCase _analyzeImageTags;
+  final PromptingSkillLoader _promptingSkillLoader;
 
   LlmChatViewModel({
     required ManageLlmChatUseCase manageChat,
     required ManageSettingsUseCase manageSettings,
     required ManagePromptMemoriesUseCase memories,
-    required AgentLoop Function() agentLoopFactory,
     required GenerationViewModel genVm,
     required AnalyzeImageTagsUseCase analyzeImageTags,
+    required PromptingSkillLoader promptingSkillLoader,
   })  : _manageChat = manageChat,
         _manageSettings = manageSettings,
         _memories = memories,
-        _agentLoopFactory = agentLoopFactory,
         _genVm = genVm,
-        _analyzeImageTags = analyzeImageTags;
+        _analyzeImageTags = analyzeImageTags,
+        _promptingSkillLoader = promptingSkillLoader;
 
   // ── LLM 供应商 + 2 角色绑定 ──
   List<LlmProvider> _providers = [];
@@ -50,8 +53,8 @@ class LlmChatViewModel extends ChangeNotifier {
   LlmRoleBinding _visionBinding = const LlmRoleBinding();
   String _systemPrompt = AppConstants.defaultLlmSystemPrompt;
   int _contextLimit = AppConstants.defaultLlmContextLimit;
-  bool _webSearchEnabled = false;
-  String _defaultStyleWords = '';
+  String _defaultStyleWordsV5 = '';
+  String _defaultStyleWordsV45 = '';
 
   List<LlmProvider> get providers => List.unmodifiable(_providers);
   LlmRoleBinding get mainBinding => _mainBinding;
@@ -94,8 +97,8 @@ class LlmChatViewModel extends ChangeNotifier {
 
   String get systemPrompt => _systemPrompt;
   int get contextLimit => _contextLimit;
-  bool get webSearchEnabled => _webSearchEnabled;
-  String get defaultStyleWords => _defaultStyleWords;
+  String get defaultStyleWordsV5 => _defaultStyleWordsV5;
+  String get defaultStyleWordsV45 => _defaultStyleWordsV45;
 
   /// 知识库
   final NsfwBook _nsfwBook = NsfwBook();
@@ -105,6 +108,9 @@ class LlmChatViewModel extends ChangeNotifier {
   List<LlmSession> _sessions = [];
   String? _activeSessionId;
   List<LlmMessage> _messages = [];
+  ToolRegistry? _scopedRegistry;
+  String? _scopedSystemPrompt;
+  String? _returnSessionId;
 
   // 状态
   bool _isSending = false;
@@ -158,7 +164,9 @@ class LlmChatViewModel extends ChangeNotifier {
       _activeSessionId = _sessions.first.id;
       await _manageSettings.setLlmActiveSessionId(_activeSessionId);
     } else {
-      final created = await _manageChat.createSession();
+      final created = await _manageChat.createSession(
+        promptVersion: NaiPromptVersion.v45,
+      );
       _sessions = [created];
       _activeSessionId = created.id;
       await _manageSettings.setLlmActiveSessionId(_activeSessionId);
@@ -179,8 +187,8 @@ class LlmChatViewModel extends ChangeNotifier {
         await _manageSettings.getLlmRoleBinding(LlmProfileRole.vision);
     _systemPrompt = await _manageSettings.getLlmSystemPrompt();
     _contextLimit = await _manageSettings.getLlmContextLimit();
-    _webSearchEnabled = await _manageSettings.getWebSearchEnabled();
-    _defaultStyleWords = await _manageSettings.getDefaultStyleWords();
+    _defaultStyleWordsV5 = await _manageSettings.getDefaultStyleWordsV5();
+    _defaultStyleWordsV45 = await _manageSettings.getDefaultStyleWordsV45();
     // 启动后校验：binding 引用的 providerId/model 不存在则清空
     _sanitizeBindings();
   }
@@ -261,15 +269,15 @@ class LlmChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setWebSearchEnabled(bool value) async {
-    _webSearchEnabled = value;
-    await _manageSettings.setWebSearchEnabled(value);
+  Future<void> setDefaultStyleWordsV5(String value) async {
+    _defaultStyleWordsV5 = value;
+    await _manageSettings.setDefaultStyleWordsV5(value);
     notifyListeners();
   }
 
-  Future<void> setDefaultStyleWords(String value) async {
-    _defaultStyleWords = value;
-    await _manageSettings.setDefaultStyleWords(value);
+  Future<void> setDefaultStyleWordsV45(String value) async {
+    _defaultStyleWordsV45 = value;
+    await _manageSettings.setDefaultStyleWordsV45(value);
     notifyListeners();
   }
 
@@ -283,8 +291,50 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   // ── 会话管理 ──
-  Future<void> createNewSession() async {
-    final created = await _manageChat.createSession();
+  Future<void> openScopedSession({
+    required String contextKey,
+    required String title,
+    required String systemPrompt,
+    required ToolRegistry registry,
+  }) async {
+    await ensureInitialized();
+    final existing = await _manageChat.findSessionByContextKey(contextKey);
+    final session = existing ??
+        await _manageChat.createSession(
+          initialTitle: title,
+          scope: 'comic',
+          contextKey: contextKey,
+          promptVersion: NaiPromptVersion.v45,
+        );
+    if (_activeSessionId != session.id) _returnSessionId ??= _activeSessionId;
+    _sessions = await _manageChat.listSessions();
+    _activeSessionId = session.id;
+    _messages = await _manageChat.listMessages(session.id);
+    _scopedRegistry = registry;
+    _scopedSystemPrompt = systemPrompt;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  Future<void> closeScopedSession() async {
+    final returnId = _returnSessionId;
+    _scopedRegistry = null;
+    _scopedSystemPrompt = null;
+    _returnSessionId = null;
+    if (returnId != null &&
+        _sessions.any((session) => session.id == returnId)) {
+      _activeSessionId = returnId;
+      _messages = await _manageChat.listMessages(returnId);
+    }
+    notifyListeners();
+  }
+
+  Future<void> createNewSession({
+    NaiPromptVersion promptVersion = NaiPromptVersion.v5,
+  }) async {
+    if (_isSending) return;
+    final created =
+        await _manageChat.createSession(promptVersion: promptVersion);
     _sessions = [created, ..._sessions];
     _activeSessionId = created.id;
     _messages = [];
@@ -294,7 +344,7 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   Future<void> selectSession(String id) async {
-    if (id == _activeSessionId) return;
+    if (_isSending || id == _activeSessionId) return;
     _activeSessionId = id;
     _isLoading = true;
     _errorMessage = null;
@@ -311,6 +361,14 @@ class LlmChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setActivePromptVersion(NaiPromptVersion version) async {
+    final session = activeSession;
+    if (session == null || session.promptVersion == version) return;
+    await _manageChat.setSessionPromptVersion(session.id, version);
+    _sessions = await _manageChat.listSessions();
+    notifyListeners();
+  }
+
   Future<void> deleteSession(String id) async {
     await _manageChat.deleteSession(id);
     _sessions = await _manageChat.listSessions();
@@ -319,7 +377,9 @@ class LlmChatViewModel extends ChangeNotifier {
         _activeSessionId = _sessions.first.id;
         _messages = await _manageChat.listMessages(_activeSessionId!);
       } else {
-        final created = await _manageChat.createSession();
+        final created = await _manageChat.createSession(
+          promptVersion: NaiPromptVersion.v45,
+        );
         _sessions = [created];
         _activeSessionId = created.id;
         _messages = [];
@@ -331,7 +391,9 @@ class LlmChatViewModel extends ChangeNotifier {
 
   Future<void> deleteAllSessions() async {
     await _manageChat.deleteAllSessions();
-    final created = await _manageChat.createSession();
+    final created = await _manageChat.createSession(
+      promptVersion: NaiPromptVersion.v45,
+    );
     _sessions = [created];
     _activeSessionId = created.id;
     _messages = [];
@@ -347,9 +409,15 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   // ── 发送消息：走 AgentLoop ──
-  Future<void> sendUserMessage(String text, {String? imageBase64}) async {
+  Future<void> sendUserMessage(
+    String text, {
+    String? imageBase64,
+    String? textAttachment,
+    bool alreadyPersisted = false,
+  }) async {
     final trimmed = text.trim();
-    if ((trimmed.isEmpty && imageBase64 == null) || _isSending) return;
+    if ((trimmed.isEmpty && imageBase64 == null && textAttachment == null) ||
+        _isSending) return;
     if (_activeSessionId == null) {
       await createNewSession();
     }
@@ -360,13 +428,29 @@ class LlmChatViewModel extends ChangeNotifier {
     }
 
     final sessionId = _activeSessionId!;
+    final session = activeSession!;
+    final promptVersion = session.promptVersion.value;
+    final runRegistry = _scopedRegistry;
+    final runScopedSystemPrompt = _scopedSystemPrompt;
+    final runSystemPrompt = _systemPrompt;
+    final mainConfig = this.mainConfig;
+    final visionConfig = this.visionConfig;
+    if (imageBase64 != null && !visionConfig.isConfigured) {
+      _errorMessage = '发送图片需要先配置识图模型。请到设置 → 模型配置 → 识图模型，'
+          '选择一个支持 vision 的供应商和模型（如 GPT-4o / Claude 3.5 Sonnet 等）。';
+      notifyListeners();
+      return;
+    }
     _isSending = true;
     _errorMessage = null;
 
-    // 立即显示 user 消息 + 占位 assistant 消息
-    final displayContent = imageBase64 != null
-        ? (trimmed.isNotEmpty ? '$trimmed\n[图片]' : '[图片]')
-        : trimmed;
+    // 立即显示 user 消息 + 占位 assistant 消息。
+    // 已持久化的交互答案只补 assistant 占位，避免重复插入用户消息。
+    final displayContent = [
+      if (trimmed.isNotEmpty) trimmed,
+      if (imageBase64 != null) '[图片]',
+      if (textAttachment != null) '[文本附件]',
+    ].join('\n');
     final tentativeUserMessage = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.user,
@@ -383,7 +467,9 @@ class LlmChatViewModel extends ChangeNotifier {
       createdAt: placeholderCreatedAt,
       agentTimeline: <AgentEvent>[],
     );
-    _messages = [..._messages, tentativeUserMessage, placeholder];
+    _messages = alreadyPersisted
+        ? [..._messages, placeholder]
+        : [..._messages, tentativeUserMessage, placeholder];
     notifyListeners();
 
     void updatePlaceholder(LlmMessage next) {
@@ -401,12 +487,16 @@ class LlmChatViewModel extends ChangeNotifier {
     }
 
     try {
-      // 落库 user 消息
-      await _manageChat.saveUserMessage(
-        sessionId: sessionId,
-        userText: trimmed,
-        imageBase64: imageBase64,
-      );
+      // 落库 user 消息。点击结构化选项时，答案已在事务中写入。
+      if (!alreadyPersisted) {
+        await _manageChat.saveUserMessage(
+          sessionId: sessionId,
+          userText: textAttachment == null
+              ? trimmed
+              : '${trimmed.isEmpty ? '' : '$trimmed\n\n'}$textAttachment',
+          imageBase64: imageBase64,
+        );
+      }
 
       // 构造初始 messages：system + 上下文历史 + 当前用户消息
       final history = await _manageChat.listMessages(sessionId);
@@ -416,10 +506,34 @@ class LlmChatViewModel extends ChangeNotifier {
           ? history.sublist(history.length - _contextLimit)
           : history;
 
-      // 组装 system prompt：用户自定义 system + 默认画风画师词注入段
-      final sysContent = _defaultStyleWords.trim().isEmpty
-          ? _systemPrompt
-          : '$_systemPrompt\n\n## 默认画风画师词（用户全局设置）\n用户已设定默认画风画师词：`${_defaultStyleWords.trim()}`\n\n约束：调用 write_prompt 工具时，**必须**把这段画风画师词拼到正向 prompt 的最前面（多个 tag 用逗号空格分隔）。除非用户在对话里明确说"不要默认画风"/"换一个画风"等，否则每次生成都要带上。';
+      // 组装 system prompt：使用发送开始时捕获的会话上下文。
+      final baseSystemPrompt = runScopedSystemPrompt == null
+          ? runSystemPrompt
+          : '$runSystemPrompt\n\n$runScopedSystemPrompt';
+      final defaultStyleWords = promptVersion == 'v4.5'
+          ? _defaultStyleWordsV45.trim()
+          : _defaultStyleWordsV5.trim();
+      var sysContent = defaultStyleWords.isEmpty
+          ? '$baseSystemPrompt\n\n## 当前 NovelAI 画风版本\n本会话使用 $promptVersion 画风。'
+          : '$baseSystemPrompt\n\n## 当前 NovelAI 画风版本\n本会话使用 $promptVersion 画风。\n\n## 默认画风画师词（本会话版本）\n用户为 $promptVersion 设定的默认画风画师词：`$defaultStyleWords`\n\n约束：调用写入提示词工具时，必须把这段画风画师词拼到正向提示词的最前面（多个 tag 用逗号空格分隔）。除非用户明确要求更换画风，否则每次生成都要带上。';
+
+      final isV5PromptingSession = session.scope == 'general' &&
+          session.promptVersion == NaiPromptVersion.v5;
+      ToolRegistry? v5Registry;
+      if (isV5PromptingSession) {
+        try {
+          final skill = await _promptingSkillLoader.loadSkill();
+          sysContent = '$sysContent\n\n## V5 提示词 Skill\n$skill\n\n'
+              '## App 集成边界\n'
+              '以上 Skill 只负责 V5 提示词的构思与编排。App 的工具名称、确认机制、提示词框目标、'
+              'read-then-write 约束和图片生成流程以本系统规则为准，不要自行发明工具。需要详细构思或写法时，'
+              '调用 `read_prompting_reference` 读取对应参考文档；修改现有内容仍必须先调用 `read_current_prompts`。';
+          v5Registry = (_agentLoopRegistry()).copy()
+            ..register(ReadPromptingReferenceTool(_promptingSkillLoader));
+        } catch (e) {
+          if (kDebugMode) debugPrint('V5 prompting skill unavailable: $e');
+        }
+      }
 
       final payload = <Map<String, dynamic>>[
         {'role': 'system', 'content': sysContent},
@@ -436,19 +550,6 @@ class LlmChatViewModel extends ChangeNotifier {
           'content':
               '## 参考知识库（命中关键词）\n以下内容是从知识库中匹配到的相关提示词参考：\n\n$knowledgeText',
         });
-      }
-
-      // 选择使用哪个模型 profile
-      // 含图：必须用 vision profile（已配置）；未配置则报错，不静默回退 main（避免走错模型浪费 token）
-      // 无图：使用 main profile
-      final mainConfig = this.mainConfig;
-      final visionConfig = this.visionConfig;
-      if (imageBase64 != null && !visionConfig.isConfigured) {
-        _isSending = false;
-        _errorMessage = '发送图片需要先配置识图模型。请到设置 → 模型配置 → 识图模型，'
-            '选择一个支持 vision 的供应商和模型（如 GPT-4o / Claude 3.5 Sonnet 等）。';
-        notifyListeners();
-        return;
       }
 
       // ── Bug 1 修复：vision 双阶段识图 ──
@@ -474,10 +575,10 @@ class LlmChatViewModel extends ChangeNotifier {
         }
       }
 
-      // 历史消息
+      // 历史消息。当前用户消息已落库，后面会单独加入，不能重复发送。
+      final currentMessageId = history.isEmpty ? null : history.last.id;
       for (final m in historyLimited) {
-        if (m.id == null) continue;
-        // 跳过刚落库的 user 消息（最后一条），它在后面单独加入
+        if (m.id == null || m.id == currentMessageId) continue;
         payload.add({'role': m.roleString, 'content': m.content});
       }
 
@@ -495,19 +596,24 @@ class LlmChatViewModel extends ChangeNotifier {
         if (trimmed.isNotEmpty) {
           buf.writeln();
           buf.writeln('用户原始诉求：$trimmed');
-        } else {
+        }
+        if (textAttachment != null) {
+          buf.writeln();
+          buf.writeln(textAttachment);
+        }
+        if (trimmed.isEmpty && textAttachment == null) {
           buf.writeln();
           buf.writeln('用户未附加文字诉求，请基于图片内容编排提示词并写入对应框。');
         }
         payload.add({'role': 'user', 'content': buf.toString()});
       } else {
-        payload.add({'role': 'user', 'content': trimmed});
+        final content = textAttachment == null
+            ? trimmed
+            : '${trimmed.isEmpty ? '' : '$trimmed\n\n'}$textAttachment';
+        payload.add({'role': 'user', 'content': content});
       }
 
       final useConfig = mainConfig;
-
-      // 创建 AgentLoop 实例，注入本次的 onEvent + onRequireConfirmation 回调
-      final agentLoop = _agentLoopFactory();
 
       // 实时更新 placeholder timeline
       void onEvent(AgentEvent event) {
@@ -541,7 +647,7 @@ class LlmChatViewModel extends ChangeNotifier {
       // AgentLoop 没有 setter，重新构造一个带 onEvent/onRequireConfirmation 的实例
       final loopWithCallbacks = AgentLoop(
         api: _agentLoopApi(),
-        registry: _agentLoopRegistry(),
+        registry: runRegistry ?? v5Registry ?? _agentLoopRegistry(),
         onRequireConfirmation: onConfirm,
         onEvent: onEvent,
       );
@@ -579,8 +685,7 @@ class LlmChatViewModel extends ChangeNotifier {
         statusText = 'Agent 完成';
       } else if (hasReadNoWrite && hasModifyVerb) {
         // 正常完成但没写入——可能是 LLM 误解 read 即终点
-        statusText =
-            'Agent 调用了 read 但未写入提示词。建议明确说"把改动写入正向框"或重试。';
+        statusText = 'Agent 调用了 read 但未写入提示词。建议明确说"把改动写入正向框"或重试。';
       } else {
         final toolNames = toolNamesSet.join(', ');
         statusText = 'Agent 完成，调用工具：$toolNames';
@@ -598,6 +703,7 @@ class LlmChatViewModel extends ChangeNotifier {
         assistantText: assistantText,
         toolCallsJson: toolCallsJson,
         agentTimeline: timeline,
+        interaction: result.pendingInteraction,
       );
 
       _messages = await _manageChat.listMessages(sessionId);
@@ -606,6 +712,7 @@ class LlmChatViewModel extends ChangeNotifier {
           .map((m) => m.id == saved.id
               ? m.copyWith(
                   agentTimeline: timeline,
+                  interaction: result.pendingInteraction,
                 )
               : m)
           .toList();
@@ -670,6 +777,37 @@ class LlmChatViewModel extends ChangeNotifier {
       notifyListeners();
       return null;
     }
+  }
+
+  Future<void> answerInteraction({
+    required LlmMessage message,
+    String? optionId,
+    String? customAnswer,
+  }) async {
+    final interaction = message.interaction;
+    if (_isSending ||
+        message.sessionId != _activeSessionId ||
+        message.id == null ||
+        interaction == null ||
+        interaction.isAnswered) {
+      return;
+    }
+    if (!isConfigured) {
+      _errorMessage = '请先点击右上角齿轮，配置主模型 API Key / Base URL / 模型名';
+      notifyListeners();
+      return;
+    }
+    final saved = await _manageChat.answerInteraction(
+      sessionId: message.sessionId,
+      messageId: message.id!,
+      interactionId: interaction.id,
+      optionId: optionId,
+      customAnswer: customAnswer,
+    );
+    if (saved == null) return;
+    _messages = await _manageChat.listMessages(message.sessionId);
+    notifyListeners();
+    await sendUserMessage(saved.content, alreadyPersisted: true);
   }
 
   /// 重试：从指定用户消息处重新发送。
@@ -776,8 +914,7 @@ class LlmChatViewModel extends ChangeNotifier {
         {
           'role': 'user',
           'content': [
-            if (userText.isNotEmpty)
-              {'type': 'text', 'text': userText},
+            if (userText.isNotEmpty) {'type': 'text', 'text': userText},
             {
               'type': 'image_url',
               'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},

@@ -1,6 +1,7 @@
 enum DirectorChannel {
   gateway7877,
   ikun,
+  official,
 }
 
 enum DirectorToolType {
@@ -38,6 +39,15 @@ enum DirectorToolType {
   final String label;
   final String description;
   final String operation;
+
+  String get officialOperation => switch (this) {
+        DirectorToolType.declutter => 'declutter',
+        DirectorToolType.bgRemover => 'bg-removal',
+        DirectorToolType.lineart => 'lineart',
+        DirectorToolType.sketch => 'sketch',
+        DirectorToolType.colorize => 'colorize',
+        DirectorToolType.emotion => 'emotion',
+      };
 
   const DirectorToolType({
     required this.label,

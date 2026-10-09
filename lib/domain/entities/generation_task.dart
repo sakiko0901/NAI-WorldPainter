@@ -47,6 +47,8 @@ class GenerationTask extends Equatable {
   final String? sourceImagePath;
   final String? maskImagePath;
   final double? inpaintStrength;
+  final bool disabledOriginalImage;
+  final bool colorCorrect;
   final String? img2imgSourceImagePath;
   final double? img2imgStrength;
   final String? responseFormat;
@@ -86,6 +88,8 @@ class GenerationTask extends Equatable {
     this.sourceImagePath,
     this.maskImagePath,
     this.inpaintStrength,
+    this.disabledOriginalImage = false,
+    this.colorCorrect = true,
     this.img2imgSourceImagePath,
     this.img2imgStrength,
     this.responseFormat,
@@ -126,6 +130,8 @@ class GenerationTask extends Equatable {
     String? sourceImagePath,
     String? maskImagePath,
     double? inpaintStrength,
+    bool? disabledOriginalImage,
+    bool? colorCorrect,
     String? img2imgSourceImagePath,
     double? img2imgStrength,
     String? responseFormat,
@@ -165,6 +171,9 @@ class GenerationTask extends Equatable {
       sourceImagePath: sourceImagePath ?? this.sourceImagePath,
       maskImagePath: maskImagePath ?? this.maskImagePath,
       inpaintStrength: inpaintStrength ?? this.inpaintStrength,
+      disabledOriginalImage:
+          disabledOriginalImage ?? this.disabledOriginalImage,
+      colorCorrect: colorCorrect ?? this.colorCorrect,
       img2imgSourceImagePath:
           img2imgSourceImagePath ?? this.img2imgSourceImagePath,
       img2imgStrength: img2imgStrength ?? this.img2imgStrength,

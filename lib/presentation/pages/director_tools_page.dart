@@ -157,6 +157,10 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
                     value: DirectorChannel.ikun,
                     label: Text('ikun'),
                   ),
+                  ButtonSegment(
+                    value: DirectorChannel.official,
+                    label: Text('官方'),
+                  ),
                 ],
                 selected: {_vm.selectedChannel},
                 onSelectionChanged: disabled
@@ -168,7 +172,17 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
                 children: [
                   _thumbnail(colors),
                   const SizedBox(width: 10),
-                  Expanded(child: _modelDropdown(colors)),
+                  Expanded(
+                    child: _vm.selectedChannel == DirectorChannel.official
+                        ? Text(
+                            'NovelAI 官方 Director Tools 不需要选择模型',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.onSurfaceVariant,
+                            ),
+                          )
+                        : _modelDropdown(colors),
+                  ),
                   const SizedBox(width: 8),
                   IconButton.filledTonal(
                     tooltip: '更换图片',
@@ -250,7 +264,9 @@ class _DirectorToolsPageState extends State<DirectorToolsPage> {
                     child: FilledButton.icon(
                       onPressed: disabled ||
                               _vm.inputPath == null ||
-                              _vm.selectedModel == null
+                              (_vm.selectedChannel !=
+                                      DirectorChannel.official &&
+                                  _vm.selectedModel == null)
                           ? null
                           : _process,
                       icon: disabled

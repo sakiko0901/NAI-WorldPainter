@@ -5,6 +5,8 @@ import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/director_tool.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -13,10 +15,18 @@ import 'package:nai_huishi/domain/usecases/save_image.dart';
 
 class DirectorToolsViewModel extends ChangeNotifier {
   final NovelAiApiService _api;
+  final OfficialNovelAiApiService _officialApi;
+  final OfficialNovelAiTokenStore _officialTokenStore;
   final ManageSettingsUseCase _settings;
   final SaveImageUseCase _saveImage;
 
-  DirectorToolsViewModel(this._api, this._settings, this._saveImage);
+  DirectorToolsViewModel(
+    this._api,
+    this._officialApi,
+    this._officialTokenStore,
+    this._settings,
+    this._saveImage,
+  );
 
   String? inputPath;
   String? outputPath;
@@ -31,17 +41,25 @@ class DirectorToolsViewModel extends ChangeNotifier {
   String? errorMessage;
   ApiEndpoint? _endpoint7877;
   ApiEndpoint? _endpointIkun;
+  ApiEndpoint? _endpointOfficial;
   List<String> _models7877 = const [];
   List<String> _modelsIkun = const [];
   String? _model7877;
   String? _modelIkun;
 
-  String get channelName =>
-      selectedChannel == DirectorChannel.gateway7877 ? '7877' : 'ikun';
+  String get channelName => switch (selectedChannel) {
+        DirectorChannel.gateway7877 => '7877',
+        DirectorChannel.ikun => 'ikun',
+        DirectorChannel.official => 'NovelAI 官方',
+      };
 
-  ApiEndpoint? get _endpoint => selectedChannel == DirectorChannel.gateway7877
-      ? _endpoint7877
-      : _endpointIkun;
+  bool get _usesOfficial => selectedChannel == DirectorChannel.official;
+
+  ApiEndpoint? get _endpoint => switch (selectedChannel) {
+        DirectorChannel.gateway7877 => _endpoint7877,
+        DirectorChannel.ikun => _endpointIkun,
+        DirectorChannel.official => _endpointOfficial,
+      };
 
   Future<void> load() async {
     isLoadingModels = true;
@@ -57,13 +75,18 @@ class DirectorToolsViewModel extends ChangeNotifier {
           .where((endpoint) =>
               endpoint.id == AppConstants.novelAiImageGenerationsEndpointId)
           .firstOrNull;
+      _endpointOfficial = endpoints
+          .where((endpoint) =>
+              endpoint.id == AppConstants.novelAiOfficialEndpointId)
+          .firstOrNull;
       _models7877 = _availableModels(_endpoint7877);
       _modelsIkun = _availableModels(_endpointIkun);
 
       final activeId =
           await _settings.getActiveEndpointId(ImageProviderType.novelAi);
-      selectedChannel =
-          activeId == AppConstants.novelAiImageGenerationsEndpointId
+      selectedChannel = activeId == AppConstants.novelAiOfficialEndpointId
+          ? DirectorChannel.official
+          : activeId == AppConstants.novelAiImageGenerationsEndpointId
               ? DirectorChannel.ikun
               : DirectorChannel.gateway7877;
       final activeModel =
@@ -102,7 +125,10 @@ class DirectorToolsViewModel extends ChangeNotifier {
   }
 
   void _syncSelectedModel() {
-    if (selectedChannel == DirectorChannel.gateway7877) {
+    if (_usesOfficial) {
+      availableModels = const [];
+      selectedModel = null;
+    } else if (selectedChannel == DirectorChannel.gateway7877) {
       availableModels = _models7877;
       selectedModel = _model7877;
     } else {
@@ -110,9 +136,10 @@ class DirectorToolsViewModel extends ChangeNotifier {
       selectedModel = _modelIkun;
     }
     final endpoint = _endpoint;
-    if (endpoint == null || endpoint.baseUrl.trim().isEmpty) {
+    if (endpoint == null ||
+        (!_usesOfficial && endpoint.baseUrl.trim().isEmpty)) {
       errorMessage = '请先在 API 配置中配置 $channelName 渠道';
-    } else if (selectedModel == null) {
+    } else if (!_usesOfficial && selectedModel == null) {
       errorMessage = '$channelName 渠道没有可用于导演工具的模型';
     } else {
       errorMessage = null;
@@ -125,11 +152,6 @@ class DirectorToolsViewModel extends ChangeNotifier {
     outputPath = null;
     _syncSelectedModel();
     notifyListeners();
-
-    final endpoint = _endpoint;
-    if (endpoint == null) return;
-    await _settings.setActiveEndpointId(ImageProviderType.novelAi, endpoint.id);
-    await _settings.setActiveModel(ImageProviderType.novelAi, selectedModel);
   }
 
   Future<void> selectModel(String? model) async {
@@ -176,12 +198,13 @@ class DirectorToolsViewModel extends ChangeNotifier {
     }
     final endpoint = _endpoint;
     final model = selectedModel;
-    if (endpoint == null || endpoint.baseUrl.trim().isEmpty) {
+    if (endpoint == null ||
+        (!_usesOfficial && endpoint.baseUrl.trim().isEmpty)) {
       errorMessage = '请先在 API 配置中配置 $channelName 渠道';
       notifyListeners();
       return false;
     }
-    if (model == null || model.isEmpty) {
+    if (!_usesOfficial && (model == null || model.isEmpty)) {
       errorMessage = '请选择 $channelName NovelAI 模型';
       notifyListeners();
       return false;
@@ -191,25 +214,33 @@ class DirectorToolsViewModel extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      final bytes = selectedChannel == DirectorChannel.gateway7877
-          ? await _api.processDirectorImage(
+      final bytes = _usesOfficial
+          ? await _officialApi.augmentImage(
               imagePath: source,
-              operation: selectedTool.operation,
-              model: model,
-              apiKey: endpoint.apiKey,
-              baseUrl: endpoint.baseUrl,
+              tool: selectedTool,
+              token: await _requireOfficialToken(),
               prompt: selectedTool.usesPrompt ? prompt : null,
               defry: selectedTool.usesDefry ? defry : null,
             )
-          : await _api.processDirectorImageIkun(
-              imagePath: source,
-              operation: selectedTool.operation,
-              model: model,
-              apiKey: endpoint.apiKey,
-              baseUrl: endpoint.baseUrl,
-              prompt: selectedTool.usesPrompt ? prompt : null,
-              defry: selectedTool.usesDefry ? defry : null,
-            );
+          : selectedChannel == DirectorChannel.gateway7877
+              ? await _api.processDirectorImage(
+                  imagePath: source,
+                  operation: selectedTool.operation,
+                  model: model!,
+                  apiKey: endpoint.apiKey,
+                  baseUrl: endpoint.baseUrl,
+                  prompt: selectedTool.usesPrompt ? prompt : null,
+                  defry: selectedTool.usesDefry ? defry : null,
+                )
+              : await _api.processDirectorImageIkun(
+                  imagePath: source,
+                  operation: selectedTool.operation,
+                  model: model!,
+                  apiKey: endpoint.apiKey,
+                  baseUrl: endpoint.baseUrl,
+                  prompt: selectedTool.usesPrompt ? prompt : null,
+                  defry: selectedTool.usesDefry ? defry : null,
+                );
       outputPath = await ImageUtils.saveBase64Image(
         base64Encode(bytes),
         ImageUtils.generateFilename(),
@@ -222,6 +253,14 @@ class DirectorToolsViewModel extends ChangeNotifier {
       isProcessing = false;
       notifyListeners();
     }
+  }
+
+  Future<String> _requireOfficialToken() async {
+    final token = await _officialTokenStore.read();
+    if (token == null || token.trim().isEmpty) {
+      throw AppException(message: '请先在 API 配置中填写 NovelAI 官方 Token');
+    }
+    return token;
   }
 
   Future<bool> saveToGallery() async {

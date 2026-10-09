@@ -5,10 +5,16 @@ import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
+import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/services/background_keepalive_service.dart';
+import 'package:nai_huishi/core/utils/official_cost_calculator.dart';
+import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/novelai_route.dart';
 import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
 import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
@@ -51,6 +57,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final SaveImageUseCase _saveImage;
   final GenerationQueue _queue;
   final TiledImg2ImgService _tiledImg2Img;
+  final OfficialNovelAiApiService _officialApi;
+  final OfficialNovelAiTokenStore _officialTokenStore;
+  final DailyStatsLocalDatasource _dailyStats;
 
   GenerationViewModel({
     required GenerateImageUseCase generateImage,
@@ -58,11 +67,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     required SaveImageUseCase saveImage,
     required GenerationQueue queue,
     TiledImg2ImgService? tiledImg2Img,
+    required OfficialNovelAiApiService officialApi,
+    required OfficialNovelAiTokenStore officialTokenStore,
+    required DailyStatsLocalDatasource dailyStats,
   })  : _generateImage = generateImage,
         _manageSettings = manageSettings,
         _saveImage = saveImage,
         _queue = queue,
-        _tiledImg2Img = tiledImg2Img ?? TiledImg2ImgService(queue) {
+        _tiledImg2Img = tiledImg2Img ?? TiledImg2ImgService(queue),
+        _officialApi = officialApi,
+        _officialTokenStore = officialTokenStore,
+        _dailyStats = dailyStats {
     _init();
   }
 
@@ -81,7 +96,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String selectedSampler = 'k_euler';
   double scale = 5.0;
   double cfgRescale = 0.0;
-  String selectedNoiseSchedule = 'native';
+  String selectedNoiseSchedule = ApiConstants.defaultNoiseSchedule;
   int? seed;
   int? appliedSeed;
   int steps = ApiConstants.defaultSteps;
@@ -92,27 +107,63 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       .where((option) => option.modelId == selectedModel)
       .firstOrNull;
 
-  bool get isIkunEndpoint =>
-      currentModelOption?.protocol ==
-          AppConstants.novelAiImageGenerationsProtocol ||
-      selectedModel.startsWith('nai:ikun:');
+  NovelAiRoute? get _currentNovelAiRoute {
+    final option = currentModelOption;
+    if (option != null && option.provider != ImageProviderType.novelAi) {
+      return null;
+    }
 
-  bool get is7877Endpoint =>
-      currentModelOption?.protocol ==
-          AppConstants.novelAiChatCompletionsProtocol ||
-      selectedModel.startsWith('nai:7877:');
+    String? endpointId = option?.endpointId;
+    if (endpointId == null || endpointId.isEmpty) {
+      if (selectedModel.startsWith('nai:ikun:')) {
+        endpointId = AppConstants.novelAiImageGenerationsEndpointId;
+      } else if (selectedModel.startsWith('nai:7877:')) {
+        endpointId = AppConstants.novelAiChatCompletionsEndpointId;
+      } else if (selectedModel.startsWith('nai:official:')) {
+        endpointId = AppConstants.novelAiOfficialEndpointId;
+      }
+    }
+    final protocol = option?.protocol;
+    if ((endpointId == null || endpointId.isEmpty) &&
+        (protocol == null || protocol.isEmpty)) {
+      return null;
+    }
+    return NovelAiRoute.fromIds(endpointId, protocol);
+  }
 
-  bool get supportsVibeReferences => is7877Endpoint || isIkunEndpoint;
+  bool get isIkunEndpoint => _currentNovelAiRoute?.isIkun ?? false;
+
+  bool get is7877Endpoint => _currentNovelAiRoute?.isGateway7877 ?? false;
+
+  bool get isOfficialEndpoint => _currentNovelAiRoute?.isOfficial ?? false;
+
+  bool get isV5Model {
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final normalized = model.trim().toLowerCase();
+    return normalized.contains('nai-diffusion-5') || normalized.contains('v5');
+  }
+
+  bool get supportsCharacterPrompts => true;
+
+  bool get supportsVibeReferences {
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    if (_isLimitModel(model)) return false;
+    return isIkunEndpoint || !isV5Model;
+  }
 
   int get maxVibeReferences => isIkunEndpoint
       ? AppConstants.maxIkunVibeReferences
       : AppConstants.maxVibeReferences;
 
   bool get supportsPreciseReferences {
-    if (!isIkunEndpoint) return false;
+    if (!isIkunEndpoint && !isOfficialEndpoint) return false;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
-    return !_isLimitModel(model) && _supportsPreciseReference(model);
+    if (_isLimitModel(model)) return false;
+    return _supportsPreciseReference(model) ||
+        (isIkunEndpoint && _isV5ModelId(model));
   }
 
   List<ImageModelOption> imageModelOptions = [];
@@ -130,16 +181,51 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get isNonNovelAiProvider => isGptProvider || isNanoProvider;
 
   List<String> get availableResolutions {
-    if (isGptProvider) return ApiConstants.gptSupportedSizes;
-    if (isNanoProvider) return ApiConstants.nanoSupportedSizes;
-    if (isIkunEndpoint) return ApiConstants.ikunSupportedResolutions;
-    return ApiConstants.supportedResolutions.keys.toList();
+    List<String> presets;
+    if (isGptProvider) {
+      presets = ApiConstants.gptSupportedSizes;
+    } else if (isNanoProvider) {
+      presets = ApiConstants.nanoSupportedSizes;
+    } else if (isIkunEndpoint) {
+      presets = ApiConstants.ikunSupportedResolutions;
+    } else if (isOfficialEndpoint) {
+      // 官方渠道按像素计费（Opus 免费额度才限制 ≤1MP），全档尺寸可用。
+      presets = ApiConstants.officialSupportedResolutions;
+    } else if (is7877Endpoint) {
+      // 7877 网关：V5 模型要求总像素不超过 1024×1024。
+      presets = isV5Model
+          ? ApiConstants.officialSupportedResolutions.where((size) {
+              final parts = size.split('x');
+              final width = int.tryParse(parts.first) ?? 0;
+              final height = int.tryParse(parts.last) ?? 0;
+              return width * height <= 1024 * 1024;
+            }).toList()
+          : ApiConstants.officialSupportedResolutions;
+    } else if (isV5Model) {
+      presets = ApiConstants.supportedResolutions.keys.where((size) {
+        final parts = size.split('x');
+        final width = int.tryParse(parts.first) ?? 0;
+        final height = int.tryParse(parts.last) ?? 0;
+        return width * height <= 1024 * 1024;
+      }).toList();
+    } else {
+      presets = ApiConstants.supportedResolutions.keys.toList();
+    }
+    // 自定义画幅附加在预设之后（预设不变）。
+    final merged = [...presets];
+    for (final custom in customResolutions) {
+      if (!merged.contains(custom)) merged.add(custom);
+    }
+    return merged;
   }
 
   String resolutionLabel(String value) {
     if (isGptProvider) return ApiConstants.gptSizeLabels[value] ?? value;
     if (isNanoProvider) return ApiConstants.nanoSizeLabels[value] ?? value;
     if (isIkunEndpoint) return ApiConstants.ikunSizeLabels[value] ?? value;
+    if (isOfficialEndpoint || is7877Endpoint) {
+      return ApiConstants.officialSizeLabels[value] ?? value;
+    }
     switch (value) {
       case '832x1216':
         return '纵向 832×1216';
@@ -147,7 +233,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         return '横向 1216×832';
       case '1024x1024':
         return '方形 1024×1024';
+      case '768x1344':
+        return '小图 · 纵向 768×1344';
+      case '1344x768':
+        return '小图 · 横向 1344×768';
       default:
+        // 自定义画幅：宽高相同时显示 自定义 · 方形，否则显示 自定义。
+        final parts = value.split('x');
+        final width = int.tryParse(parts.first);
+        final height = int.tryParse(parts.last);
+        if (width != null && height != null) {
+          return width == height
+              ? '自定义 · 方形 $width×$height'
+              : '自定义 · $width×$height';
+        }
         return value;
     }
   }
@@ -167,6 +266,49 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       _generateInFlight || (queueState?.isProcessing ?? false);
   int get pendingCount => queueState?.pendingCount ?? 0;
   String? errorMessage;
+
+  // ── 官方渠道 Anlas 消耗预估 ──
+  bool _officialAccountLoading = false;
+  OfficialNovelAiAccount? _officialAccount;
+
+  /// 当前官方渠道单张预计消耗（仅官方渠道时计算），供生成页显示。
+  int? get officialCostPerImage {
+    if (!isOfficialEndpoint) return null;
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final res = _parseResolution(selectedResolution);
+    return OfficialCostCalculator.calculateCost(
+      width: res.$1,
+      height: res.$2,
+      steps: isV5Model ? steps.clamp(1, 28) : steps.clamp(1, 50),
+      model: model,
+      strength: img2imgSourceImagePath != null
+          ? img2imgStrength
+          : 1.0,
+    );
+  }
+
+  /// 官方剩余总点数（Anlas）。
+  int? get officialTotalAnlas => _officialAccount?.totalTrainingSteps;
+
+  bool get officialAccountLoading => _officialAccountLoading;
+
+  /// 刷新官方账户点数（Anlas），静默失败。
+  Future<void> refreshOfficialAccount() async {
+    if (!isOfficialEndpoint || _officialAccountLoading) return;
+    _officialAccountLoading = true;
+    notifyListeners();
+    try {
+      final token = await _officialTokenStore.read();
+      if (token == null || token.trim().isEmpty) return;
+      _officialAccount = await _officialApi.verifyToken(token);
+    } catch (_) {
+      // 静默失败：点数显示不影响生成流程。
+    } finally {
+      _officialAccountLoading = false;
+      notifyListeners();
+    }
+  }
 
   // 批量生成
   int batchCount = 1; // 1-30
@@ -201,9 +343,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   int _tiledCompleted = 0;
   int _tiledTotal = 0;
   bool _cancelTiled = false;
+  bool _img2imgStrengthUserEdited = false;
   String? sourceImagePath;
   String? maskImagePath;
-  double inpaintStrength = 1.0;
+  double inpaintStrength = 0.96;
+  bool disabledOriginalImage = false;
+  bool colorCorrect = true;
   String? img2imgSourceImagePath;
   double img2imgStrength = 0.7;
   List<String> gptImagePaths = []; // GPT 图生图参考图列表（最多16张）
@@ -215,6 +360,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   StreamSubscription? _taskSub;
   final Map<String, Future<void>> _taskProcessing = {};
   final Set<String> _processedTaskIds = {};
+
+  /// 已计入每日统计的 taskId，防止同一任务重复计数。
+  final Set<String> _recordedStatTaskIds = {};
 
   void _init() {
     _loadDefaults();
@@ -242,20 +390,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     inpaintPrompt = await _manageSettings.getInpaintPromptDraft();
     inpaintNegativePrompt =
         await _manageSettings.getInpaintNegativePromptDraft();
-    final savedCharacters = await _manageSettings.getCharactersDraft();
+    characters = await _manageSettings.getCharactersDraft();
     preciseReferences = await _manageSettings.getPreciseReferencesDraft();
-    characters = savedCharacters
-        .map((character) => character.copyWith(referenceImages: const []))
-        .toList();
-    if (savedCharacters
-        .any((character) => character.referenceImages.isNotEmpty)) {
-      await _saveCharactersDraft();
-    }
     final savedVibeReferences = await _manageSettings.getVibeReferencesDraft();
     vibeReferences = savedVibeReferences;
     referenceMode = await _manageSettings.getReferenceModeDraft();
     await _normalizeReferenceDrafts();
     batchCount = await _manageSettings.getBatchCount();
+    await _loadCustomResolutions();
 
     notifyListeners();
   }
@@ -320,6 +462,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           } catch (_) {
             completed = task;
           }
+          _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
           if (!sessionResults.any((result) => result.taskId == task.taskId)) {
             sessionResults = [...sessionResults, completed];
@@ -338,6 +481,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         _taskProcessing.remove(task.taskId);
       }
     });
+  }
+
+  /// 记录每日生成成功统计（幂等；持久化失败不影响主流程）。
+  void _recordDailyStat(String taskId, DateTime? time) {
+    if (_recordedStatTaskIds.contains(taskId)) return;
+    _recordedStatTaskIds.add(taskId);
+    try {
+      _dailyStats.recordSuccess(time ?? DateTime.now());
+    } catch (_) {
+      // 统计失败不影响生成流程。
+    }
   }
 
   ImageModelOption _endpointModelOption({
@@ -363,8 +517,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     // NovelAI — 聚合全部固定槽位，每个选项保留 endpoint、协议和真实模型。
     final novelEndpoints =
         await _manageSettings.getEndpoints(ImageProviderType.novelAi);
+    final activeNovelAiEndpointId =
+        await _manageSettings.getActiveEndpointId(ImageProviderType.novelAi);
+    final activeNovelAiModel =
+        await _manageSettings.getActiveModel(ImageProviderType.novelAi);
     for (final ep in novelEndpoints) {
-      for (final model in ep.models) {
+      final endpointModels = <String>{...ep.models};
+      if (ep.id == activeNovelAiEndpointId &&
+          activeNovelAiModel != null &&
+          activeNovelAiModel.isNotEmpty) {
+        endpointModels.add(activeNovelAiModel);
+      }
+      for (final model in endpointModels) {
         options.add(_endpointModelOption(
           prefix: 'nai',
           endpoint: ep,
@@ -450,16 +614,31 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     imageModelOptions =
         imageModelOptions.where((opt) => seen.add(opt.modelId)).toList();
 
-    if (selectedModel.isNotEmpty &&
-        !imageModelOptions.any((opt) => opt.modelId == selectedModel)) {
-      selectedModel =
-          imageModelOptions.isNotEmpty ? imageModelOptions.first.modelId : '';
+    final activeEndpointId =
+        await _manageSettings.getActiveEndpointId(ImageProviderType.novelAi);
+    final activeModel =
+        await _manageSettings.getActiveModel(ImageProviderType.novelAi);
+    final activeOption = imageModelOptions
+        .where((option) =>
+            option.provider == ImageProviderType.novelAi &&
+            option.endpointId == activeEndpointId &&
+            option.actualModel == activeModel)
+        .firstOrNull;
+    final selectedOption = imageModelOptions
+        .where((option) => option.modelId == selectedModel)
+        .firstOrNull;
+    final shouldUseActiveNovelAi = activeOption != null &&
+        (selectedOption == null ||
+            selectedOption.provider == ImageProviderType.novelAi);
+    if (shouldUseActiveNovelAi && selectedModel != activeOption.modelId) {
+      selectedModel = activeOption.modelId;
+      await _manageSettings.setSelectedModelDraft(selectedModel);
+    } else if (selectedModel.isEmpty && options.isNotEmpty) {
+      selectedModel = options.first.modelId;
       await _manageSettings.setSelectedModelDraft(selectedModel);
     }
-    if (selectedModel.isEmpty && options.isNotEmpty) {
-      selectedModel = options.first.modelId;
-    }
     await _ensureResolutionForCurrentProvider();
+    await _ensureSamplingForCurrentProvider();
     // Nano Banana 不支持局部重绘，自动回退至文生图
     if (isNanoProvider && generationMode == GenerationMode.inpainting) {
       generationMode = GenerationMode.textToImage;
@@ -806,12 +985,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     if (opt.isNotEmpty && opt.first.endpointId != null) {
       await _manageSettings.setActiveEndpointId(
           opt.first.provider, opt.first.endpointId);
+      await _manageSettings.setActiveModel(
+        opt.first.provider,
+        opt.first.actualModel,
+      );
     }
     if (isIkunEndpoint && isStepsLocked) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
     await _ensureResolutionForCurrentProvider();
+    await _ensureSamplingForCurrentProvider();
     if (vibeReferences.length > maxVibeReferences) {
       vibeReferences = vibeReferences.take(maxVibeReferences).toList();
       await _manageSettings.setVibeReferencesDraft(vibeReferences);
@@ -820,6 +1004,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     if (isNanoProvider && generationMode == GenerationMode.inpainting) {
       generationMode = GenerationMode.textToImage;
     }
+    if (isOfficialEndpoint) refreshOfficialAccount();
     notifyListeners();
   }
 
@@ -831,10 +1016,70 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
+  Future<void> _ensureSamplingForCurrentProvider() async {
+    if (isNonNovelAiProvider) return;
+
+    final samplers = isIkunEndpoint
+        ? ApiConstants.ikunSupportedSamplers
+        : ApiConstants.supportedSamplers;
+    final noiseSchedules = isIkunEndpoint
+        ? ApiConstants.ikunSupportedNoiseSchedules
+        : ApiConstants.supportedNoiseSchedules;
+    final normalizedSampler = selectedSampler.trim().toLowerCase();
+    final normalizedNoiseSchedule = selectedNoiseSchedule.trim().toLowerCase();
+    final nextSampler = samplers.contains(normalizedSampler)
+        ? normalizedSampler
+        : ApiConstants.defaultSampler;
+    final nextNoiseSchedule = noiseSchedules.contains(normalizedNoiseSchedule)
+        ? normalizedNoiseSchedule
+        : ApiConstants.defaultNoiseSchedule;
+
+    if (selectedSampler != nextSampler) {
+      selectedSampler = nextSampler;
+      await _manageSettings.setSelectedSamplerDraft(nextSampler);
+    }
+    if (selectedNoiseSchedule != nextNoiseSchedule) {
+      selectedNoiseSchedule = nextNoiseSchedule;
+      await _manageSettings.setSelectedNoiseScheduleDraft(nextNoiseSchedule);
+    }
+  }
+
   Future<void> updateSelectedResolution(String value) async {
     selectedResolution = value;
     await _manageSettings.setSelectedResolutionDraft(value);
     notifyListeners();
+  }
+
+  // ── 自定义画幅 ──
+  List<String> customResolutions = [];
+
+  /// NovelAI 支持的边长范围与步进：边长须为 64 的倍数。
+  static const int _resolutionStep = 64;
+  static const int _minResolutionSide = 64;
+  static const int _maxResolutionSide = 1920;
+
+  /// 校验并添加自定义画幅，成功后选中之。返回错误信息，null 表示成功。
+  Future<String?> addCustomResolution(int width, int height) async {
+    if (width < _minResolutionSide ||
+        height < _minResolutionSide ||
+        width > _maxResolutionSide ||
+        height > _maxResolutionSide) {
+      return '边长需在 $_minResolutionSide 到 $_maxResolutionSide 之间';
+    }
+    if (width % _resolutionStep != 0 || height % _resolutionStep != 0) {
+      return '边长需为 $_resolutionStep 的倍数';
+    }
+    final key = '${width}x$height';
+    if (!customResolutions.contains(key)) {
+      customResolutions = [...customResolutions, key];
+      await _manageSettings.setCustomResolutions(customResolutions);
+    }
+    await updateSelectedResolution(key);
+    return null;
+  }
+
+  Future<void> _loadCustomResolutions() async {
+    customResolutions = await _manageSettings.getCustomResolutions();
   }
 
   void updateSelectedNanoImageSize(String value) {
@@ -867,9 +1112,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSteps(int value) async {
-    steps = isIkunEndpoint && isStepsLocked
-        ? ApiConstants.defaultSteps
-        : value.clamp(1, 50);
+    steps = isV5Model
+        ? value.clamp(1, 28)
+        : isIkunEndpoint && isStepsLocked
+            ? ApiConstants.defaultSteps
+            : value.clamp(1, 50);
     await _manageSettings.setStepsDraft(steps);
     notifyListeners();
   }
@@ -1155,6 +1402,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get isTiledCancelling => _cancelTiled;
 
   void updateImg2ImgMode(Img2ImgMode mode) {
+    if (mode == Img2ImgMode.tiled &&
+        img2ImgMode != Img2ImgMode.tiled &&
+        !_img2imgStrengthUserEdited) {
+      img2imgStrength = 0.3;
+    }
     img2ImgMode = mode;
     notifyListeners();
   }
@@ -1171,6 +1423,63 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  void updateInpaintOptions({
+    bool? disabledOriginalImage,
+    bool? colorCorrect,
+  }) {
+    this.disabledOriginalImage =
+        disabledOriginalImage ?? this.disabledOriginalImage;
+    this.colorCorrect = colorCorrect ?? this.colorCorrect;
+    notifyListeners();
+  }
+
+  GenerationTask buildInpaintTask({
+    required String sourcePath,
+    required String maskPath,
+    required String prompt,
+    required String negativePrompt,
+    required double strength,
+    required bool disabledOriginalImage,
+    required bool colorCorrect,
+    int? seed,
+    String? taskId,
+  }) {
+    final option = currentModelOption;
+    final resolutionParts = selectedResolution.split('x');
+    final width = int.tryParse(resolutionParts.first) ?? 832;
+    final height = int.tryParse(resolutionParts.last) ?? 1216;
+    final actualModel = option?.actualModel ?? selectedModel;
+    return GenerationTask(
+      taskId: taskId ?? const Uuid().v4(),
+      model: actualModel,
+      endpointId: option?.endpointId,
+      protocol: option?.protocol,
+      prompt: prompt.trim(),
+      negativePrompt:
+          negativePrompt.trim().isEmpty ? null : negativePrompt.trim(),
+      width: width,
+      height: height,
+      size: selectedResolution,
+      scale: scale,
+      cfgRescale: cfgRescale,
+      sampler: selectedSampler,
+      noiseSchedule: selectedNoiseSchedule,
+      steps: steps,
+      seed: seed,
+      status: AppConstants.taskPending,
+      createdAt: DateTime.now(),
+      mode: GenerationMode.inpainting,
+      sourceImagePath: sourcePath,
+      maskImagePath: maskPath,
+      inpaintStrength: strength.clamp(0.01, 1.0),
+      responseFormat: 'b64_json',
+      providerType: option?.provider ?? currentProvider,
+      disabledOriginalImage: disabledOriginalImage,
+      colorCorrect: colorCorrect,
+      isInternal: true,
+    );
+  }
+
   void setImg2ImgSourceImagePath(String? path) {
     img2imgSourceImagePath = path;
     errorMessage = null;
@@ -1179,26 +1488,46 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   void updateImg2ImgStrength(double value) {
     img2imgStrength = value.clamp(0.01, 1.0);
+    _img2imgStrengthUserEdited = true;
     notifyListeners();
   }
 
   void clearImg2ImgData() {
     img2imgSourceImagePath = null;
     img2imgStrength = 0.7;
+    _img2imgStrengthUserEdited = false;
     notifyListeners();
   }
 
   void clearInpaintingData() {
     sourceImagePath = null;
     maskImagePath = null;
-    inpaintStrength = 1.0;
+    inpaintStrength = 0.96;
     notifyListeners();
   }
+
+  /// 局部重绘工作区钩子：局部重绘模式下，页面底部生成按钮触发时
+  /// 交给工作区执行完整生成（光栅化 → 队列 → 候选），不走通用生图管线。
+  /// 返回 true 表示已由工作区处理（generate 直接返回）；null/false 走通用管线。
+  Future<bool?> Function()? inpaintWorkspaceHandler;
 
   Future<void> generate() async {
     // 重入守卫：批量生成中再次按下"生成"按钮（或被并发触发）直接忽略，
     // 避免两套 for 循环并行入队导致超过设定张数。
     if (_generateInFlight) return;
+    // 局部重绘模式且工作区在场：整轮生成由工作区内部管线完成。
+    if (generationMode == GenerationMode.inpainting &&
+        inpaintWorkspaceHandler != null) {
+      _generateInFlight = true;
+      notifyListeners();
+      try {
+        await inpaintWorkspaceHandler!();
+      } finally {
+        _generateInFlight = false;
+        notifyListeners();
+      }
+      return;
+    }
     _generateInFlight = true;
     try {
       await _generateInner();
@@ -1245,8 +1574,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       notifyListeners();
       return;
     }
-    final enabledCharacters = characters.where((c) => c.enabled).toList();
-    final supportsImg2Img = is7877Endpoint || isIkunEndpoint;
+    // 官方渠道无 1MP 硬限制（按像素计费），仅 7877 网关与非官方渠道限制 V5。
+    if (!isOfficialEndpoint && isV5Model && res.$1 * res.$2 > 1024 * 1024) {
+      errorMessage = 'V5 模型要求总像素不超过 1024×1024，请选择较小画幅';
+      notifyListeners();
+      return;
+    }
+    final enabledCharacters = supportsCharacterPrompts
+        ? characters.where((c) => c.enabled).toList()
+        : const <CharacterSpec>[];
+    final supportsImg2Img =
+        is7877Endpoint || isIkunEndpoint || isOfficialEndpoint;
     final effectiveImg2ImgPath =
         generationMode == GenerationMode.textToImage && supportsImg2Img
             ? img2imgSourceImagePath
@@ -1271,27 +1609,87 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     // 解析实际模型 ID（去掉 gpt: / nano: 前缀）
-    final selectedOption = imageModelOptions
+    var selectedOption = imageModelOptions
         .where((option) => option.modelId == selectedModel)
         .firstOrNull;
+    if (selectedOption?.provider == ImageProviderType.novelAi ||
+        selectedOption == null) {
+      final activeEndpointId =
+          await _manageSettings.getActiveEndpointId(ImageProviderType.novelAi);
+      final activeModel =
+          await _manageSettings.getActiveModel(ImageProviderType.novelAi);
+      final activeOption = imageModelOptions
+          .where((option) =>
+              option.provider == ImageProviderType.novelAi &&
+              option.endpointId == activeEndpointId &&
+              option.actualModel == activeModel)
+          .firstOrNull;
+      if (activeOption != null &&
+          (selectedOption == null ||
+              selectedOption.endpointId != activeOption.endpointId)) {
+        selectedModel = activeOption.modelId;
+        selectedOption = activeOption;
+        await _manageSettings.setSelectedModelDraft(selectedModel);
+      }
+    }
     final actualModelId =
         selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final provider = selectedOption?.provider ?? currentProvider;
-    if (supportsPreciseReferences && preciseReferences.isNotEmpty) {
+    final rolePreciseReferences =
+        generationMode == GenerationMode.textToImage &&
+                referenceMode == ReferenceMode.precise
+            ? _rolePreciseReferences(enabledCharacters)
+            : const <PreciseReferenceImage>[];
+    final globalPreciseReferences = referenceMode == ReferenceMode.precise
+        ? preciseReferences
+        : const <PreciseReferenceImage>[];
+    final taskPreciseReferences = supportsPreciseReferences &&
+            generationMode == GenerationMode.textToImage
+        ? _mergePreciseReferences(
+            globalPreciseReferences,
+            rolePreciseReferences,
+          )
+        : const <PreciseReferenceImage>[];
+    if (taskPreciseReferences.isNotEmpty) {
       if (_isLimitModel(actualModelId)) {
         errorMessage = '精密参照图像不能使用 -limit 模型，请选择无 -limit 后缀的 V4/V4.5 模型';
         notifyListeners();
         return;
       }
-      if (!_supportsPreciseReference(actualModelId)) {
-        errorMessage = '精密参照图像仅支持 NovelAI V4/V4.5 模型';
+      if (!_supportsPreciseReference(actualModelId) &&
+          !(isIkunEndpoint && _isV5ModelId(actualModelId))) {
+        errorMessage = '精密参照图像仅支持 NovelAI V4/V4.5 模型，ikun 渠道也支持 V5 模型';
         notifyListeners();
         return;
       }
+      for (final reference in rolePreciseReferences) {
+        if (reference.path.isEmpty || !File(reference.path).existsSync()) {
+          errorMessage = '角色精细参考图像不可用，请重新选择';
+          notifyListeners();
+          return;
+        }
+      }
     }
 
-    final taskSampler = selectedSampler;
-    final taskNoiseSchedule = selectedNoiseSchedule;
+    final samplerOptions = selectedOption?.endpointId ==
+                AppConstants.novelAiImageGenerationsEndpointId ||
+            selectedOption?.protocol ==
+                AppConstants.novelAiImageGenerationsProtocol
+        ? ApiConstants.ikunSupportedSamplers
+        : ApiConstants.supportedSamplers;
+    final noiseScheduleOptions = selectedOption?.endpointId ==
+                AppConstants.novelAiImageGenerationsEndpointId ||
+            selectedOption?.protocol ==
+                AppConstants.novelAiImageGenerationsProtocol
+        ? ApiConstants.ikunSupportedNoiseSchedules
+        : ApiConstants.supportedNoiseSchedules;
+    final taskSampler = samplerOptions.contains(selectedSampler)
+        ? selectedSampler
+        : ApiConstants.defaultSampler;
+    final taskNoiseSchedule =
+        noiseScheduleOptions.contains(selectedNoiseSchedule)
+            ? selectedNoiseSchedule
+            : ApiConstants.defaultNoiseSchedule;
 
     final task = GenerationTask(
       taskId: const Uuid().v4(),
@@ -1311,9 +1709,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       cfgRescale: cfgRescale,
       sampler: taskSampler,
       noiseSchedule: taskNoiseSchedule,
-      steps: isIkunEndpoint && isStepsLocked
-          ? ApiConstants.defaultSteps
-          : steps.clamp(1, 50),
+      steps: isV5Model
+          ? steps.clamp(1, 28)
+          : isIkunEndpoint && isStepsLocked
+              ? ApiConstants.defaultSteps
+              : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
         (character) => character.centerX != null && character.centerY != null,
       ),
@@ -1327,11 +1727,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
               referenceMode == ReferenceMode.vibe
           ? vibeReferences
           : const [],
-      preciseReferences: supportsPreciseReferences &&
-              generationMode == GenerationMode.textToImage &&
-              referenceMode == ReferenceMode.precise
-          ? preciseReferences
-          : const [],
+      preciseReferences: taskPreciseReferences,
       status: 'pending',
       createdAt: DateTime.now(),
       mode: generationMode,
@@ -1349,10 +1745,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           : null,
       inpaintStrength:
           generationMode == GenerationMode.inpainting ? inpaintStrength : null,
+      disabledOriginalImage: generationMode == GenerationMode.inpainting
+          ? disabledOriginalImage
+          : false,
+      colorCorrect:
+          generationMode == GenerationMode.inpainting ? colorCorrect : true,
       img2imgSourceImagePath: effectiveImg2ImgPath,
       img2imgStrength: effectiveImg2ImgPath == null ? null : img2imgStrength,
       responseFormat:
-          generationMode == GenerationMode.inpainting ? 'url' : null,
+          generationMode == GenerationMode.inpainting ? 'b64_json' : null,
       providerType: provider,
     );
 
@@ -1478,6 +1879,202 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  // ── 官方超分 ──
+  bool _officialUpscaling = false;
+  bool get isOfficialUpscaling => _officialUpscaling;
+  String? officialUpscaleStatus;
+
+  /// 对工作台当前图片执行 NovelAI 官方超分，成功后把结果加入当前结果区。
+  Future<bool> upscaleWithOfficial(int scale) async {
+    final task = selectedResult ?? lastCompletedTask;
+    final path = task?.imagePath;
+    if (path == null || !File(path).existsSync()) {
+      errorMessage = '当前图片不可用，无法超分';
+      notifyListeners();
+      return false;
+    }
+    if (_officialUpscaling) return false;
+    _officialUpscaling = true;
+    officialUpscaleStatus = '准备超分…';
+    errorMessage = null;
+    notifyListeners();
+    try {
+      final token = await _officialTokenStore.read();
+      if (token == null || token.trim().isEmpty) {
+        throw ApiException(
+          message: '请先在 API 配置中填写 NovelAI 官方 Token',
+          code: 'NO_OFFICIAL_TOKEN',
+        );
+      }
+      final outputPath = await _officialApi.upscaleImage(
+        imagePath: path,
+        token: token,
+        scale: scale,
+        onStatus: (status) {
+          officialUpscaleStatus = status;
+          notifyListeners();
+        },
+      );
+      officialUpscaleStatus = null;
+      final newTask = task!.copyWith(
+        taskId: const Uuid().v4(),
+        imagePath: outputPath,
+        imageUrl: null,
+        status: 'success',
+        completedAt: DateTime.now(),
+      );
+      sessionResults = [...sessionResults, newTask];
+      selectedResultTaskId = newTask.taskId;
+      lastCompletedTask = newTask;
+      return true;
+    } on ApiException catch (error) {
+      officialUpscaleStatus = null;
+      errorMessage = error.message;
+      return false;
+    } catch (error) {
+      officialUpscaleStatus = null;
+      errorMessage = '官方超分失败：$error';
+      return false;
+    } finally {
+      _officialUpscaling = false;
+      notifyListeners();
+    }
+  }
+
+  // ── 官方 Enhance（图生图放大重绘）──
+  bool _officialEnhancing = false;
+  bool get isOfficialEnhancing => _officialEnhancing;
+  String? officialEnhanceStatus;
+
+  /// 对工作台当前图片执行官方 Enhance（按提示词重绘放大），结果加入结果区。
+  Future<bool> enhanceWithOfficial({
+    required double scale,
+    required double strength,
+    double noise = 0.0,
+    bool max = false,
+    String? promptOverride,
+  }) async {
+    final task = selectedResult ?? lastCompletedTask;
+    final path = task?.imagePath;
+    if (path == null || !File(path).existsSync()) {
+      errorMessage = '当前图片不可用，无法 Enhance';
+      notifyListeners();
+      return false;
+    }
+    if (_officialEnhancing) return false;
+    _officialEnhancing = true;
+    officialEnhanceStatus = '准备 Enhance…';
+    errorMessage = null;
+    notifyListeners();
+    try {
+      final token = await _officialTokenStore.read();
+      if (token == null || token.trim().isEmpty) {
+        throw ApiException(
+          message: '请先在 API 配置中填写 NovelAI 官方 Token',
+          code: 'NO_OFFICIAL_TOKEN',
+        );
+      }
+      final model = currentModelOption?.actualModel ??
+          _resolveActualModelId(selectedModel);
+      final sourceTask = task!;
+      final promptText =
+          (promptOverride != null && promptOverride.trim().isNotEmpty)
+              ? promptOverride.trim()
+              : (sourceTask.prompt.trim().isNotEmpty
+                  ? sourceTask.prompt.trim()
+                  : prompt);
+      final outputPath = await _officialApi.enhanceImage(
+        imagePath: path,
+        token: token,
+        model: model,
+        prompt: promptText,
+        negativePrompt: sourceTask.negativePrompt ?? negativePrompt,
+        seed: sourceTask.seed,
+        steps: isV5Model ? 23 : steps.clamp(1, 50),
+        scaleValue: scale,
+        strength: strength,
+        noise: noise,
+        upscaledEnhance: max,
+        onStatus: (status) {
+          officialEnhanceStatus = status;
+          notifyListeners();
+        },
+      );
+      officialEnhanceStatus = null;
+      final newTask = sourceTask.copyWith(
+        taskId: const Uuid().v4(),
+        imagePath: outputPath,
+        imageUrl: null,
+        status: 'success',
+        completedAt: DateTime.now(),
+      );
+      sessionResults = [...sessionResults, newTask];
+      selectedResultTaskId = newTask.taskId;
+      lastCompletedTask = newTask;
+      return true;
+    } on ApiException catch (error) {
+      officialEnhanceStatus = null;
+      errorMessage = error.message;
+      return false;
+    } catch (error) {
+      officialEnhanceStatus = null;
+      errorMessage = '官方 Enhance 失败：$error';
+      return false;
+    } finally {
+      _officialEnhancing = false;
+      notifyListeners();
+    }
+  }
+
+  /// 对任意本地图片执行 NovelAI 官方超分，返回输出文件路径。
+  Future<String> upscaleFileWithOfficial(
+    String inputPath,
+    int scale,
+  ) async {
+    if (_officialUpscaling) {
+      throw ApiException(message: '已有超分任务进行中', code: 'UPSCALE_BUSY');
+    }
+    if (!File(inputPath).existsSync()) {
+      throw ApiException(message: '图片不存在，无法超分', code: 'FILE_MISSING');
+    }
+    _officialUpscaling = true;
+    officialUpscaleStatus = '准备超分…';
+    errorMessage = null;
+    notifyListeners();
+    try {
+      final token = await _officialTokenStore.read();
+      if (token == null || token.trim().isEmpty) {
+        throw ApiException(
+          message: '请先在 API 配置中填写 NovelAI 官方 Token',
+          code: 'NO_OFFICIAL_TOKEN',
+        );
+      }
+      final outputPath = await _officialApi.upscaleImage(
+        imagePath: inputPath,
+        token: token,
+        scale: scale,
+        onStatus: (status) {
+          officialUpscaleStatus = status;
+          notifyListeners();
+        },
+      );
+      officialUpscaleStatus = null;
+      return outputPath;
+    } on ApiException {
+      officialUpscaleStatus = null;
+      rethrow;
+    } catch (error) {
+      officialUpscaleStatus = null;
+      throw ApiException(
+        message: '官方超分失败：$error',
+        code: 'UPSCALE_FAILED',
+      );
+    } finally {
+      _officialUpscaling = false;
+      notifyListeners();
+    }
+  }
+
   Future<String?> saveImage(GenerationTask task) async {
     try {
       final filePath = await _saveImage.execute(task);
@@ -1497,8 +2094,120 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
   }
 
+  List<PreciseReferenceImage> _rolePreciseReferences(
+    List<CharacterSpec> enabledCharacters,
+  ) =>
+      [
+        for (final character in enabledCharacters)
+          for (final reference in character.referenceImages)
+            PreciseReferenceImage(
+              path: reference.path,
+              referenceType: 'character',
+              strength: reference.strength,
+            ),
+      ];
+
+  List<PreciseReferenceImage> _mergePreciseReferences(
+    List<PreciseReferenceImage> globalReferences,
+    List<PreciseReferenceImage> roleReferences,
+  ) {
+    final paths = <String>{};
+    return [
+      ...globalReferences,
+      ...roleReferences,
+    ]
+        .where((reference) =>
+            reference.path.isNotEmpty && paths.add(reference.path))
+        .toList();
+  }
+
   Future<void> _saveCharactersDraft() =>
       _manageSettings.setCharactersDraft(characters);
+
+  Future<void> addCharacterReference(int characterIndex, String path) async {
+    if (path.isEmpty ||
+        characterIndex < 0 ||
+        characterIndex >= characters.length) {
+      return;
+    }
+    final character = characters[characterIndex];
+    if (character.referenceImages.any((reference) => reference.path == path)) {
+      return;
+    }
+    updateCharacter(
+      characterIndex,
+      character.copyWith(
+        referenceImages: [
+          ...character.referenceImages,
+          CharacterReferenceImage(path: path),
+        ],
+      ),
+    );
+  }
+
+  Future<void> replaceCharacterReference(
+    int characterIndex,
+    int referenceIndex,
+    String path,
+  ) async {
+    if (path.isEmpty ||
+        characterIndex < 0 ||
+        characterIndex >= characters.length) {
+      return;
+    }
+    final character = characters[characterIndex];
+    if (referenceIndex < 0 ||
+        referenceIndex >= character.referenceImages.length) {
+      return;
+    }
+    final current = character.referenceImages[referenceIndex];
+    final references = [...character.referenceImages];
+    references[referenceIndex] = CharacterReferenceImage(
+      path: path,
+      strength: current.strength,
+      informationExtracted: current.informationExtracted,
+    );
+    updateCharacter(
+      characterIndex,
+      character.copyWith(referenceImages: references),
+    );
+  }
+
+  Future<void> updateCharacterReference(
+    int characterIndex,
+    int referenceIndex,
+    CharacterReferenceImage reference,
+  ) async {
+    if (characterIndex < 0 || characterIndex >= characters.length) return;
+    final character = characters[characterIndex];
+    if (referenceIndex < 0 ||
+        referenceIndex >= character.referenceImages.length) {
+      return;
+    }
+    final references = [...character.referenceImages];
+    references[referenceIndex] = reference;
+    updateCharacter(
+      characterIndex,
+      character.copyWith(referenceImages: references),
+    );
+  }
+
+  Future<void> removeCharacterReference(
+    int characterIndex,
+    int referenceIndex,
+  ) async {
+    if (characterIndex < 0 || characterIndex >= characters.length) return;
+    final character = characters[characterIndex];
+    if (referenceIndex < 0 ||
+        referenceIndex >= character.referenceImages.length) {
+      return;
+    }
+    final references = [...character.referenceImages]..removeAt(referenceIndex);
+    updateCharacter(
+      characterIndex,
+      character.copyWith(referenceImages: references),
+    );
+  }
 
   void addCharacter() {
     if (characters.length >= 6) {
@@ -1610,6 +2319,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     selectedNoiseSchedule = task.noiseSchedule;
     seed = task.seed;
     appliedSeed = task.seed;
+    sourceImagePath =
+        task.mode == GenerationMode.inpainting ? task.sourceImagePath : null;
+    maskImagePath =
+        task.mode == GenerationMode.inpainting ? task.maskImagePath : null;
+    inpaintStrength = task.inpaintStrength ?? 1.0;
+    img2imgSourceImagePath = task.mode == GenerationMode.textToImage
+        ? task.img2imgSourceImagePath
+        : null;
+    img2imgStrength = task.img2imgStrength ?? 0.7;
+    _img2imgStrengthUserEdited = task.img2imgStrength != null;
     errorMessage = null;
 
     await _manageSettings.setSelectedModelDraft(selectedModel);
@@ -1705,6 +2424,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 兼容旧格式 `gpt:<model>` / `nano:<model>`。
   bool _isLimitModel(String model) =>
       model.trim().toLowerCase().endsWith('-limit');
+
+  bool _isV5ModelId(String model) {
+    final normalized = model.trim().toLowerCase();
+    return normalized.contains('nai-diffusion-5') || normalized.contains('v5');
+  }
 
   bool _supportsPreciseReference(String model) {
     final normalized = model.trim().toLowerCase();

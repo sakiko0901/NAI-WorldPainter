@@ -67,11 +67,22 @@ class SettingsLocalDatasource {
   Future<void> setDefaultNoiseSchedule(String s) async =>
       _prefs.setString(AppConstants.keyDefaultNoiseSchedule, s);
 
-  // Default Style Words（每次生图自动拼到 prompt 前面）
+  // Default Style Words（旧 key 作为 v5 兼容来源）
   String getDefaultStyleWords() =>
       _prefs.getString(AppConstants.keyDefaultStyleWords) ?? '';
   Future<void> setDefaultStyleWords(String v) async =>
       _prefs.setString(AppConstants.keyDefaultStyleWords, v);
+
+  String getDefaultStyleWordsV5() =>
+      _prefs.getString(AppConstants.keyDefaultStyleWordsV5) ??
+      getDefaultStyleWords();
+  Future<void> setDefaultStyleWordsV5(String v) async =>
+      _prefs.setString(AppConstants.keyDefaultStyleWordsV5, v);
+
+  String getDefaultStyleWordsV45() =>
+      _prefs.getString(AppConstants.keyDefaultStyleWordsV45) ?? '';
+  Future<void> setDefaultStyleWordsV45(String v) async =>
+      _prefs.setString(AppConstants.keyDefaultStyleWordsV45, v);
 
   // Prompt Draft
   String getPromptDraft() =>
@@ -95,6 +106,19 @@ class SettingsLocalDatasource {
       ApiConstants.defaultResolution;
   Future<void> setSelectedResolutionDraft(String value) async =>
       _prefs.setString(AppConstants.keySelectedResolutionDraft, value);
+
+  List<String> getCustomResolutions() {
+    final raw = _prefs.getString(AppConstants.keyCustomResolutions);
+    if (raw == null || raw.isEmpty) return [];
+    final list = jsonDecode(raw) as List;
+    return list.cast<String>();
+  }
+
+  Future<void> setCustomResolutions(List<String> value) async =>
+      _prefs.setString(
+        AppConstants.keyCustomResolutions,
+        jsonEncode(value),
+      );
 
   String getSelectedSamplerDraft() =>
       _prefs.getString(AppConstants.keySelectedSamplerDraft) ??
@@ -176,46 +200,23 @@ class SettingsLocalDatasource {
 
   Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async {
     final raw = _prefs.getString(AppConstants.keyPreciseReferencesDraft);
-    if (raw != null) {
-      if (raw.isEmpty) return [];
-      final list = jsonDecode(raw) as List;
-      final references = list
-          .map((item) => PreciseReferenceImage.fromJson(
-                item as Map<String, dynamic>,
-              ))
-          .toList();
-      final normalized = jsonEncode(
-        references.map((reference) => reference.toJson()).toList(),
-      );
-      if (normalized != raw) {
-        await _prefs.setString(
-          AppConstants.keyPreciseReferencesDraft,
-          normalized,
-        );
-      }
-      return references;
-    }
-
-    final characters = getCharactersDraft();
-    final migrated = <PreciseReferenceImage>[];
-    for (final character in characters) {
-      for (final reference in character.referenceImages) {
-        migrated.add(PreciseReferenceImage(
-          path: reference.path,
-          referenceType: 'character',
-          strength: reference.strength,
-        ));
-      }
-    }
-    await setPreciseReferencesDraft(migrated);
-    if (migrated.isNotEmpty) {
-      await setCharactersDraft(
-        characters
-            .map((character) => character.copyWith(referenceImages: const []))
-            .toList(),
+    if (raw == null || raw.isEmpty) return [];
+    final list = jsonDecode(raw) as List;
+    final references = list
+        .map((item) => PreciseReferenceImage.fromJson(
+              item as Map<String, dynamic>,
+            ))
+        .toList();
+    final normalized = jsonEncode(
+      references.map((reference) => reference.toJson()).toList(),
+    );
+    if (normalized != raw) {
+      await _prefs.setString(
+        AppConstants.keyPreciseReferencesDraft,
+        normalized,
       );
     }
-    return migrated;
+    return references;
   }
 
   Future<void> setPreciseReferencesDraft(
@@ -395,12 +396,6 @@ class SettingsLocalDatasource {
     }
   }
 
-  // 联网搜索开关（持久化，避免每次离开聊天关闭）
-  bool getWebSearchEnabled() =>
-      _prefs.getBool(AppConstants.keyWebSearchEnabled) ?? false;
-  Future<void> setWebSearchEnabled(bool value) async =>
-      _prefs.setBool(AppConstants.keyWebSearchEnabled, value);
-
   // Danbooru 校准（默认启用）
   bool getDanbooruCalibrationEnabled() =>
       _prefs.getBool(AppConstants.keyDanbooruCalibrationEnabled) ?? true;
@@ -491,7 +486,7 @@ class SettingsLocalDatasource {
   }
 
   /// 读取某个 provider 的中转站列表。
-  /// NovelAI 固定保留 7877 与 ikun 两个槽位，并将既有 active（或首个）端点迁入 7877。
+  /// NovelAI 固定保留 7877、ikun 与官方三个槽位，并将既有 active（或首个）端点迁入 7877。
   /// 其他 provider 保持旧有的可变中转站行为。
   List<ApiEndpoint> getEndpoints(ImageProviderType p) {
     final keys = _keysFor(p);
@@ -515,13 +510,17 @@ class SettingsLocalDatasource {
           keys.endpoints,
           jsonEncode(fixedEndpoints.map((e) => e.toJson()).toList()),
         );
-        _prefs.setString(
-            keys.activeId, AppConstants.novelAiChatCompletionsEndpointId);
-        final chatEndpoint = fixedEndpoints.first;
-        if (chatEndpoint.models.isNotEmpty) {
-          _prefs.setString(keys.activeModel, chatEndpoint.models.first);
-        } else {
-          _prefs.remove(keys.activeModel);
+        final activeId = _prefs.getString(keys.activeId);
+        final active =
+            fixedEndpoints.where((endpoint) => endpoint.id == activeId);
+        if (active.isEmpty) {
+          final fallback = fixedEndpoints.first;
+          _prefs.setString(keys.activeId, fallback.id);
+          if (fallback.models.isNotEmpty) {
+            _prefs.setString(keys.activeModel, fallback.models.first);
+          } else {
+            _prefs.remove(keys.activeModel);
+          }
         }
       }
       return fixedEndpoints;
@@ -556,18 +555,26 @@ class SettingsLocalDatasource {
         endpoint.id == AppConstants.novelAiChatCompletionsEndpointId);
     final images = endpoints.where((endpoint) =>
         endpoint.id == AppConstants.novelAiImageGenerationsEndpointId);
+    final officials = endpoints.where(
+        (endpoint) => endpoint.id == AppConstants.novelAiOfficialEndpointId);
     final existingChat = chats.isNotEmpty ? chats.first : null;
     final existingImage = images.isNotEmpty ? images.first : null;
+    final existingOfficial = officials.isNotEmpty ? officials.first : null;
     final chatSource = existingChat ?? oldChat;
+    final chatBaseUrl = chatSource?.baseUrl.isNotEmpty == true
+        ? chatSource!.baseUrl
+        : ApiConstants.defaultBaseUrl;
 
     return [
       ApiEndpoint(
         id: AppConstants.novelAiChatCompletionsEndpointId,
         name: chatSource?.name.isNotEmpty == true ? chatSource!.name : '7877',
         protocol: AppConstants.novelAiChatCompletionsProtocol,
-        baseUrl: chatSource?.baseUrl ?? '',
+        baseUrl: chatBaseUrl,
         apiKey: chatSource?.apiKey ?? '',
-        models: chatSource?.models ?? const [],
+        models: chatSource?.models.isNotEmpty == true
+            ? chatSource!.models
+            : ApiConstants.nativeNovelAiModels,
       ),
       ApiEndpoint(
         id: AppConstants.novelAiImageGenerationsEndpointId,
@@ -578,6 +585,16 @@ class SettingsLocalDatasource {
         baseUrl: existingImage?.baseUrl ?? '',
         apiKey: existingImage?.apiKey ?? '',
         models: existingImage?.models ?? const [],
+      ),
+      ApiEndpoint(
+        id: AppConstants.novelAiOfficialEndpointId,
+        name: existingOfficial?.name.isNotEmpty == true
+            ? existingOfficial!.name
+            : 'NovelAI 官方',
+        protocol: AppConstants.novelAiOfficialProtocol,
+        baseUrl: ApiConstants.officialImageBaseUrl,
+        apiKey: '',
+        models: ApiConstants.officialNovelAiModels,
       ),
     ];
   }

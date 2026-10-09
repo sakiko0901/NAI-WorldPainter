@@ -2,6 +2,9 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
+import 'package:nai_huishi/domain/entities/novelai_route.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
@@ -12,6 +15,8 @@ import 'package:nai_huishi/core/errors/exceptions.dart';
 
 class GenerationRepositoryImpl implements GenerationRepository {
   final NovelAiApiService _apiService;
+  final OfficialNovelAiApiService _officialApiService;
+  final OfficialNovelAiTokenStore _officialTokenStore;
   final GptApiService _gptApiService;
   final NanoBananaApiService _nanoApiService;
   final SettingsRepository _settingsRepo;
@@ -19,11 +24,15 @@ class GenerationRepositoryImpl implements GenerationRepository {
 
   GenerationRepositoryImpl({
     required NovelAiApiService apiService,
+    required OfficialNovelAiApiService officialApiService,
+    required OfficialNovelAiTokenStore officialTokenStore,
     required GptApiService gptApiService,
     required NanoBananaApiService nanoApiService,
     required SettingsRepository settingsRepo,
     required VibeEncodingRepository vibeEncodingRepo,
   })  : _apiService = apiService,
+        _officialApiService = officialApiService,
+        _officialTokenStore = officialTokenStore,
         _gptApiService = gptApiService,
         _nanoApiService = nanoApiService,
         _settingsRepo = settingsRepo,
@@ -82,6 +91,19 @@ class GenerationRepositoryImpl implements GenerationRepository {
   }
 
   Future<GenerationTask> _submitNovelAi(GenerationTask task) async {
+    final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
+    if (route.isOfficial) {
+      final token = await _officialTokenStore.read();
+      if (token == null || token.trim().isEmpty) {
+        throw ApiException(
+          message: '请先在 API 配置中填写 NovelAI 官方 Token',
+          code: 'NO_OFFICIAL_TOKEN',
+        );
+      }
+      final prepared = await _prepareOfficialVibeReferences(task, token);
+      return _officialApiService.generateImage(prepared, token);
+    }
+
     final creds = await _resolveNovelAiCreds(task.endpointId);
     if (creds.apiKey.isEmpty) {
       throw ApiException(
@@ -95,7 +117,7 @@ class GenerationRepositoryImpl implements GenerationRepository {
     if (task.mode == GenerationMode.inpainting) {
       return _apiService.inpaintImage(task, creds.apiKey, creds.baseUrl);
     }
-    if (task.protocol == AppConstants.novelAiImageGenerationsProtocol &&
+    if (route.isIkun &&
         task.img2imgSourceImagePath != null &&
         task.vibeReferences.isNotEmpty) {
       throw ApiException(
@@ -107,6 +129,7 @@ class GenerationRepositoryImpl implements GenerationRepository {
       task,
       creds.apiKey,
       creds.baseUrl,
+      route,
     );
     return _apiService.generateImage(prepared, creds.apiKey, creds.baseUrl);
   }
@@ -115,12 +138,9 @@ class GenerationRepositoryImpl implements GenerationRepository {
     GenerationTask task,
     String apiKey,
     String baseUrl,
+    NovelAiRoute route,
   ) async {
-    if ((task.protocol != AppConstants.novelAiChatCompletionsProtocol &&
-            task.protocol != AppConstants.novelAiImageGenerationsProtocol) ||
-        task.vibeReferences.isEmpty) {
-      return task;
-    }
+    if (task.vibeReferences.isEmpty) return task;
 
     final prepared = <CharacterReferenceImage>[];
     for (final reference in task.vibeReferences) {
@@ -152,6 +172,10 @@ class GenerationRepositoryImpl implements GenerationRepository {
       if (reference.path.isEmpty) {
         throw ApiException(message: '氛围参考图像不可用，请重新选择');
       }
+      if (route.isIkun) {
+        prepared.add(reference);
+        continue;
+      }
       final encoded = await _apiService.encode7877VibeReference(
         task: task,
         reference: reference,
@@ -170,6 +194,27 @@ class GenerationRepositoryImpl implements GenerationRepository {
         thumbnailPath: created.thumbnailPath,
         title: created.title,
       ));
+    }
+    return task.copyWith(vibeReferences: prepared);
+  }
+
+  Future<GenerationTask> _prepareOfficialVibeReferences(
+    GenerationTask task,
+    String token,
+  ) async {
+    if (task.vibeReferences.isEmpty) return task;
+    final prepared = <CharacterReferenceImage>[];
+    for (final reference in task.vibeReferences) {
+      if (reference.path.isEmpty) {
+        throw ApiException(message: '氛围参考图像不可用，请重新选择');
+      }
+      final encoded = await _officialApiService.encodeVibeReference(
+        imagePath: reference.path,
+        model: task.model,
+        informationExtracted: reference.informationExtracted,
+        token: token,
+      );
+      prepared.add(reference.copyWith(encodedVibe: encoded));
     }
     return task.copyWith(vibeReferences: prepared);
   }

@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
+import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
@@ -169,6 +171,50 @@ void main() {
 
     await viewModel.removePreciseReference(0);
     expect(viewModel.preciseReferences, isEmpty);
+  });
+
+  test('角色精细参考按角色保存且不影响其他角色', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.characters = const [
+      CharacterSpec(prompt: 'first'),
+      CharacterSpec(prompt: 'second'),
+    ];
+
+    await viewModel.addCharacterReference(0, 'first.png');
+    await viewModel.updateCharacterReference(
+      0,
+      0,
+      viewModel.characters.first.referenceImages.single.copyWith(
+        strength: 0.7,
+        informationExtracted: 0.4,
+      ),
+    );
+    await viewModel.replaceCharacterReference(0, 0, 'replaced.png');
+
+    expect(viewModel.characters[0].referenceImages.single.path, 'replaced.png');
+    expect(viewModel.characters[0].referenceImages.single.strength, 0.7);
+    expect(
+      viewModel.characters[0].referenceImages.single.informationExtracted,
+      0.4,
+    );
+    expect(viewModel.characters[1].referenceImages, isEmpty);
+    expect(settings.savedCharacters[0].referenceImages.single.path,
+        'replaced.png');
+
+    await viewModel.removeCharacterReference(0, 0);
+    expect(viewModel.characters[0].referenceImages, isEmpty);
   });
 
   test('batch count persists the 1 to 30 range', () async {
@@ -389,6 +435,7 @@ void main() {
           displayName: model,
           actualModel: model,
           provider: ImageProviderType.novelAi,
+          endpointId: 'ikun',
           protocol: AppConstants.novelAiImageGenerationsProtocol,
         ),
       ];
@@ -402,6 +449,65 @@ void main() {
       expect(repository.submitted.single.preciseReferences, hasLength(1));
       expect(viewModel.errorMessage, isNull);
     }
+  });
+
+  test('角色精细参考合并到兼容渠道的精密参考任务', () async {
+    final image = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'role_precise_reference.png',
+    );
+    await image.writeAsBytes(const [1, 2, 3]);
+    addTearDown(() async {
+      if (await image.exists()) await image.delete();
+    });
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository(image.path);
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'nai-diffusion-4-5-full',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    viewModel.prompt = '1girl';
+    await viewModel.switchReferenceMode(ReferenceMode.precise);
+    viewModel.characters = [
+      CharacterSpec(
+        prompt: 'first',
+        referenceImages: [
+          CharacterReferenceImage(path: image.path, strength: 0.6),
+        ],
+      ),
+      const CharacterSpec(
+        prompt: 'disabled',
+        enabled: false,
+        referenceImages: [CharacterReferenceImage(path: 'ignored.png')],
+      ),
+    ];
+
+    await viewModel.generate();
+
+    final task = repository.submitted.single;
+    expect(task.characters?.first.referenceImages.single.path, image.path);
+    expect(task.preciseReferences, [
+      PreciseReferenceImage(
+        path: image.path,
+        referenceType: 'character',
+        strength: 0.6,
+      ),
+    ]);
   });
 
   test('Precise Reference is unavailable for unsupported and limit models',
@@ -425,6 +531,7 @@ void main() {
           displayName: model,
           actualModel: model,
           provider: ImageProviderType.novelAi,
+          endpointId: 'ikun',
           protocol: AppConstants.novelAiImageGenerationsProtocol,
         ),
       ];
@@ -491,6 +598,36 @@ void main() {
     await viewModel.addPreciseReference('precise.png');
     expect(viewModel.vibeReferences, hasLength(1));
     expect(viewModel.preciseReferences, isEmpty);
+  });
+
+  test('分块高清重绘使用 0.3 默认强度且保留手动值', () async {
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.img2imgStrength, 0.7);
+    viewModel.updateImg2ImgMode(Img2ImgMode.tiled);
+    expect(viewModel.img2imgStrength, 0.3);
+
+    viewModel.updateImg2ImgStrength(0.42);
+    viewModel.updateImg2ImgMode(Img2ImgMode.normal);
+    viewModel.updateImg2ImgMode(Img2ImgMode.tiled);
+    expect(viewModel.img2imgStrength, 0.42);
+
+    viewModel.clearImg2ImgData();
+    expect(viewModel.img2imgStrength, 0.7);
+    viewModel.updateImg2ImgMode(Img2ImgMode.normal);
+    viewModel.updateImg2ImgMode(Img2ImgMode.tiled);
+    expect(viewModel.img2imgStrength, 0.3);
   });
 
   test('7877 支持组合图生图与 Vibe 参考', () async {
@@ -706,6 +843,212 @@ void main() {
     expect(settings.savedVibeReferences, isEmpty);
   });
 
+  test('loadFromHistory restores ikun inpainting source mask and strength',
+      () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:ikun:nai-v4.5-full',
+        displayName: 'ikun V4.5',
+        actualModel: 'nai-v4.5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: 'ikun',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    final task = GenerationTask(
+      taskId: 'history-inpaint',
+      model: 'nai-v4.5-full',
+      endpointId: 'ikun',
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+      prompt: 'replace sky',
+      negativePrompt: 'cloudy',
+      width: 832,
+      height: 1216,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'karras',
+      mode: GenerationMode.inpainting,
+      sourceImagePath: 'source.png',
+      maskImagePath: 'mask.png',
+      inpaintStrength: 0.78,
+      status: 'success',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+
+    await viewModel.loadFromHistory(task);
+
+    expect(viewModel.generationMode, GenerationMode.inpainting);
+    expect(viewModel.inpaintPrompt, 'replace sky');
+    expect(viewModel.inpaintNegativePrompt, 'cloudy');
+    expect(viewModel.sourceImagePath, 'source.png');
+    expect(viewModel.maskImagePath, 'mask.png');
+    expect(viewModel.inpaintStrength, 0.78);
+    expect(viewModel.img2imgSourceImagePath, isNull);
+  });
+
+  test('loadFromHistory restores ikun img2img source and strength', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:ikun:nai-v4.5-full',
+        displayName: 'ikun V4.5',
+        actualModel: 'nai-v4.5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: 'ikun',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    final task = GenerationTask(
+      taskId: 'history-img2img',
+      model: 'nai-v4.5-full',
+      endpointId: 'ikun',
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+      prompt: 'watercolor',
+      width: 832,
+      height: 1216,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'karras',
+      img2imgSourceImagePath: 'img2img.png',
+      img2imgStrength: 0.42,
+      status: 'success',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+
+    await viewModel.loadFromHistory(task);
+
+    expect(viewModel.generationMode, GenerationMode.textToImage);
+    expect(viewModel.prompt, 'watercolor');
+    expect(viewModel.img2imgSourceImagePath, 'img2img.png');
+    expect(viewModel.img2imgStrength, 0.42);
+    expect(viewModel.sourceImagePath, isNull);
+    expect(viewModel.maskImagePath, isNull);
+  });
+
+  test('7877 V5 禁用 Vibe 并限制步数画幅，但保留角色提示词', () async {
+    final settings = _SettingsRepository();
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _SuccessfulGenerationRepository('unused'),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:7877:nai-diffusion-5-full',
+        displayName: '7877 V5 Full',
+        actualModel: 'nai-diffusion-5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: '7877',
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+    ];
+    viewModel.selectedModel = 'nai:7877:nai-diffusion-5-full';
+    expect(viewModel.supportsVibeReferences, isFalse);
+    expect(viewModel.supportsCharacterPrompts, isTrue);
+    await viewModel.updateSteps(50);
+    expect(viewModel.steps, 28);
+    expect(viewModel.availableResolutions, contains('1024x1024'));
+    expect(viewModel.availableResolutions, contains('832x1216'));
+    expect(viewModel.availableResolutions, isNot(contains('1024x1536')));
+  });
+
+  test('loadModels restores active ikun model over stale 7877 selection',
+      () async {
+    final settings = _SettingsRepository()
+      ..activeNovelAiEndpointId = 'ikun'
+      ..activeNovelAiModel = 'ikun-custom-model'
+      ..novelAiEndpoints = const [
+        ApiEndpoint(
+          id: '7877',
+          name: '7877',
+          baseUrl: 'https://7877.example',
+          apiKey: 'key',
+          models: ['nai-diffusion-4-5-full'],
+          protocol: AppConstants.novelAiChatCompletionsProtocol,
+        ),
+        ApiEndpoint(
+          id: 'ikun',
+          name: 'ikun',
+          baseUrl: 'https://ikun.example',
+          apiKey: 'key',
+          models: ['ikun-custom-model'],
+          protocol: AppConstants.novelAiImageGenerationsProtocol,
+        ),
+      ];
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final viewModel = GenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.selectedModel = 'stale-model';
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:7877:nai-diffusion-4-5-full',
+        displayName: '7877 model',
+        actualModel: 'nai-diffusion-4-5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: '7877',
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+      ImageModelOption(
+        modelId: 'nai:ikun:ikun-custom-model',
+        displayName: 'ikun model',
+        actualModel: 'ikun-custom-model',
+        provider: ImageProviderType.novelAi,
+        endpointId: 'ikun',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+
+    await viewModel.loadModels();
+
+    expect(viewModel.selectedModel, 'nai:ikun:ikun-custom-model');
+    expect(viewModel.isIkunEndpoint, isTrue);
+  });
+
   test('loadFromHistory keeps iku endpoint for matching model names', () async {
     final settings = _SettingsRepository();
     final history = _MemoryHistoryRepository();
@@ -882,6 +1225,9 @@ class _SettingsRepository implements SettingsRepository {
   List<PreciseReferenceImage> savedPreciseReferences = const [];
   ReferenceMode savedReferenceMode = ReferenceMode.vibe;
   List<CharacterSpec> savedCharacters = const [];
+  List<ApiEndpoint> novelAiEndpoints = const [];
+  String? activeNovelAiEndpointId;
+  String? activeNovelAiModel;
   int savedBatchCount = 1;
   int savedSteps = 28;
   bool savedStepsLocked = false;
@@ -947,6 +1293,12 @@ class _SettingsRepository implements SettingsRepository {
   Future<String?> getSelectedModelDraft() async => 'model';
 
   @override
+  Future<String> getImageProviderGptModel() async => '';
+
+  @override
+  Future<String> getImageProviderNanoModel() async => '';
+
+  @override
   Future<String?> getDefaultModel() async => 'model';
 
   @override
@@ -980,10 +1332,20 @@ class _SettingsRepository implements SettingsRepository {
   Future<String> getInpaintPromptDraft() async => '';
 
   @override
+  Future<void> setInpaintPromptDraft(String value) async {}
+
+  @override
   Future<String> getInpaintNegativePromptDraft() async => '';
 
   @override
+  Future<void> setInpaintNegativePromptDraft(String value) async {}
+
+  @override
   Future<List<CharacterSpec>> getCharactersDraft() async => const [];
+
+  @override
+  Future<List<ApiEndpoint>> getEndpoints(ImageProviderType provider) async =>
+      provider == ImageProviderType.novelAi ? novelAiEndpoints : const [];
 
   @override
   Future<List<CharacterReferenceImage>> getVibeReferencesDraft() async =>
@@ -1001,7 +1363,26 @@ class _SettingsRepository implements SettingsRepository {
 
   @override
   Future<void> setActiveEndpointId(
-      ImageProviderType provider, String? id) async {}
+      ImageProviderType provider, String? id) async {
+    if (provider == ImageProviderType.novelAi) {
+      activeNovelAiEndpointId = id;
+    }
+  }
+
+  @override
+  Future<void> setActiveModel(ImageProviderType provider, String? model) async {
+    if (provider == ImageProviderType.novelAi) {
+      activeNovelAiModel = model;
+    }
+  }
+
+  @override
+  Future<String?> getActiveEndpointId(ImageProviderType provider) async =>
+      provider == ImageProviderType.novelAi ? activeNovelAiEndpointId : null;
+
+  @override
+  Future<String?> getActiveModel(ImageProviderType provider) async =>
+      provider == ImageProviderType.novelAi ? activeNovelAiModel : null;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

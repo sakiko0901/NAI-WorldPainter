@@ -4,20 +4,18 @@ import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 class ChatInputBar extends StatefulWidget {
   final bool isSending;
-  final bool webSearchEnabled;
-  final VoidCallback onToggleWebSearch;
-  final void Function(String text, {String? imageBase64}) onSend;
+  final void Function(String text,
+      {String? imageBase64, String? textAttachment}) onSend;
   final TextEditingController? controller;
 
   const ChatInputBar({
     super.key,
     required this.isSending,
-    required this.webSearchEnabled,
-    required this.onToggleWebSearch,
     required this.onSend,
     this.controller,
   });
@@ -32,6 +30,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   bool _hasText = false;
   String? _pendingImageBase64;
   String? _pendingImagePath;
+  String? _pendingTextAttachment;
 
   @override
   void initState() {
@@ -81,24 +80,67 @@ class _ChatInputBarState extends State<ChatInputBar> {
     });
   }
 
+  Future<void> _pickTextFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['txt', 'md', 'markdown', 'json'],
+      withData: false,
+    );
+    final path = result?.files.single.path;
+    if (path == null) return;
+    final file = File(path);
+    if (await file.length() > 200 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文本文件不能超过 200 KB。')),
+        );
+      }
+      return;
+    }
+    try {
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) throw const FormatException();
+      setState(() =>
+          _pendingTextAttachment = '文件：${result!.files.single.name}\n$content');
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('仅支持 UTF-8 编码的文本文件。')),
+        );
+      }
+    }
+  }
+
+  void _removeTextFile() => setState(() => _pendingTextAttachment = null);
+
   void _submit() {
     final text = _controller.text.trim();
-    if ((text.isEmpty && _pendingImageBase64 == null) || widget.isSending) {
+    if ((text.isEmpty &&
+            _pendingImageBase64 == null &&
+            _pendingTextAttachment == null) ||
+        widget.isSending) {
       return;
     }
     HapticFeedback.lightImpact();
-    widget.onSend(text, imageBase64: _pendingImageBase64);
+    widget.onSend(
+      text,
+      imageBase64: _pendingImageBase64,
+      textAttachment: _pendingTextAttachment,
+    );
     _controller.clear();
     setState(() {
       _pendingImageBase64 = null;
       _pendingImagePath = null;
+      _pendingTextAttachment = null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final canSend =
-        (_hasText || _pendingImageBase64 != null) && !widget.isSending;
+    final canSend = (_hasText ||
+            _pendingImageBase64 != null ||
+            _pendingTextAttachment != null) &&
+        !widget.isSending;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     return Padding(
@@ -112,6 +154,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_pendingImagePath != null) _buildImagePreview(),
+          if (_pendingTextAttachment != null) _buildTextFilePreview(),
           Container(
             decoration: BoxDecoration(
               color:
@@ -126,6 +169,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
               children: [
                 IconButton(
                   onPressed: widget.isSending ? null : _pickImage,
+                  tooltip: '添加图片',
                   icon: Icon(
                     CupertinoIcons.photo,
                     size: 20,
@@ -138,15 +182,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
                       const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
                 IconButton(
-                  onPressed: widget.isSending ? null : widget.onToggleWebSearch,
-                  tooltip:
-                      widget.webSearchEnabled ? '联网搜索：开（点击关闭）' : '联网搜索：关（点击开启）',
+                  onPressed: widget.isSending ? null : _pickTextFile,
+                  tooltip: '添加文本文件',
                   icon: Icon(
-                    CupertinoIcons.globe,
+                    CupertinoIcons.doc_text,
                     size: 20,
-                    color: widget.webSearchEnabled
+                    color: _pendingTextAttachment != null
                         ? theme.colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                        : theme.colorScheme.onSurfaceVariant,
                   ),
                   padding: EdgeInsets.zero,
                   constraints:
@@ -241,6 +284,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTextFilePreview() {
+    final title =
+        _pendingTextAttachment!.split('\n').first.replaceFirst('文件：', '');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Chip(
+        avatar: const Icon(CupertinoIcons.doc_text, size: 16),
+        label: Text(title, overflow: TextOverflow.ellipsis),
+        onDeleted: _removeTextFile,
       ),
     );
   }

@@ -77,6 +77,22 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<void> setDefaultStyleWords(String v) => _local.setDefaultStyleWords(v);
 
   @override
+  Future<String> getDefaultStyleWordsV5() =>
+      Future.value(_local.getDefaultStyleWordsV5());
+
+  @override
+  Future<void> setDefaultStyleWordsV5(String v) =>
+      _local.setDefaultStyleWordsV5(v);
+
+  @override
+  Future<String> getDefaultStyleWordsV45() =>
+      Future.value(_local.getDefaultStyleWordsV45());
+
+  @override
+  Future<void> setDefaultStyleWordsV45(String v) =>
+      _local.setDefaultStyleWordsV45(v);
+
+  @override
   Future<String> getPromptDraft() async => _local.getPromptDraft();
 
   @override
@@ -105,6 +121,14 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<void> setSelectedResolutionDraft(String value) =>
       _local.setSelectedResolutionDraft(value);
+
+  @override
+  Future<List<String>> getCustomResolutions() async =>
+      _local.getCustomResolutions();
+
+  @override
+  Future<void> setCustomResolutions(List<String> value) =>
+      _local.setCustomResolutions(value);
 
   @override
   Future<String> getSelectedSamplerDraft() async =>
@@ -294,13 +318,6 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<String?> getNsfwBookPath() async => _local.getNsfwBookPath();
   @override
   Future<void> setNsfwBookPath(String? value) => _local.setNsfwBookPath(value);
-
-  // 联网搜索开关
-  @override
-  Future<bool> getWebSearchEnabled() async => _local.getWebSearchEnabled();
-  @override
-  Future<void> setWebSearchEnabled(bool value) =>
-      _local.setWebSearchEnabled(value);
 
   // Danbooru 智能校准
   @override

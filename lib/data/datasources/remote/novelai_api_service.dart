@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -10,6 +11,7 @@ import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
+import 'package:nai_huishi/domain/entities/novelai_route.dart';
 
 class NovelAiApiService {
   final Dio _dio;
@@ -28,6 +30,9 @@ class NovelAiApiService {
     final trimmed = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
     if (trimmed.endsWith('/v1')) {
       return trimmed.substring(0, trimmed.length - 3);
+    }
+    if (trimmed.endsWith('/origin')) {
+      return trimmed.substring(0, trimmed.length - 7);
     }
     return trimmed;
   }
@@ -65,37 +70,37 @@ class NovelAiApiService {
     _configureAuth(apiKey, baseUrl);
 
     try {
-      final is7877 =
-          task.protocol == AppConstants.novelAiChatCompletionsProtocol;
-      final usesImageGenerations =
-          task.protocol == AppConstants.novelAiImageGenerationsProtocol;
-      final usesPreciseReference =
-          usesImageGenerations && task.preciseReferences.isNotEmpty;
+      final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
+      final is7877 = route.isGateway7877;
+      final isIkun = route.isIkun;
+      final usesGatewayImages = is7877 || isIkun;
+      final usesPreciseReference = isIkun && task.preciseReferences.isNotEmpty;
       final usesImg2Img = task.img2imgSourceImagePath != null;
-      final usesUnifiedImageRoute = is7877 || usesImageGenerations;
-      final requestPath = usesUnifiedImageRoute
+      final requestPath = usesGatewayImages
           ? ApiConstants.imageGenerations
           : ApiConstants.chatCompletions;
       final requestOptions = Options(
         receiveTimeout: const Duration(minutes: 5),
         sendTimeout: const Duration(minutes: 1),
       );
-      final requestBody = is7877
-          ? await _build7877GenerationBody(task)
-          : usesImg2Img
-              ? await _buildImg2ImgBody(task, unifiedRoute: true)
-              : usesPreciseReference
-                  ? await _buildPreciseReferenceBody(task)
-                  : usesImageGenerations
+      final requestBody = usesImg2Img
+          ? await _buildImg2ImgBody(task, isIkun: isIkun)
+          : usesPreciseReference
+              ? await _buildPreciseReferenceBody(task)
+              : is7877
+                  ? await _build7877ImageGenerationsBody(task)
+                  : isIkun
                       ? await _buildImageGenerationsBody(task)
                       : _buildChatCompletionsBody(task);
       final response = await _dio.post(
         requestPath,
         data: requestBody,
-        options: requestOptions,
+        options: requestOptions.copyWith(
+          responseType: ResponseType.json,
+        ),
       );
 
-      if (usesUnifiedImageRoute) {
+      if (usesGatewayImages) {
         return _parseImageGenerationResponse(response.data, task, apiKey);
       }
       final parsed = _parseResponse(response.data, task);
@@ -153,59 +158,16 @@ class NovelAiApiService {
     String? prompt,
     int? defry,
   }) async {
-    _configureAuth(apiKey, baseUrl);
-    final bytes = await File(imagePath).readAsBytes();
-    final image = img.decodeImage(bytes);
-    if (image == null) {
-      throw ApiException(message: '无法读取图片，请选择有效的 PNG 或 JPEG 图片');
-    }
-    final body = <String, dynamic>{
-      'model': _normalize7877Model(model),
-      'extra': operation,
-      'image': base64Encode(bytes),
-      'width': image.width,
-      'height': image.height,
-      'response_format': 'b64_json',
-    };
-    if ((operation == 'director-colorize' || operation == 'director-emotion') &&
-        prompt != null) {
-      body['prompt'] = prompt.trim();
-    }
-    if ((operation == 'director-colorize' || operation == 'director-emotion') &&
-        defry != null) {
-      body['defry'] = defry.clamp(0, 5);
-    }
-    try {
-      final response = await _dio.post(
-        ApiConstants.imageGenerations,
-        data: body,
-        options: Options(
-          contentType: 'application/json',
-          receiveTimeout: const Duration(minutes: 3),
-        ),
-      );
-      final data = response.data;
-      if (data is Map<String, dynamic>) {
-        final images = data['data'];
-        if (images is List && images.isNotEmpty) {
-          final first = images.first;
-          if (first is Map && first['b64_json'] is String) {
-            try {
-              return base64Decode(first['b64_json'] as String);
-            } on FormatException {
-              throw ApiException(message: '导演工具返回的 b64_json 无效');
-            }
-          }
-        }
-      }
-      throw ApiException(message: '导演工具未返回 b64_json');
-    } on DioException catch (e) {
-      throw ApiException(
-        message: _handleDioError(e),
-        statusCode: e.response?.statusCode,
-        originalError: e,
-      );
-    }
+    return _processDirectorImageV1(
+      imagePath: imagePath,
+      operation: operation,
+      model: model,
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      prompt: prompt,
+      defry: defry,
+      usesGatewayExtra: true,
+    );
   }
 
   Future<Uint8List> processDirectorImageIkun({
@@ -216,6 +178,26 @@ class NovelAiApiService {
     required String baseUrl,
     String? prompt,
     int? defry,
+  }) =>
+      _processDirectorImageV1(
+        imagePath: imagePath,
+        operation: operation,
+        model: model,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        prompt: prompt,
+        defry: defry,
+      );
+
+  Future<Uint8List> _processDirectorImageV1({
+    required String imagePath,
+    required String operation,
+    required String model,
+    required String apiKey,
+    required String baseUrl,
+    String? prompt,
+    int? defry,
+    bool usesGatewayExtra = false,
   }) async {
     _configureAuth(apiKey, baseUrl);
     final bytes = await File(imagePath).readAsBytes();
@@ -224,7 +206,7 @@ class NovelAiApiService {
       throw ApiException(message: '无法读取图片，请选择有效的 PNG 或 JPEG 图片');
     }
     final body = <String, dynamic>{
-      'novelai_operation': operation,
+      (usesGatewayExtra ? 'extra' : 'novelai_operation'): operation,
       'image': base64Encode(bytes),
       'width': image.width,
       'height': image.height,
@@ -249,7 +231,11 @@ class NovelAiApiService {
           final first = images.first;
           if (first is Map && first['b64_json'] is String) {
             try {
-              return base64Decode(first['b64_json'] as String);
+              final rawBase64 = first['b64_json'] as String;
+              final base64Data = rawBase64.contains(',')
+                  ? rawBase64.substring(rawBase64.indexOf(',') + 1)
+                  : rawBase64;
+              return base64Decode(base64Data);
             } on FormatException {
               throw ApiException(message: '导演工具返回的 b64_json 无效');
             }
@@ -275,17 +261,20 @@ class NovelAiApiService {
     _configureAuth(apiKey, baseUrl);
     final bytes = await File(imagePath).readAsBytes();
     try {
-      final response = await _dio.post(
-        ApiConstants.imageGenerations,
-        data: {
-          'model': _normalize7877Model(model),
-          'extra': 'upscale',
-          'image': base64Encode(bytes),
-          'response_format': 'b64_json',
-        },
-        options: Options(receiveTimeout: const Duration(minutes: 5)),
+      final response = await _dio.post<List<int>>(
+        ApiConstants.originUpscale,
+        data: {'image': base64Encode(bytes), 'scale': 4},
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(minutes: 5),
+          headers: {'Accept': 'application/zip, image/png'},
+        ),
       );
-      return _decodeImageResponse(response.data, '4x 放大');
+      return _extractNativeImageBytes(
+        response.data,
+        response.headers.value('content-type'),
+        '4x 放大',
+      );
     } on DioException catch (e) {
       throw ApiException(
         message: _handleDioError(e),
@@ -295,31 +284,13 @@ class NovelAiApiService {
     }
   }
 
-  Uint8List _decodeImageResponse(dynamic data, String featureName) {
-    if (data is Map<String, dynamic>) {
-      final images = data['data'];
-      if (images is List && images.isNotEmpty) {
-        final first = images.first;
-        if (first is Map && first['b64_json'] is String) {
-          try {
-            return base64Decode(first['b64_json'] as String);
-          } on FormatException {
-            throw ApiException(message: '$featureName返回的 b64_json 无效');
-          }
-        }
-      }
-    }
-    throw ApiException(message: '$featureName未返回 b64_json');
-  }
-
   Future<GenerationTask> inpaintImage(
       GenerationTask task, String apiKey, String baseUrl) async {
     _configureAuth(apiKey, baseUrl);
 
     try {
-      final usesUnifiedImageRoute =
-          task.protocol == AppConstants.novelAiImageGenerationsProtocol ||
-              task.protocol == AppConstants.novelAiChatCompletionsProtocol;
+      final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
+      final usesUnifiedImageRoute = route.isGateway7877 || route.isIkun;
       final response = await _dio.post(
         usesUnifiedImageRoute
             ? ApiConstants.imageGenerations
@@ -375,9 +346,8 @@ class NovelAiApiService {
       'steps': task.steps,
       'n_samples': 1,
       'scale': task.scale,
-      'sampler': _normalizeImageGenerationsSampler(task.sampler),
-      'noise_schedule':
-          _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule),
+      'sampler': _normalizeIkunSampler(task.sampler),
+      'noise_schedule': _normalizeIkunNoiseSchedule(task.noiseSchedule),
       'cfg_rescale': task.cfgRescale,
       if (task.seed != null) 'seed': task.seed,
       'response_format': responseFormat,
@@ -391,6 +361,12 @@ class NovelAiApiService {
     required String apiKey,
     required String baseUrl,
   }) async {
+    if (NovelAiRoute.fromIds(task.endpointId, task.protocol).isIkun) {
+      throw ApiException(
+        message: 'ikun 的 Vibe 原图应随生成请求提交，由网关自动编码',
+        code: 'IKUN_VIBE_ENCODING_VIA_GENERATION',
+      );
+    }
     _configureAuth(apiKey, baseUrl);
     final image = await _readReferenceIfAvailable(reference);
     if (image == null) {
@@ -400,22 +376,15 @@ class NovelAiApiService {
       final response = await _dio.post(
         ApiConstants.imageGenerations,
         data: {
-          'model': _vibeEncodingModel(task),
+          'model':
+              _is7877Task(task) ? _normalize7877Model(task.model) : task.model,
           'extra': 'encode-vibe',
           'image': image,
           'information_extracted': reference.informationExtracted,
         },
         options: Options(receiveTimeout: const Duration(minutes: 3)),
       );
-      final data = response.data;
-      final encoded = data is Map ? data['data'] : null;
-      final first =
-          encoded is List && encoded.isNotEmpty ? encoded.first : null;
-      final value = first is Map ? first['b64_json'] : null;
-      if (value is! String || value.isEmpty) {
-        throw ApiException(message: '氛围参考图像编码失败');
-      }
-      return value;
+      return _extractVibeEncoding(response.data);
     } on DioException catch (e) {
       throw ApiException(
         message: _handleDioError(e),
@@ -425,65 +394,224 @@ class NovelAiApiService {
     }
   }
 
-  Future<Map<String, dynamic>> _build7877GenerationBody(
+  Future<Map<String, dynamic>> _build7877ImageGenerationsBody(
     GenerationTask task,
   ) async {
-    final responseFormat =
-        const {'b64_json', 'url'}.contains(task.responseFormat)
-            ? task.responseFormat!
-            : 'b64_json';
-    final characters = _build7877Characters(task.characters);
-    final vibe = await _encode7877VibeReferences(task);
-    final sourcePath = task.img2imgSourceImagePath;
-    String? sourceImage;
-    if (sourcePath != null) {
-      final file = File(sourcePath);
-      if (!await file.exists()) {
-        throw ApiException(message: '图生图源图不可用，请重新选择');
-      }
-      sourceImage = base64Encode(await file.readAsBytes());
+    if (_isV5Model(task.model) && task.vibeReferences.isNotEmpty) {
+      throw ApiException(message: 'V5 模型不支持 Vibe 氛围参考');
     }
-
+    final vibe = await _encode7877VibeReferencesV1(task);
+    final characters = _buildCharacterPrompts(task.characters);
     return {
       'model': _normalize7877Model(task.model),
       'prompt': task.prompt,
-      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
-        'negative_prompt': task.negativePrompt,
-      if (sourceImage != null) 'image': sourceImage,
-      if (sourceImage != null) 'strength': task.img2imgStrength ?? 0.7,
+      'n': 1,
       'size': '${task.width}x${task.height}',
       'width': task.width,
       'height': task.height,
-      'steps': task.steps,
-      'n': 1,
-      'scale': task.scale,
-      'cfg_rescale': task.cfgRescale,
-      'sampler': task.sampler,
-      'noise_schedule': task.noiseSchedule,
-      if (task.seed != null) 'seed': task.seed,
-      'response_format': responseFormat,
-      if (characters.isNotEmpty) 'characters': characters,
-      if (vibe.images.isNotEmpty) 'reference_image_multiple': vibe.images,
-      if (vibe.images.isNotEmpty) 'reference_strength_multiple': vibe.strengths,
-      if (vibe.images.isNotEmpty)
-        'reference_information_extracted_multiple': vibe.informationExtracted,
-      if (vibe.images.isNotEmpty) 'controlnet_strength': 1.0,
+      'response_format': 'b64_json',
+      'params': {
+        'steps': task.steps,
+        'scale': task.scale,
+        'cfg_rescale': task.cfgRescale,
+        'sampler': _normalizeImageGenerationsSampler(task.sampler),
+        'noise_schedule': _normalizeImageGenerationsNoiseSchedule(
+          task.noiseSchedule,
+        ),
+        if (task.seed != null) 'seed': task.seed,
+        if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+          'negative_prompt': task.negativePrompt,
+        'quality': true,
+        'uc_preset': 'light',
+        'sm': false,
+        'sm_dyn': false,
+        if (characters.isNotEmpty) 'characters': characters,
+        if (characters.isNotEmpty) 'use_coords': task.useCoords,
+        if (vibe.images.isNotEmpty) 'reference_image_multiple': vibe.images,
+        if (vibe.images.isNotEmpty)
+          'reference_strength_multiple': vibe.strengths,
+        if (vibe.images.isNotEmpty)
+          'reference_information_extracted_multiple': vibe.informationExtracted,
+      },
     };
   }
 
-  List<Map<String, dynamic>> _build7877Characters(
+  Future<
+      ({
+        List<String> images,
+        List<double> strengths,
+        List<double> informationExtracted
+      })> _encode7877VibeReferencesV1(GenerationTask task) async {
+    final images = <String>[];
+    final strengths = <double>[];
+    final informationExtracted = <double>[];
+    for (var index = 0; index < task.vibeReferences.length; index++) {
+      final reference = task.vibeReferences[index];
+      final encoded = reference.encodedVibe?.isNotEmpty == true
+          ? reference.encodedVibe!
+          : await _encodeVibeReferenceV1(task, reference);
+      images.add(encoded);
+      strengths.add(reference.strength);
+      informationExtracted.add(reference.informationExtracted);
+    }
+    return (
+      images: images,
+      strengths: strengths,
+      informationExtracted: informationExtracted,
+    );
+  }
+
+  Future<String> _encodeVibeReferenceV1(
+    GenerationTask task,
+    CharacterReferenceImage reference,
+  ) async {
+    final image = await _readReferenceIfAvailable(reference);
+    if (image == null) {
+      throw ApiException(message: '氛围参考图像不可用，请重新选择');
+    }
+    try {
+      final response = await _dio.post(
+        ApiConstants.imageGenerations,
+        data: {
+          'model':
+              _is7877Task(task) ? _normalize7877Model(task.model) : task.model,
+          'extra': 'encode-vibe',
+          'image': image,
+          'information_extracted': reference.informationExtracted,
+        },
+        options: Options(receiveTimeout: const Duration(minutes: 3)),
+      );
+      return _extractVibeEncoding(response.data);
+    } on DioException catch (e) {
+      throw ApiException(
+        message: _handleDioError(e),
+        statusCode: e.response?.statusCode,
+        originalError: e,
+      );
+    }
+  }
+
+  String _extractVibeEncoding(dynamic data) {
+    final images = data is Map ? data['data'] : null;
+    final first = images is List && images.isNotEmpty ? images.first : null;
+    final value = first is Map
+        ? first['b64_json'] ?? first['encoding'] ?? first['encoded_vibe']
+        : null;
+    if (value is! String || value.isEmpty) {
+      throw ApiException(message: '氛围参考图像编码失败');
+    }
+    return value;
+  }
+
+  // 保留原生请求构造，供未来显式 /origin 模式调用。
+  Future<Map<String, dynamic>> _build7877NativeGenerationBody(
+    GenerationTask task,
+  ) async {
+    final action = task.sourceImagePath != null && task.maskImagePath != null
+        ? 'infill'
+        : task.img2imgSourceImagePath != null
+            ? 'img2img'
+            : 'generate';
+    final parameters = <String, dynamic>{
+      'params_version': 3,
+      'width': task.width,
+      'height': task.height,
+      'steps': task.steps.clamp(1, 28),
+      'scale': task.scale,
+      'sampler': task.sampler,
+      if (task.seed != null) 'seed': task.seed,
+      'n_samples': 1,
+      'noise_schedule': task.noiseSchedule == 'native'
+          ? ApiConstants.defaultNoiseSchedule
+          : task.noiseSchedule,
+      'cfg_rescale': task.cfgRescale,
+      'negative_prompt': task.negativePrompt ?? '',
+      'qualityToggle': true,
+      'ucPreset': 1,
+      'sm': false,
+      'sm_dyn': false,
+    };
+
+    if (action == 'img2img') {
+      final sourcePath = task.img2imgSourceImagePath!;
+      final source = File(sourcePath);
+      if (!await source.exists()) {
+        throw ApiException(message: '图生图源图不可用，请重新选择');
+      }
+      parameters['image'] = base64Encode(await source.readAsBytes());
+      parameters['strength'] = task.img2imgStrength ?? 0.7;
+      parameters['noise'] = 0.2;
+    }
+
+    if (action == 'infill') {
+      final sourcePath = task.sourceImagePath;
+      final maskPath = task.maskImagePath;
+      if (sourcePath == null || sourcePath.isEmpty) {
+        throw ApiException(message: '局部重绘缺少原图');
+      }
+      if (maskPath == null || maskPath.isEmpty) {
+        throw ApiException(message: '局部重绘缺少遮罩图');
+      }
+      final source = File(sourcePath);
+      final mask = File(maskPath);
+      if (!await source.exists()) {
+        throw ApiException(message: '局部重绘原图不可用，请重新选择');
+      }
+      if (!await mask.exists()) {
+        throw ApiException(message: '局部重绘遮罩图不可用，请重新绘制');
+      }
+      parameters['image'] = base64Encode(await source.readAsBytes());
+      parameters['mask'] = base64Encode(await mask.readAsBytes());
+    }
+
+    final isV5 = _isV5Model(task.model);
+    if (isV5 && task.width * task.height > 1024 * 1024) {
+      throw ApiException(message: 'V5 模型要求总像素不超过 1024×1024');
+    }
+    if (!isV5) {
+      final characters = _buildNativeCharacterPrompts(task.characters);
+      if (characters.isNotEmpty) {
+        parameters['characterPrompts'] = characters;
+        parameters['use_coords'] = task.useCoords;
+      }
+
+      final vibe = await _encode7877VibeReferences(task);
+      if (vibe.images.isNotEmpty) {
+        parameters['reference_image_multiple'] = vibe.images;
+        parameters['reference_strength_multiple'] = vibe.strengths;
+        parameters['reference_information_extracted_multiple'] =
+            vibe.informationExtracted;
+      }
+    }
+
+    return {
+      'input': task.prompt,
+      'model': _normalize7877Model(
+        action == 'infill' ? _nativeInpaintingModel(task.model) : task.model,
+      ),
+      'action': action,
+      'parameters': parameters,
+    };
+  }
+
+  List<Map<String, dynamic>> _buildNativeCharacterPrompts(
     List<CharacterSpec>? characters,
   ) {
     if (characters == null) return const [];
-    return characters
-        .map((character) => {
-              'prompt': character.prompt,
-              'negative_prompt': character.uc ?? '',
-              if (character.centerX != null && character.centerY != null)
-                'position': [character.centerX, character.centerY],
-              'enabled': character.enabled,
-            })
-        .toList();
+    return characters.where((character) => character.enabled).map((character) {
+      return {
+        'prompt': character.prompt,
+        'uc': character.uc ?? '',
+        if (character.centerX != null && character.centerY != null)
+          'center': {'x': character.centerX, 'y': character.centerY},
+      };
+    }).toList();
+  }
+
+  String _nativeInpaintingModel(String model) {
+    final normalized = _normalize7877Model(model);
+    if (normalized.endsWith('-inpainting')) return normalized;
+    return '$normalized-inpainting';
   }
 
   Future<
@@ -509,10 +637,8 @@ class NovelAiApiService {
         throw ApiException(message: '氛围参考图像 ${index + 1} 不可用，请重新选择');
       }
       final response = await _dio.post(
-        ApiConstants.imageGenerations,
+        ApiConstants.originEncodeVibe,
         data: {
-          'model': _vibeEncodingModel(task),
-          'extra': 'encode-vibe',
           'image': image,
           'information_extracted': reference.informationExtracted,
         },
@@ -522,7 +648,9 @@ class NovelAiApiService {
       final encoded = data is Map ? data['data'] : null;
       final first =
           encoded is List && encoded.isNotEmpty ? encoded.first : null;
-      final value = first is Map ? first['b64_json'] : null;
+      final value = first is Map
+          ? first['encoding'] ?? first['encoded_vibe'] ?? first['b64_json']
+          : null;
       if (value is! String || value.isEmpty) {
         throw ApiException(message: '氛围参考图像 ${index + 1} 编码失败');
       }
@@ -537,11 +665,12 @@ class NovelAiApiService {
     );
   }
 
-  String _vibeEncodingModel(GenerationTask task) {
-    return task.protocol == AppConstants.novelAiChatCompletionsProtocol
-        ? _normalize7877Model(task.model)
-        : task.model;
-  }
+  bool _is7877Task(GenerationTask task) =>
+      NovelAiRoute.fromIds(task.endpointId, task.protocol).isGateway7877;
+
+  bool _isV5Model(String model) =>
+      model.trim().toLowerCase().contains('diffusion-5') ||
+      model.trim().toLowerCase().contains('v5');
 
   String _normalize7877Model(String model) {
     final normalized = model.trim().toLowerCase();
@@ -558,10 +687,10 @@ class NovelAiApiService {
 
   Future<Map<String, dynamic>> _buildImg2ImgBody(
     GenerationTask task, {
-    required bool unifiedRoute,
+    required bool isIkun,
   }) async {
     final sourcePath = task.img2imgSourceImagePath;
-    if (sourcePath == null) {
+    if (sourcePath == null || sourcePath.isEmpty) {
       throw ApiException(message: '图生图缺少源图');
     }
     final file = File(sourcePath);
@@ -569,27 +698,67 @@ class NovelAiApiService {
       throw ApiException(message: '图生图源图不可用，请重新选择');
     }
 
+    if (!isIkun) {
+      final characterPrompts = _buildCharacterPrompts(task.characters);
+      return {
+        'model': _normalize7877Model(task.model),
+        'prompt': task.prompt,
+        'image': base64Encode(await file.readAsBytes()),
+        'strength': task.img2imgStrength ?? 0.7,
+        'noise': 0.0,
+        'color_correct': true,
+        'n': 1,
+        'size': '${task.width}x${task.height}',
+        'response_format': 'b64_json',
+        'params': {
+          'steps': task.steps,
+          'scale': task.scale,
+          'cfg_rescale': task.cfgRescale,
+          'sampler': _normalizeImageGenerationsSampler(task.sampler),
+          'noise_schedule': _normalizeImageGenerationsNoiseSchedule(
+            task.noiseSchedule,
+          ),
+          if (task.seed != null) 'seed': task.seed,
+          if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+            'negative_prompt': task.negativePrompt,
+          'quality': true,
+          'uc_preset': 'light',
+          if (characterPrompts.isNotEmpty) 'characters': characterPrompts,
+          if (characterPrompts.isNotEmpty) 'use_coords': task.useCoords,
+        },
+      };
+    }
+
+    if (_enabledCharacters(task).isNotEmpty) {
+      throw ApiException(
+        message: 'ikun 网关当前不支持图生图与多角色控制同时使用，请先移除角色控制',
+        code: 'IKUN_CHARACTERS_IMG2IMG_UNSUPPORTED',
+      );
+    }
+    if (task.vibeReferences.isNotEmpty || task.preciseReferences.isNotEmpty) {
+      throw ApiException(
+        message: 'ikun 网关当前不支持图生图与参考图同时使用，请先移除其中一种参考',
+        code: 'IKUN_REFERENCES_IMG2IMG_UNSUPPORTED',
+      );
+    }
+
     return {
-      if (unifiedRoute) 'novelai_operation': 'img2img',
+      'novelai_operation': 'img2img',
       'model': task.model,
       'prompt': task.prompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
       'image': base64Encode(await file.readAsBytes()),
-      'strength': task.img2imgStrength ?? 0.7,
-      'size': '${task.width}x${task.height}',
       'width': task.width,
       'height': task.height,
+      'strength': task.img2imgStrength ?? 0.7,
+      'noise': 0.0,
       'steps': task.steps,
       'scale': task.scale,
       'cfg_rescale': task.cfgRescale,
-      'sampler': unifiedRoute
-          ? _normalizeImageGenerationsSampler(task.sampler)
-          : task.sampler,
-      'noise_schedule': unifiedRoute
-          ? _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule)
-          : task.noiseSchedule,
+      'sampler': _normalizeIkunSampler(task.sampler),
+      'noise_schedule': _normalizeIkunNoiseSchedule(task.noiseSchedule),
       if (task.seed != null) 'seed': task.seed,
-      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
-        'negative_prompt': task.negativePrompt,
       'response_format': 'b64_json',
     };
   }
@@ -598,49 +767,60 @@ class NovelAiApiService {
       GenerationTask task) async {
     if (task.vibeReferences.length > AppConstants.maxIkunVibeReferences) {
       throw ApiException(
-        message: 'ikun 渠道当前仅支持 1 条 Vibe 氛围参考，请移除多余参考图',
+        message: 'ikun 渠道当前仅支持 4 条 Vibe 氛围参考，请移除多余参考图',
         code: 'IKUN_VIBE_LIMIT',
       );
     }
-    final reference =
-        task.vibeReferences.isEmpty ? null : task.vibeReferences.first;
-    final referenceImage = reference == null
-        ? null
-        : reference.encodedVibe?.isNotEmpty == true
-            ? reference.encodedVibe
-            : await _readReferenceIfAvailable(reference);
-    if (reference != null &&
-        (referenceImage == null || referenceImage.isEmpty)) {
-      throw ApiException(message: '氛围参考图像不可用，请重新选择');
+    final referenceImages = <String>[];
+    for (var index = 0; index < task.vibeReferences.length; index++) {
+      final reference = task.vibeReferences[index];
+      final image = reference.encodedVibe?.isNotEmpty == true
+          ? reference.encodedVibe
+          : await _readReferenceIfAvailable(reference);
+      if (image == null || image.isEmpty) {
+        throw ApiException(message: '氛围参考图像 ${index + 1} 不可用，请重新选择');
+      }
+      referenceImages.add(image);
     }
-    final characterPrompts = _buildCharacterPrompts(task.characters);
-    final responseFormat =
-        const {'b64_json', 'url'}.contains(task.responseFormat)
-            ? task.responseFormat!
-            : 'b64_json';
+    final characters = _enabledCharacters(task);
+    final characterPrompts = _buildIkunCharacterPrompts(characters);
+    final characterNegativePrompt =
+        _buildIkunCharacterNegativePrompt(task, characters);
     return {
       'prompt': task.prompt,
-      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
-        'negative_prompt': task.negativePrompt,
       'model': task.model,
+      'n': 1,
       'size': '${task.width}x${task.height}',
       'width': task.width,
       'height': task.height,
       'steps': task.steps,
-      'n_samples': 1,
       'scale': task.scale,
-      'sampler': _normalizeImageGenerationsSampler(task.sampler),
-      'noise_schedule':
-          _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule),
       'cfg_rescale': task.cfgRescale,
+      'sampler': _normalizeIkunSampler(task.sampler),
+      'noise_schedule': _normalizeIkunNoiseSchedule(task.noiseSchedule),
       if (task.seed != null) 'seed': task.seed,
-      'response_format': responseFormat,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
       if (characterPrompts.isNotEmpty) 'characterPrompts': characterPrompts,
       if (characterPrompts.isNotEmpty) 'use_coords': task.useCoords,
-      if (referenceImage != null) 'reference_image': referenceImage,
-      if (referenceImage != null) 'reference_strength': reference!.strength,
-      if (referenceImage != null)
-        'reference_information_extracted': reference!.informationExtracted,
+      if (characterNegativePrompt != null)
+        'v4_negative_prompt': characterNegativePrompt,
+      if (referenceImages.length == 1)
+        'reference_image': referenceImages.single,
+      if (referenceImages.length > 1) 'reference_images': referenceImages,
+      if (referenceImages.length == 1)
+        'reference_strength': task.vibeReferences.single.strength,
+      if (referenceImages.length == 1)
+        'reference_information_extracted':
+            task.vibeReferences.single.informationExtracted,
+      if (referenceImages.length > 1)
+        'reference_strength_multiple':
+            task.vibeReferences.map((reference) => reference.strength).toList(),
+      if (referenceImages.length > 1)
+        'reference_information_extracted_multiple': task.vibeReferences
+            .map((reference) => reference.informationExtracted)
+            .toList(),
+      'response_format': 'b64_json',
     };
   }
 
@@ -668,10 +848,33 @@ class NovelAiApiService {
     }
   }
 
-  String _normalizeImageGenerationsSampler(String sampler) => sampler;
+  String _normalizeImageGenerationsSampler(String sampler) {
+    final normalized = sampler.trim().toLowerCase();
+    return ApiConstants.supportedSamplers.contains(normalized)
+        ? normalized
+        : ApiConstants.defaultSampler;
+  }
 
-  String _normalizeImageGenerationsNoiseSchedule(String noiseSchedule) =>
-      noiseSchedule;
+  String _normalizeIkunSampler(String sampler) {
+    final normalized = sampler.trim().toLowerCase();
+    return ApiConstants.ikunSupportedSamplers.contains(normalized)
+        ? normalized
+        : ApiConstants.defaultSampler;
+  }
+
+  String _normalizeImageGenerationsNoiseSchedule(String noiseSchedule) {
+    final normalized = noiseSchedule.trim().toLowerCase();
+    return ApiConstants.supportedNoiseSchedules.contains(normalized)
+        ? normalized
+        : ApiConstants.defaultNoiseSchedule;
+  }
+
+  String _normalizeIkunNoiseSchedule(String noiseSchedule) {
+    final normalized = noiseSchedule.trim().toLowerCase();
+    return ApiConstants.ikunSupportedNoiseSchedules.contains(normalized)
+        ? normalized
+        : ApiConstants.defaultNoiseSchedule;
+  }
 
   List<Map<String, dynamic>> _buildCharacterPrompts(
     List<CharacterSpec>? characters,
@@ -690,13 +893,194 @@ class NovelAiApiService {
     }).toList();
   }
 
+  List<CharacterSpec> _enabledCharacters(GenerationTask task) =>
+      task.characters?.where((character) => character.enabled).toList() ??
+      const [];
+
+  List<Map<String, dynamic>> _buildIkunCharacterPrompts(
+    List<CharacterSpec> characters,
+  ) =>
+      characters
+          .map((character) => {
+                'prompt': character.prompt,
+                if (character.centerX != null && character.centerY != null)
+                  'center': {
+                    'x': character.centerX,
+                    'y': character.centerY,
+                  },
+              })
+          .toList();
+
+  Map<String, dynamic>? _buildIkunCharacterNegativePrompt(
+    GenerationTask task,
+    List<CharacterSpec> characters,
+  ) {
+    if (characters.isEmpty ||
+        !characters.any((character) => character.uc?.isNotEmpty == true)) {
+      return null;
+    }
+    return {
+      'caption': {
+        'base_caption': task.negativePrompt ?? '',
+        'char_captions': characters
+            .map((character) => {
+                  'char_caption': character.uc ?? '',
+                  'centers':
+                      character.centerX != null && character.centerY != null
+                          ? [
+                              {
+                                'x': character.centerX,
+                                'y': character.centerY,
+                              }
+                            ]
+                          : const <Map<String, dynamic>>[],
+                })
+            .toList(),
+      },
+      'legacy_uc': false,
+    };
+  }
+
   Future<GenerationTask> _parseImageGenerationResponse(
     dynamic data,
     GenerationTask originalTask,
     String apiKey,
   ) async {
-    final parsed = await _parseInpaintingResponse(data, originalTask);
+    final parsed = await _parseImageResponse(data, originalTask);
     return _downloadIfNeeded(parsed, apiKey);
+  }
+
+  Future<GenerationTask> _parseImageResponse(
+    dynamic data,
+    GenerationTask originalTask,
+  ) async {
+    if (data is List<int>) {
+      return _parseImageResponse(
+        utf8.decode(data, allowMalformed: true),
+        originalTask,
+      );
+    }
+    if (data is String) {
+      try {
+        return _parseImageResponse(jsonDecode(data), originalTask);
+      } on FormatException {
+        return originalTask.copyWith(
+          status: 'failed',
+          errorMessage: '接口返回的图片数据不是有效 JSON',
+          completedAt: DateTime.now(),
+        );
+      }
+    }
+    if (data is Map) {
+      final images = data['data'];
+      if (images is List && images.isNotEmpty && images.first is Map) {
+        final imageData = images.first as Map;
+        final url = imageData['url'];
+        if (url is String && url.isNotEmpty) {
+          return originalTask.copyWith(
+            status: 'success',
+            imageUrl: url,
+            completedAt: DateTime.now(),
+          );
+        }
+        final rawBase64 = imageData['b64_json'];
+        if (rawBase64 is String && rawBase64.isNotEmpty) {
+          try {
+            final base64Data = rawBase64.contains(',')
+                ? rawBase64.substring(rawBase64.indexOf(',') + 1)
+                : rawBase64;
+            final filePath = await ImageUtils.saveBase64Image(
+              base64Data,
+              ImageUtils.generateFilename(),
+            );
+            return originalTask.copyWith(
+              status: 'success',
+              imagePath: filePath,
+              completedAt: DateTime.now(),
+            );
+          } on FormatException {
+            return originalTask.copyWith(
+              status: 'failed',
+              errorMessage: '接口返回的 b64_json 无效',
+              completedAt: DateTime.now(),
+            );
+          }
+        }
+      }
+      final error = data['error'];
+      final message = error is Map ? error['message'] : null;
+      return originalTask.copyWith(
+        status: 'failed',
+        errorMessage: message?.toString() ?? '接口未返回图片数据',
+        completedAt: DateTime.now(),
+      );
+    }
+    return originalTask.copyWith(
+      status: 'failed',
+      errorMessage: '接口未返回有效图片响应',
+      completedAt: DateTime.now(),
+    );
+  }
+
+  Future<GenerationTask> _saveNativeImageResponse(
+    List<int>? data,
+    String? contentType,
+    GenerationTask originalTask,
+    String featureName,
+  ) async {
+    final bytes = _extractNativeImageBytes(data, contentType, featureName);
+    final filePath = await _saveNativeImageBytes(bytes);
+    return originalTask.copyWith(
+      status: 'success',
+      imagePath: filePath,
+      completedAt: DateTime.now(),
+    );
+  }
+
+  Uint8List _extractNativeImageBytes(
+    List<int>? data,
+    String? contentType,
+    String featureName,
+  ) {
+    if (data == null || data.isEmpty) {
+      throw ApiException(message: '$featureName未返回图片数据');
+    }
+    final bytes = Uint8List.fromList(data);
+    final isZip = contentType?.toLowerCase().contains('zip') == true ||
+        (bytes.length >= 4 &&
+            bytes[0] == 0x50 &&
+            bytes[1] == 0x4b &&
+            bytes[2] == 0x03 &&
+            bytes[3] == 0x04);
+    if (!isZip) return bytes;
+
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      for (final entry in archive.files) {
+        if (!entry.isFile) continue;
+        final name = entry.name.toLowerCase();
+        if (name.endsWith('.png') ||
+            name.endsWith('.jpg') ||
+            name.endsWith('.jpeg') ||
+            name.endsWith('.webp')) {
+          final entryBytes = entry.readBytes();
+          if (entryBytes != null && entryBytes.isNotEmpty) {
+            return Uint8List.fromList(entryBytes);
+          }
+        }
+      }
+    } catch (_) {
+      throw ApiException(message: '$featureName返回的 ZIP 无效');
+    }
+    throw ApiException(message: '$featureName返回的 ZIP 中没有图片');
+  }
+
+  Future<String> _saveNativeImageBytes(Uint8List bytes) async {
+    final dir = await ImageUtils.getImageDirectory();
+    final filePath =
+        '${dir.path}${Platform.pathSeparator}${ImageUtils.generateFilename()}';
+    await File(filePath).writeAsBytes(bytes);
+    return filePath;
   }
 
   Map<String, dynamic> _buildChatCompletionsBody(GenerationTask task) {
@@ -757,54 +1141,65 @@ class NovelAiApiService {
       throw ApiException(message: '局部重绘遮罩图不可用，请重新绘制');
     }
 
-    final responseFormat =
-        const {'b64_json', 'url'}.contains(task.responseFormat)
-            ? task.responseFormat!
-            : 'b64_json';
-    final is7877 = task.protocol == AppConstants.novelAiChatCompletionsProtocol;
-    final usesImageGenerations =
-        task.protocol == AppConstants.novelAiImageGenerationsProtocol;
+    final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
+    final is7877 = route.isGateway7877;
+    if (route.isIkun && _enabledCharacters(task).isNotEmpty) {
+      throw ApiException(
+        message: 'ikun 网关当前不支持局部重绘与多角色控制同时使用，请先移除角色控制',
+        code: 'IKUN_CHARACTERS_INPAINTING_UNSUPPORTED',
+      );
+    }
+
+    if (is7877) {
+      return {
+        'model': _normalize7877Model(task.model),
+        'prompt': task.prompt,
+        'image': base64Encode(await source.readAsBytes()),
+        'mask': base64Encode(await mask.readAsBytes()),
+        'strength': task.inpaintStrength ?? 1.0,
+        'n': 1,
+        'size': '${task.width}x${task.height}',
+        'response_format': 'b64_json',
+        'params': {
+          'steps': task.steps,
+          'scale': task.scale,
+          'cfg_rescale': task.cfgRescale,
+          'sampler': _normalizeImageGenerationsSampler(task.sampler),
+          'noise_schedule': _normalizeImageGenerationsNoiseSchedule(
+            task.noiseSchedule,
+          ),
+          if (task.seed != null) 'seed': task.seed,
+          if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+            'negative_prompt': task.negativePrompt,
+          'quality': true,
+          'uc_preset': 'light',
+        },
+      };
+    }
 
     return {
-      if (usesImageGenerations) 'novelai_operation': 'inpainting',
-      'model': is7877
-          ? _normalize7877Model(task.model)
-          : _inpaintingModel(task.model, usesImageGenerations),
+      'novelai_operation': 'inpainting',
+      'model': task.model,
       'prompt': task.prompt,
+      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
+        'negative_prompt': task.negativePrompt,
       'image': base64Encode(await source.readAsBytes()),
       'mask': base64Encode(await mask.readAsBytes()),
       'strength': task.inpaintStrength ?? 1.0,
-      if (!is7877) 'add_original_image': true,
+      'noise': 0.0,
+      'add_original_image': !task.disabledOriginalImage,
+      'color_correct': task.colorCorrect,
+      'n': 1,
       'size': '${task.width}x${task.height}',
       'width': task.width,
       'height': task.height,
-      if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
-        'negative_prompt': task.negativePrompt,
       'steps': task.steps,
       'scale': task.scale,
       'cfg_rescale': task.cfgRescale,
-      'sampler': usesImageGenerations
-          ? _normalizeImageGenerationsSampler(task.sampler)
-          : task.sampler,
-      'noise_schedule': usesImageGenerations
-          ? _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule)
-          : task.noiseSchedule,
+      'sampler': _normalizeIkunSampler(task.sampler),
+      'noise_schedule': _normalizeIkunNoiseSchedule(task.noiseSchedule),
       if (task.seed != null) 'seed': task.seed,
-      'n': 1,
-      'response_format': responseFormat,
-    };
-  }
-
-  String _inpaintingModel(String model, bool usesImageGenerations) {
-    if (!usesImageGenerations || model.contains('inpaint')) return model;
-    return switch (model) {
-      'nai-v4.5-full' || 'nai-v4.5-curated' => 'nai-v4.5-inpaint',
-      'nai-v4.5-full-limit' ||
-      'nai-v4.5-curated-limit' =>
-        'nai-v4.5-inpaint-limit',
-      'nai-v3' => 'nai-v3-inpaint',
-      'nai-v3-furry' => 'nai-v3-furry-inpaint',
-      _ => model,
+      'response_format': 'b64_json',
     };
   }
 
@@ -837,37 +1232,7 @@ class NovelAiApiService {
 
   Future<GenerationTask> _parseInpaintingResponse(
       dynamic data, GenerationTask originalTask) async {
-    if (data is Map<String, dynamic>) {
-      final images = data['data'] as List<dynamic>?;
-      if (images != null && images.isNotEmpty) {
-        final imageData = images.first;
-        if (imageData is Map<String, dynamic>) {
-          if (imageData['url'] is String) {
-            return originalTask.copyWith(
-              status: 'success',
-              imageUrl: imageData['url'] as String,
-              completedAt: DateTime.now(),
-            );
-          }
-          if (imageData['b64_json'] is String) {
-            final filename = ImageUtils.generateFilename();
-            final filePath = await ImageUtils.saveBase64Image(
-                imageData['b64_json'] as String, filename);
-            return originalTask.copyWith(
-              status: 'success',
-              imagePath: filePath,
-              completedAt: DateTime.now(),
-            );
-          }
-        }
-      }
-    }
-
-    return originalTask.copyWith(
-      status: 'failed',
-      errorMessage: '未能从局部重绘响应中提取图片',
-      completedAt: DateTime.now(),
-    );
+    return _parseImageResponse(data, originalTask);
   }
 
   GenerationTask _parseResponse(dynamic data, GenerationTask originalTask) {
@@ -951,23 +1316,8 @@ class NovelAiApiService {
   Future<bool> testConnection(String apiKey, String baseUrl) async {
     _configureAuth(apiKey, baseUrl);
     try {
-      final response = await _dio.post(
-        ApiConstants.chatCompletions,
-        data: {
-          'model': 'nai-diffusion-4-5-curated',
-          'stream': false,
-          'width': 832,
-          'height': 1216,
-          'messages': [
-            {
-              'role': 'user',
-              'content': jsonEncode({
-                'prompt': '1girl',
-                'size': [832, 1216],
-              }),
-            },
-          ],
-        },
+      final response = await _dio.get(
+        ApiConstants.models,
         options: Options(receiveTimeout: const Duration(seconds: 20)),
       );
       return response.statusCode == 200;

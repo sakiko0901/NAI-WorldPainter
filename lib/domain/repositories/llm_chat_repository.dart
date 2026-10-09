@@ -1,11 +1,20 @@
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
+import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 
 abstract class LlmChatRepository {
   Future<List<LlmSession>> listSessions();
-  Future<LlmSession> createSession({String? initialTitle});
+  Future<LlmSession> createSession({
+    String? initialTitle,
+    String scope = 'general',
+    String? contextKey,
+    NaiPromptVersion promptVersion = NaiPromptVersion.v45,
+  });
+  Future<LlmSession?> findSessionByContextKey(String contextKey);
   Future<void> renameSession(String id, String title);
+  Future<void> setSessionPromptVersion(String id, NaiPromptVersion version);
   Future<void> deleteSession(String id);
   Future<void> deleteAllSessions();
   Future<List<LlmMessage>> listMessages(String sessionId);
@@ -26,6 +35,7 @@ abstract class LlmChatRepository {
     required String assistantText,
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
+    LlmInteraction? interaction,
   });
 
   /// 仅落库用户消息 + assistant 消息（不调 LLM，用于无 tool 调用的单次回复场景）
@@ -40,6 +50,15 @@ abstract class LlmChatRepository {
 
   /// 删除指定消息及其之后的所有消息
   Future<void> deleteMessagesFrom(int messageId, String sessionId);
+
+  /// 原子记录一条 assistant 追问的答案，并生成后续 Agent 可见的用户消息。
+  Future<LlmMessage?> answerInteraction({
+    required String sessionId,
+    required int messageId,
+    required String interactionId,
+    String? optionId,
+    String? customAnswer,
+  });
 
   /// 不落库的轻量调用：直接调 LLM chat completions，返回 assistant 文本。
   /// 用于"关键词抽取"等不需要进入会话历史的中间步骤。
