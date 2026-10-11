@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,8 +14,17 @@ import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 
 class HistoryPage extends StatefulWidget {
   final ValueChanged<int>? onNavigate;
+  final HistoryDetailImageAction? onInpaint;
+  final HistoryDetailImageAction? onUpscale;
+  final HistoryDetailImageAction? onEnhance;
 
-  const HistoryPage({super.key, this.onNavigate});
+  const HistoryPage({
+    super.key,
+    this.onNavigate,
+    this.onInpaint,
+    this.onUpscale,
+    this.onEnhance,
+  });
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
@@ -23,7 +33,11 @@ class HistoryPage extends StatefulWidget {
 class _HistoryPageState extends State<HistoryPage> {
   late final HistoryViewModel _vm;
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
   late final DailyStatsLocalDatasource _dailyStats;
+  String _searchQuery = '';
+  bool _showFavorites = false;
+  Timer? _searchTimer;
 
   @override
   void initState() {
@@ -32,6 +46,7 @@ class _HistoryPageState extends State<HistoryPage> {
     _dailyStats = sl<DailyStatsLocalDatasource>();
     _vm.addListener(_onVmChanged);
     _vm.loadHistory(refresh: true);
+    _vm.loadFavorites();
     _scrollController.addListener(_onScroll);
   }
 
@@ -40,7 +55,9 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   void _onScroll() {
-    if (_scrollController.hasClients &&
+    if (!_showFavorites &&
+        _searchQuery.isEmpty &&
+        _scrollController.hasClients &&
         _scrollController.position.pixels >=
             _scrollController.position.maxScrollExtent - 200) {
       if (_vm.hasMore && !_vm.isLoading) {
@@ -49,10 +66,62 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
+  void _onSearchChanged(String value) {
+    setState(() => _searchQuery = value);
+    _searchTimer?.cancel();
+    if (_showFavorites || value.trim().isEmpty) return;
+    _searchTimer = Timer(const Duration(milliseconds: 280), () {
+      unawaited(_loadAllHistoryForSearch());
+    });
+  }
+
+  Future<void> _loadAllHistoryForSearch() async {
+    if (!mounted || _showFavorites || _searchQuery.trim().isEmpty) return;
+    if (_vm.isLoading) {
+      _searchTimer = Timer(const Duration(milliseconds: 100), () {
+        unawaited(_loadAllHistoryForSearch());
+      });
+      return;
+    }
+    while (mounted &&
+        !_showFavorites &&
+        _searchQuery.trim().isNotEmpty &&
+        _vm.hasMore) {
+      final countBefore = _vm.history.length;
+      await _vm.loadHistory();
+      if (_vm.history.length == countBefore) break;
+    }
+  }
+
+  List<GenerationTask> get _visibleHistory {
+    final source = _showFavorites ? _vm.favorites : _vm.history;
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return source;
+    return source.where((task) {
+      final searchable = [
+        task.prompt,
+        task.negativePrompt ?? '',
+        task.model,
+        task.seed?.toString() ?? '',
+      ].join('\n').toLowerCase();
+      return searchable.contains(query);
+    }).toList(growable: false);
+  }
+
+  bool _isFavorite(String taskId) =>
+      _vm.favorites.any((item) => item.taskId == taskId);
+
+  Future<void> _toggleFavorite(String taskId) async {
+    await _vm.toggleFavorite(taskId);
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _vm.removeListener(_onVmChanged);
+    _searchTimer?.cancel();
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -76,11 +145,12 @@ class _HistoryPageState extends State<HistoryPage> {
             bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFF1C1C21),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(28)),
+            color: Theme.of(ctx).colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             border: Border.all(
-                color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+              color: Colors.white.withValues(alpha: 0.08),
+              width: 0.5,
+            ),
           ),
           child: SafeArea(
             top: false,
@@ -88,58 +158,76 @@ class _HistoryPageState extends State<HistoryPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('每日生成统计',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const Text(
+                  '每日生成统计',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 4),
-                Text('记录生成成功的图像数量，每日 0 点重置，长期保留。',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                Text(
+                  '记录生成成功的图像数量，每日 0 点重置，长期保留。',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    Icon(CupertinoIcons.sparkles,
-                        size: 22,
-                        color: Theme.of(ctx).colorScheme.primary),
+                    Icon(
+                      CupertinoIcons.sparkles,
+                      size: 22,
+                      color: Theme.of(ctx).colorScheme.primary,
+                    ),
                     const SizedBox(width: 10),
-                    Text('$todayCount',
-                        style: TextStyle(
-                            fontSize: 30,
-                            fontWeight: FontWeight.w800,
-                            color: Theme.of(ctx).colorScheme.primary)),
+                    Text(
+                      '$todayCount',
+                      style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                        color: Theme.of(ctx).colorScheme.primary,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
-                      child: Text('今日生成成功',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: Theme.of(ctx)
-                                  .colorScheme
-                                  .onSurfaceVariant)),
+                      child: Text(
+                        '今日生成成功',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 if (recent.isEmpty)
-                  Text('最近 7 天暂无记录',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(ctx).colorScheme.onSurfaceVariant))
+                  Text(
+                    '最近 7 天暂无记录',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  )
                 else ...[
-                  Text('最近 7 天',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color:
-                              Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                  Text(
+                    '最近 7 天',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   ...recent.entries.map((entry) {
                     final parts = entry.key.split('-');
                     final month = int.tryParse(parts[1]) ?? 0;
                     final day = int.tryParse(parts[2]) ?? 0;
                     final date = DateTime(
-                        int.tryParse(parts[0]) ?? now.year, month, day);
+                      int.tryParse(parts[0]) ?? now.year,
+                      month,
+                      day,
+                    );
                     final isToday = entry.key == _dateKey(now);
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 6),
@@ -152,9 +240,8 @@ class _HistoryPageState extends State<HistoryPage> {
                               '${isToday ? ' · 今' : ''}',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Theme.of(ctx)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                                color:
+                                    Theme.of(ctx).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -166,18 +253,22 @@ class _HistoryPageState extends State<HistoryPage> {
                                     ? (entry.value / todayCount).clamp(0.0, 1.0)
                                     : (entry.value > 0 ? 1.0 : 0.0),
                                 minHeight: 6,
-                                backgroundColor:
-                                    Colors.white.withValues(alpha: 0.08),
+                                backgroundColor: Colors.white.withValues(
+                                  alpha: 0.08,
+                                ),
                               ),
                             ),
                           ),
                           SizedBox(
                             width: 40,
-                            child: Text('${entry.value}',
-                                textAlign: TextAlign.end,
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600)),
+                            child: Text(
+                              '${entry.value}',
+                              textAlign: TextAlign.end,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -200,13 +291,8 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _vm.loadHistory(refresh: true);
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final visibleHistory = _visibleHistory;
     return Scaffold(
       appBar: AppBar(
         title: const Row(
@@ -214,19 +300,21 @@ class _HistoryPageState extends State<HistoryPage> {
           children: [
             Icon(CupertinoIcons.photo_on_rectangle, size: 18),
             SizedBox(width: 6),
-            Text('历史画廊',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(
+              '历史画廊',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
           ],
         ),
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          tooltip: '每日生成统计',
-          icon: const Icon(CupertinoIcons.chart_bar, size: 20),
-          onPressed: _showDailyStatsSheet,
-        ),
         actions: [
+          IconButton(
+            tooltip: '每日生成统计',
+            icon: const Icon(CupertinoIcons.chart_bar, size: 20),
+            onPressed: _showDailyStatsSheet,
+          ),
           IconButton(
             tooltip: '清空历史',
             icon: const Icon(CupertinoIcons.trash, size: 20),
@@ -237,8 +325,9 @@ class _HistoryPageState extends State<HistoryPage> {
                       context: context,
                       builder: (ctx) => CupertinoAlertDialog(
                         title: const Text('清空历史记录'),
-                        content:
-                            const Text('只会清空历史列表，不会删除已保存到本地或系统相册的图片。是否继续？'),
+                        content: const Text(
+                          '只会清空历史列表，不会删除已保存到本地或系统相册的图片。是否继续？',
+                        ),
                         actions: [
                           CupertinoDialogAction(
                             onPressed: () => Navigator.pop(ctx, false),
@@ -260,18 +349,94 @@ class _HistoryPageState extends State<HistoryPage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => _vm.loadHistory(refresh: true),
+        onRefresh: () async {
+          await _vm.loadHistory(refresh: true);
+          await _vm.loadFavorites();
+        },
         child: CustomScrollView(
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
           slivers: [
-            if (_vm.isLoading && _vm.history.isEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _onSearchChanged,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: '搜索作品或提示词',
+                    prefixIcon: const Icon(CupertinoIcons.search, size: 19),
+                    suffixIcon: _searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: '清除搜索',
+                            onPressed: () {
+                              _searchController.clear();
+                              _onSearchChanged('');
+                            },
+                            icon: const Icon(Icons.close, size: 18),
+                          ),
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surfaceContainer,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('全部'),
+                      selected: !_showFavorites,
+                      onSelected: (_) {
+                        setState(() => _showFavorites = false);
+                        if (_searchQuery.trim().isNotEmpty) {
+                          _onSearchChanged(_searchQuery);
+                        }
+                      },
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      avatar: const Icon(Icons.star_outline, size: 16),
+                      label: const Text('收藏'),
+                      selected: _showFavorites,
+                      onSelected: (_) async {
+                        await _vm.loadFavorites();
+                        if (mounted) setState(() => _showFavorites = true);
+                      },
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 3, 18, 0),
+                child: Text(
+                  '${visibleHistory.length} 张${_showFavorites ? '收藏' : '作品'}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            ),
+            if (_vm.isLoading && _vm.history.isEmpty && !_showFavorites)
               const SliverFillRemaining(
                 child: Center(child: CupertinoActivityIndicator()),
               )
-            else if (_vm.history.isEmpty)
+            else if (visibleHistory.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
@@ -280,17 +445,26 @@ class _HistoryPageState extends State<HistoryPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          CupertinoIcons.sparkles,
-                          size: 42,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant
-                              .withValues(alpha: 0.5),
-                        ),
+                        if (_vm.isLoading && _searchQuery.trim().isNotEmpty)
+                          const CupertinoActivityIndicator()
+                        else
+                          Icon(
+                            CupertinoIcons.sparkles,
+                            size: 42,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
                         const SizedBox(height: 14),
                         Text(
-                          '请去创造更多美好回忆吧！',
+                          _searchQuery.isNotEmpty
+                              ? _vm.isLoading
+                                  ? '正在搜索更早的作品…'
+                                  : '没有匹配的作品'
+                              : _showFavorites
+                                  ? '还没有收藏的作品'
+                                  : '请去创造更多美好回忆吧！',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 15,
@@ -299,13 +473,15 @@ class _HistoryPageState extends State<HistoryPage> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 18),
-                        FilledButton(
-                          onPressed: widget.onNavigate == null
-                              ? null
-                              : () => widget.onNavigate!(1),
-                          child: const Text('去创作'),
-                        ),
+                        if (_searchQuery.isEmpty && !_showFavorites) ...[
+                          const SizedBox(height: 18),
+                          FilledButton(
+                            onPressed: widget.onNavigate == null
+                                ? null
+                                : () => widget.onNavigate!(1),
+                            child: const Text('去创作'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -321,20 +497,25 @@ class _HistoryPageState extends State<HistoryPage> {
                       crossAxisCount: columns,
                       mainAxisSpacing: 14,
                       crossAxisSpacing: 14,
-                      childCount: _vm.history.length,
+                      childCount: visibleHistory.length,
                       itemBuilder: (context, index) {
-                        final item = _vm.history[index];
+                        final item = visibleHistory[index];
                         return _HistoryGridCard(
                           key: ValueKey(item.taskId),
                           item: item,
                           onNavigate: widget.onNavigate,
+                          isFavorite: _isFavorite(item.taskId),
+                          onToggleFavorite: () => _toggleFavorite(item.taskId),
+                          onInpaint: widget.onInpaint,
+                          onUpscale: widget.onUpscale,
+                          onEnhance: widget.onEnhance,
                         );
                       },
                     ),
                   );
                 },
               ),
-            if (_vm.history.isNotEmpty && _vm.isLoading)
+            if (visibleHistory.isNotEmpty && _vm.isLoading)
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
@@ -343,7 +524,7 @@ class _HistoryPageState extends State<HistoryPage> {
               ),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 120 + MediaQuery.paddingOf(context).bottom,
+                height: 24 + MediaQuery.paddingOf(context).bottom,
               ),
             ),
           ],
@@ -356,11 +537,21 @@ class _HistoryPageState extends State<HistoryPage> {
 class _HistoryGridCard extends StatefulWidget {
   final GenerationTask item;
   final ValueChanged<int>? onNavigate;
+  final bool isFavorite;
+  final VoidCallback? onToggleFavorite;
+  final HistoryDetailImageAction? onInpaint;
+  final HistoryDetailImageAction? onUpscale;
+  final HistoryDetailImageAction? onEnhance;
 
   const _HistoryGridCard({
     super.key,
     required this.item,
     this.onNavigate,
+    this.isFavorite = false,
+    this.onToggleFavorite,
+    this.onInpaint,
+    this.onUpscale,
+    this.onEnhance,
   });
 
   @override
@@ -403,6 +594,11 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
         builder: (_) => HistoryDetailPage(
           task: widget.item,
           onNavigate: widget.onNavigate,
+          isFavorite: widget.isFavorite,
+          onToggleFavorite: widget.onToggleFavorite,
+          onInpaint: widget.onInpaint,
+          onUpscale: widget.onUpscale,
+          onEnhance: widget.onEnhance,
         ),
       ),
     );
@@ -454,12 +650,15 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
                     color: isDark ? const Color(0xFF1C1C21) : Colors.white,
                     borderRadius: BorderRadius.circular(28),
                     border: Border.all(
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.08)),
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.08,
+                      ),
+                    ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black
-                            .withValues(alpha: isDark ? 0.35 : 0.12),
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.35 : 0.12,
+                        ),
                         blurRadius: 28,
                         offset: const Offset(0, 14),
                       ),
@@ -486,16 +685,22 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
                             aspectRatio: 0.86,
                             child: item.imagePath != null &&
                                     File(item.imagePath!).existsSync()
-                                ? Image.file(File(item.imagePath!),
-                                    fit: BoxFit.cover)
+                                ? Image.file(
+                                    File(item.imagePath!),
+                                    fit: BoxFit.cover,
+                                  )
                                 : item.imageUrl != null
-                                    ? Image.network(item.imageUrl!,
-                                        fit: BoxFit.cover)
+                                    ? Image.network(
+                                        item.imageUrl!,
+                                        fit: BoxFit.cover,
+                                      )
                                     : Container(
                                         color: theme.colorScheme.surface,
-                                        child: Icon(CupertinoIcons.photo,
-                                            color: theme
-                                                .colorScheme.onSurfaceVariant),
+                                        child: Icon(
+                                          CupertinoIcons.photo,
+                                          color: theme
+                                              .colorScheme.onSurfaceVariant,
+                                        ),
                                       ),
                           ),
                         ),
@@ -514,7 +719,18 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
                           onTap: () {
                             Navigator.pop(ctx);
                             Clipboard.setData(
-                                ClipboardData(text: widget.item.prompt));
+                              ClipboardData(text: widget.item.prompt),
+                            );
+                          },
+                        ),
+                        _HistoryActionTile(
+                          icon: widget.isFavorite
+                              ? CupertinoIcons.star_fill
+                              : CupertinoIcons.star,
+                          title: widget.isFavorite ? '取消收藏' : '收藏作品',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            widget.onToggleFavorite?.call();
                           },
                         ),
                         _HistoryActionTile(
@@ -609,15 +825,17 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
               color: theme.cardTheme.color,
               borderRadius: BorderRadius.circular(_pressed ? 24 : 20),
               border: Border.all(
-                color: theme.colorScheme.primary
-                    .withValues(alpha: _pressed ? 0.34 : 0.1),
+                color: theme.colorScheme.primary.withValues(
+                  alpha: _pressed ? 0.34 : 0.1,
+                ),
               ),
               boxShadow: [
                 BoxShadow(
                   color: theme.brightness == Brightness.dark
                       ? Colors.black.withValues(alpha: _pressed ? 0.12 : 0.28)
-                      : theme.colorScheme.primary
-                          .withValues(alpha: _pressed ? 0.04 : 0.1),
+                      : theme.colorScheme.primary.withValues(
+                          alpha: _pressed ? 0.04 : 0.1,
+                        ),
                   blurRadius: _pressed ? 5 : 14,
                   offset: Offset(0, _pressed ? 2 : 7),
                 ),
@@ -671,8 +889,11 @@ class _HistoryActionTile extends StatelessWidget {
   final String title;
   final VoidCallback onTap;
 
-  const _HistoryActionTile(
-      {required this.icon, required this.title, required this.onTap});
+  const _HistoryActionTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -52,7 +52,7 @@ class _ApiConfigPageState extends State<ApiConfigPage>
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          title: const Text('API 配置'),
+          title: const Text('API 与账号'),
           bottom: TabBar(
             controller: _tabController,
             tabs: const [
@@ -272,8 +272,9 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text(
-                      '使用 NovelAI Persistent API Token。Token 不会保存至中转配置，也不会发送至第三方地址。',
-                      style: TextStyle(fontSize: 12)),
+                    '官方 Token 单独安全保存，仅发送到 NovelAI 官方 HTTPS 接口。',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   const SizedBox(height: 12),
                   Wrap(
                     spacing: 8,
@@ -362,6 +363,17 @@ class _EndpointCardState extends State<_EndpointCard> {
   bool _isTesting = false;
   String? _testStatus;
 
+  String _displayName(ApiEndpoint endpoint) {
+    if (widget.provider != ImageProviderType.novelAi) {
+      return endpoint.name.isEmpty ? '未命名' : endpoint.name;
+    }
+    return switch (endpoint.id) {
+      AppConstants.novelAiChatCompletionsEndpointId => '7877',
+      AppConstants.novelAiImageGenerationsEndpointId => 'ikun',
+      _ => endpoint.name.isEmpty ? '未命名' : endpoint.name,
+    };
+  }
+
   Future<void> _runTest() async {
     setState(() {
       _isTesting = true;
@@ -422,7 +434,7 @@ class _EndpointCardState extends State<_EndpointCard> {
                     : CupertinoIcons.circle,
                 color:
                     widget.isActive ? colors.primary : colors.onSurfaceVariant),
-            title: Text(endpoint.name.isEmpty ? '未命名' : endpoint.name),
+            title: Text(_displayName(endpoint)),
             subtitle: Text(
                 endpoint.baseUrl.isEmpty ? '未填写 Base URL' : endpoint.baseUrl,
                 maxLines: 1,

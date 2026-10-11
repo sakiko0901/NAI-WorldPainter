@@ -19,6 +19,13 @@ class InpaintExtractedPatch {
   const InpaintExtractedPatch(this.image, this.worldRect);
 }
 
+class InpaintRasterLayer {
+  final img.Image image;
+  final InpaintViewport worldRect;
+
+  const InpaintRasterLayer({required this.image, required this.worldRect});
+}
+
 /// 局部重绘的像素算法。所有坐标均使用源图像素坐标。
 class InpaintRasterizer {
   const InpaintRasterizer();
@@ -56,7 +63,9 @@ class InpaintRasterizer {
             sy < source.height &&
             sx < sourceRight &&
             sy < sourceBottom) {
-          image.setPixel(x, y, source.getPixel(sx, sy));
+          final pixel = source.getPixel(sx, sy);
+          image.setPixel(x, y, pixel);
+          if (pixel.a == 0) mask.setPixelRgba(x, y, 255, 255, 255, 255);
         } else {
           mask.setPixelRgba(x, y, 255, 255, 255, 255);
         }
@@ -93,6 +102,90 @@ class InpaintRasterizer {
       }
     }
     return base;
+  }
+
+  /// Builds an alpha-masked overlay while preserving the exact request frame.
+  img.Image maskGeneratedLayer({
+    required img.Image generated,
+    required img.Image mask,
+    required int outwardFeatherPixels,
+  }) {
+    if (generated.width != mask.width || generated.height != mask.height) {
+      throw ArgumentError('生成图与遮罩尺寸不一致');
+    }
+    final alpha = _featherAlpha(mask, outwardFeatherPixels);
+    final layer = img.Image(
+      width: generated.width,
+      height: generated.height,
+      numChannels: 4,
+    );
+    img.fill(layer, color: img.ColorRgba8(0, 0, 0, 0));
+    for (var y = 0; y < generated.height; y++) {
+      for (var x = 0; x < generated.width; x++) {
+        final opacity = alpha[y][x];
+        if (opacity == 0) continue;
+        final pixel = generated.getPixel(x, y);
+        layer.setPixelRgba(
+          x,
+          y,
+          pixel.r.toInt(),
+          pixel.g.toInt(),
+          pixel.b.toInt(),
+          (pixel.a.toInt() * opacity / 255).round(),
+        );
+      }
+    }
+    return layer;
+  }
+
+  /// Composites image brush marks and result layers without mutating the source.
+  img.Image composeLayers({
+    required img.Image source,
+    required List<InpaintStroke> strokes,
+    required List<InpaintRasterLayer> layers,
+  }) {
+    final base = composeBase(source: source, strokes: strokes);
+    if (layers.isEmpty) return base;
+
+    var left = 0;
+    var top = 0;
+    var right = base.width;
+    var bottom = base.height;
+    for (final layer in layers) {
+      left = math.min(left, layer.worldRect.x.floor());
+      top = math.min(top, layer.worldRect.y.floor());
+      right =
+          math.max(right, (layer.worldRect.x + layer.worldRect.width).ceil());
+      bottom =
+          math.max(bottom, (layer.worldRect.y + layer.worldRect.height).ceil());
+    }
+
+    final output = img.Image(
+      width: right - left,
+      height: bottom - top,
+      numChannels: 4,
+    );
+    img.fill(output, color: img.ColorRgba8(0, 0, 0, 0));
+    img.compositeImage(output, base, dstX: -left, dstY: -top);
+    for (final layer in layers) {
+      final width = math.max(1, layer.worldRect.width.round());
+      final height = math.max(1, layer.worldRect.height.round());
+      final sized = layer.image.width == width && layer.image.height == height
+          ? layer.image
+          : img.copyResize(
+              layer.image,
+              width: width,
+              height: height,
+              interpolation: img.Interpolation.linear,
+            );
+      img.compositeImage(
+        output,
+        sized,
+        dstX: layer.worldRect.x.round() - left,
+        dstY: layer.worldRect.y.round() - top,
+      );
+    }
+    return output;
   }
 
   InpaintExtractedPatch? extractPatch({
@@ -167,6 +260,10 @@ class InpaintRasterizer {
 
   void _drawImageStroke(img.Image target, InpaintStroke stroke,
       InpaintViewport rect, double sx, double sy) {
+    if (stroke.mode == InpaintStrokeMode.erase) {
+      _eraseStroke(target, stroke, rect, sx, sy);
+      return;
+    }
     final color = stroke.mode == InpaintStrokeMode.erase
         ? img.ColorRgba8(0, 0, 0, 0)
         : img.ColorRgba8(
@@ -181,6 +278,10 @@ class InpaintRasterizer {
   void _drawStroke(img.Image target, InpaintStroke stroke, InpaintViewport rect,
       double sx, double sy,
       {img.Color? colorOverride}) {
+    if (stroke.mode == InpaintStrokeMode.erase && colorOverride == null) {
+      _eraseStroke(target, stroke, rect, sx, sy);
+      return;
+    }
     final color = colorOverride ??
         (stroke.mode == InpaintStrokeMode.erase
             ? img.ColorRgba8(0, 0, 0, 0)
@@ -200,37 +301,23 @@ class InpaintRasterizer {
     final points = stroke.points;
     if (points.isEmpty) return;
     if (stroke.square) {
-      // 方形笔刷：沿路径逐点绘制方块。
-      final half = width ~/ 2;
-      for (var i = 0; i < points.length; i++) {
-        final x = ((points[i].x - rect.x) * sx).round();
-        final y = ((points[i].y - rect.y) * sy).round();
-        if (i == 0) {
-          img.fillRect(target,
-              x1: x - half,
-              y1: y - half,
-              x2: x + half,
-              y2: y + half,
-              color: color);
-        } else {
-          // 线段上按步长补方块，避免快速划过出现断点。
-          final prevX = ((points[i - 1].x - rect.x) * sx).round();
-          final prevY = ((points[i - 1].y - rect.y) * sy).round();
-          final dx = x - prevX;
-          final dy = y - prevY;
-          final steps = math.max(dx.abs(), dy.abs());
-          final stepCount = steps <= 1 ? 1 : steps;
-          for (var t = 0; t <= stepCount; t++) {
-            final ix = prevX + dx * t ~/ stepCount;
-            final iy = prevY + dy * t ~/ stepCount;
-            img.fillRect(target,
-                x1: ix - half,
-                y1: iy - half,
-                x2: ix + half,
-                y2: iy + half,
-                color: color);
-          }
-        }
+      for (final cell in inpaintSquareBrushCells(stroke)) {
+        final worldLeft = cell.$1 * inpaintBrushGridCellSize;
+        final worldTop = cell.$2 * inpaintBrushGridCellSize;
+        final x1 = ((worldLeft - rect.x) * sx).floor();
+        final y1 = ((worldTop - rect.y) * sy).floor();
+        final x2 =
+            (((worldLeft + inpaintBrushGridCellSize - rect.x) * sx).ceil()) - 1;
+        final y2 =
+            (((worldTop + inpaintBrushGridCellSize - rect.y) * sy).ceil()) - 1;
+        img.fillRect(
+          target,
+          x1: x1,
+          y1: y1,
+          x2: math.max(x1, x2),
+          y2: math.max(y1, y2),
+          color: color,
+        );
       }
       return;
     }
@@ -251,27 +338,37 @@ class InpaintRasterizer {
     }
   }
 
+  void _eraseStroke(img.Image target, InpaintStroke stroke,
+      InpaintViewport rect, double sx, double sy) {
+    final coverage = img.Image(
+      width: target.width,
+      height: target.height,
+      numChannels: 4,
+    );
+    img.fill(coverage, color: img.ColorRgba8(0, 0, 0, 0));
+    _drawStroke(
+      coverage,
+      stroke,
+      rect,
+      sx,
+      sy,
+      colorOverride: img.ColorRgba8(255, 255, 255, 255),
+    );
+    for (final pixel in coverage) {
+      if (pixel.a > 0) {
+        target.setPixelRgba(pixel.x, pixel.y, 0, 0, 0, 0);
+      }
+    }
+  }
+
   void _dilate(img.Image mask, int radius) {
-    final original = img.Image.from(mask);
+    final distances = _squaredMaskDistances(mask);
+    final limit = radius * radius;
     for (var y = 0; y < mask.height; y++) {
       for (var x = 0; x < mask.width; x++) {
-        var white = false;
-        for (var dy = -radius; dy <= radius && !white; dy++) {
-          for (var dx = -radius; dx <= radius; dx++) {
-            if (dx * dx + dy * dy > radius * radius) continue;
-            final px = x + dx;
-            final py = y + dy;
-            if (px >= 0 &&
-                py >= 0 &&
-                px < original.width &&
-                py < original.height &&
-                original.getPixel(px, py).r > 0) {
-              white = true;
-              break;
-            }
-          }
+        if (distances[y * mask.width + x] <= limit) {
+          mask.setPixelRgba(x, y, 255, 255, 255, 255);
         }
-        if (white) mask.setPixelRgba(x, y, 255, 255, 255, 255);
       }
     }
   }
@@ -279,38 +376,96 @@ class InpaintRasterizer {
   List<List<int>> _featherAlpha(img.Image mask, int radius) {
     final result =
         List.generate(mask.height, (_) => List.filled(mask.width, 0));
-    if (radius <= 0) {
-      for (var y = 0; y < mask.height; y++) {
-        for (var x = 0; x < mask.width; x++) {
-          result[y][x] = mask.getPixel(x, y).r > 0 ? 255 : 0;
-        }
-      }
-      return result;
-    }
+    final distances = radius > 0 ? _squaredMaskDistances(mask) : null;
     for (var y = 0; y < mask.height; y++) {
       for (var x = 0; x < mask.width; x++) {
         if (mask.getPixel(x, y).r > 0) {
           result[y][x] = 255;
-          continue;
-        }
-        var distance = radius + 1;
-        for (var dy = -radius; dy <= radius; dy++) {
-          for (var dx = -radius; dx <= radius; dx++) {
-            final px = x + dx;
-            final py = y + dy;
-            if (px < 0 || py < 0 || px >= mask.width || py >= mask.height)
-              continue;
-            if (mask.getPixel(px, py).r > 0) {
-              distance =
-                  math.min(distance, math.sqrt(dx * dx + dy * dy).round());
-            }
+        } else if (distances != null) {
+          final squared = distances[y * mask.width + x];
+          if (!squared.isFinite) continue;
+          final distance = math.sqrt(squared).round();
+          if (distance <= radius) {
+            result[y][x] = ((1 - distance / radius) * 255).round();
           }
         }
-        if (distance <= radius)
-          result[y][x] = ((1 - distance / radius) * 255).round();
       }
     }
     return result;
+  }
+
+  /// Exact Euclidean distances in O(width * height). Horizontal nearest-point
+  /// scans are followed by the lower envelope of vertical squared distances.
+  /// This avoids a radius-sized neighborhood search for every output pixel.
+  Float64List _squaredMaskDistances(img.Image mask) {
+    final width = mask.width;
+    final height = mask.height;
+    final distances = Float64List(width * height);
+    final unreachable = (width * width + height * height + 1).toDouble();
+    var hasSelectedPixel = false;
+    for (var y = 0; y < height; y++) {
+      var nearest = -width;
+      final row = y * width;
+      for (var x = 0; x < width; x++) {
+        if (mask.getPixel(x, y).r > 0) {
+          nearest = x;
+          hasSelectedPixel = true;
+        }
+        distances[row + x] = nearest < 0
+            ? unreachable
+            : ((x - nearest) * (x - nearest)).toDouble();
+      }
+      nearest = width * 2;
+      for (var x = width - 1; x >= 0; x--) {
+        if (mask.getPixel(x, y).r > 0) nearest = x;
+        if (nearest < width) {
+          distances[row + x] = math.min(
+            distances[row + x],
+            ((nearest - x) * (nearest - x)).toDouble(),
+          );
+        }
+      }
+    }
+    if (!hasSelectedPixel) {
+      distances.fillRange(0, distances.length, double.infinity);
+      return distances;
+    }
+
+    final values = Float64List(height);
+    final sites = Int32List(height);
+    final boundaries = Float64List(height + 1);
+    for (var x = 0; x < width; x++) {
+      for (var y = 0; y < height; y++) {
+        values[y] = distances[y * width + x];
+      }
+      var last = 0;
+      sites[0] = 0;
+      boundaries[0] = double.negativeInfinity;
+      boundaries[1] = double.infinity;
+      for (var y = 1; y < height; y++) {
+        double crossing;
+        while (true) {
+          final previous = sites[last];
+          crossing =
+              ((values[y] + y * y) - (values[previous] + previous * previous)) /
+                  (2 * (y - previous));
+          if (crossing > boundaries[last]) break;
+          last--;
+        }
+        sites[++last] = y;
+        boundaries[last] = crossing;
+        boundaries[last + 1] = double.infinity;
+      }
+      var active = 0;
+      for (var y = 0; y < height; y++) {
+        while (boundaries[active + 1] < y) {
+          active++;
+        }
+        final delta = y - sites[active];
+        distances[y * width + x] = delta * delta + values[sites[active]];
+      }
+    }
+    return distances;
   }
 
   (int, int, int, int)? _alphaBounds(img.Image image) {

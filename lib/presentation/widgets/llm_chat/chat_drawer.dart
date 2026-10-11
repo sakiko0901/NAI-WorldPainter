@@ -19,6 +19,8 @@ class ChatDrawer extends StatefulWidget {
   final Future<void> Function(LlmChatViewModel vm)? onInitializeScope;
   final Future<void> Function(LlmChatViewModel vm)? onCloseScope;
   final String? title;
+  final bool embedded;
+  final bool? active;
 
   const ChatDrawer({
     super.key,
@@ -26,6 +28,8 @@ class ChatDrawer extends StatefulWidget {
     this.onInitializeScope,
     this.onCloseScope,
     this.title,
+    this.embedded = false,
+    this.active,
   });
 
   @override
@@ -33,7 +37,15 @@ class ChatDrawer extends StatefulWidget {
 }
 
 class _ChatDrawerState extends State<ChatDrawer> {
+  static Future<bool> _rejectConfirmation(AgentToolConfirmRequest _) async =>
+      false;
+
+  static final Future<bool> Function(AgentToolConfirmRequest request)
+  _failClosedConfirmation = _rejectConfirmation;
+
   late final LlmChatViewModel _vm;
+  late final Future<bool> Function(AgentToolConfirmRequest request)
+  _confirmationHandler = _showConfirmationDialog;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   bool _ready = false;
@@ -45,10 +57,45 @@ class _ChatDrawerState extends State<ChatDrawer> {
     super.initState();
     _vm = sl<LlmChatViewModel>();
     _vm.addListener(_onVmChanged);
-    // 注入副作用工具确认回调：本 State 实现弹窗
-    _vm.onRequireConfirmation = _showConfirmationDialog;
     _scrollController.addListener(_onScroll);
     _init();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncConfirmationHandler();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatDrawer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active) {
+      _syncConfirmationHandler();
+    }
+  }
+
+  bool get _shouldOwnConfirmationHandler {
+    final tabIsActive = widget.active ?? TickerMode.of(context);
+    final routeIsActive = ModalRoute.of(context)?.isCurrent ?? true;
+    return tabIsActive && routeIsActive;
+  }
+
+  bool get _ownsConfirmationHandler =>
+      _shouldOwnConfirmationHandler &&
+      identical(_vm.onRequireConfirmation, _confirmationHandler);
+
+  void _syncConfirmationHandler() {
+    final shouldOwn = _shouldOwnConfirmationHandler;
+    if (shouldOwn) {
+      _vm.onRequireConfirmation = _confirmationHandler;
+    } else if (identical(_vm.onRequireConfirmation, _confirmationHandler)) {
+      // A null handler auto-approves agent tools in the current ViewModel.
+      // Keep the no-visible-owner state explicitly fail-closed.
+      _vm.onRequireConfirmation = _failClosedConfirmation;
+    } else if (_vm.onRequireConfirmation == null) {
+      _vm.onRequireConfirmation = _failClosedConfirmation;
+    }
   }
 
   Future<void> _init() async {
@@ -62,7 +109,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
   }
 
   Future<bool> _showConfirmationDialog(AgentToolConfirmRequest request) async {
-    if (!mounted) return false;
+    if (!mounted || !_ownsConfirmationHandler) return false;
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -73,16 +120,26 @@ class _ChatDrawerState extends State<ChatDrawer> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('工具：${request.toolName}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 14)),
+              Text(
+                '工具：${request.toolName}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
               const SizedBox(height: 8),
-              Text('说明：${request.description}',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(
+                '说明：${request.description}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
               const SizedBox(height: 12),
-              Text('参数：',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
+              Text(
+                '参数：',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(height: 4),
               Container(
                 padding: const EdgeInsets.all(8),
@@ -94,8 +151,10 @@ class _ChatDrawerState extends State<ChatDrawer> {
                 child: SingleChildScrollView(
                   child: Text(
                     const JsonEncoder().convert(request.arguments),
-                    style:
-                        const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
               ),
@@ -161,7 +220,11 @@ class _ChatDrawerState extends State<ChatDrawer> {
   @override
   void dispose() {
     _vm.removeListener(_onVmChanged);
-    _vm.onRequireConfirmation = null;
+    if (identical(_vm.onRequireConfirmation, _confirmationHandler)) {
+      // Do not detach a newer drawer, and never leave the ViewModel in its
+      // null-means-approve state after this confirmation UI is gone.
+      _vm.onRequireConfirmation = _failClosedConfirmation;
+    }
     if (widget.onCloseScope != null) {
       widget.onCloseScope!(_vm);
     }
@@ -184,8 +247,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
   void _insertIntoInput(String text) {
     final current = _inputController.text.trim();
     _inputController.text = current.isEmpty ? text : '$current, $text';
-    _inputController.selection =
-        TextSelection.collapsed(offset: _inputController.text.length);
+    _inputController.selection = TextSelection.collapsed(
+      offset: _inputController.text.length,
+    );
   }
 
   Future<void> _openStylePresets() async {
@@ -206,9 +270,16 @@ class _ChatDrawerState extends State<ChatDrawer> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width * 0.85;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    if (widget.embedded) {
+      return ColoredBox(
+        color: theme.scaffoldBackgroundColor,
+        child: SafeArea(child: _buildChatColumn()),
+      );
+    }
+
+    final width = MediaQuery.sizeOf(context).width * 0.85;
     return Stack(
       children: [
         Positioned.fill(
@@ -216,7 +287,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onClose,
             child: Container(
-                color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.38)),
+              color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.38),
+            ),
           ),
         ),
         Positioned(
@@ -241,82 +313,83 @@ class _ChatDrawerState extends State<ChatDrawer> {
                         ? const Color(0xFF14141A).withValues(alpha: 0.92)
                         : Colors.white.withValues(alpha: 0.94),
                     border: Border.all(
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.08)),
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.08,
+                      ),
+                    ),
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(28),
                       bottomLeft: Radius.circular(28),
                     ),
                   ),
-                  child: SafeArea(
-                    left: false,
-                    child: Column(
-                      children: [
-                        _buildTopBar(),
-                        Expanded(
-                          child: !_ready || _vm.isLoading
-                              ? Center(child: CircularProgressIndicator())
-                              : _buildMessageList(),
-                        ),
-                        if (_vm.errorMessage != null)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: Colors.red.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                    color: Colors.red.withValues(alpha: 0.24)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(CupertinoIcons.exclamationmark_triangle,
-                                      size: 16, color: Colors.redAccent),
-                                  SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _vm.errorMessage!,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface),
-                                    ),
-                                  ),
-                                  GestureDetector(
-                                    onTap: _vm.clearError,
-                                    child: Icon(CupertinoIcons.xmark,
-                                        size: 14,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ChatInputBar(
-                          controller: _inputController,
-                          isSending: _vm.isSending,
-                          onSend: (text,
-                                  {String? imageBase64,
-                                  String? textAttachment}) =>
-                              _vm.sendUserMessage(
-                            text,
-                            imageBase64: imageBase64,
-                            textAttachment: textAttachment,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: SafeArea(left: false, child: _buildChatColumn()),
                 ),
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChatColumn() {
+    return Column(
+      children: [
+        _buildTopBar(),
+        Expanded(
+          child: !_ready || _vm.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _buildMessageList(),
+        ),
+        if (_vm.errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.24)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    CupertinoIcons.exclamationmark_triangle,
+                    size: 16,
+                    color: Colors.redAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _vm.errorMessage!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _vm.clearError,
+                    child: Icon(
+                      CupertinoIcons.xmark,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ChatInputBar(
+          controller: _inputController,
+          isSending: _vm.isSending,
+          onSend: (text, {String? imageBase64, String? textAttachment}) =>
+              _vm.sendUserMessage(
+                text,
+                imageBase64: imageBase64,
+                textAttachment: textAttachment,
+              ),
         ),
       ],
     );
@@ -334,46 +407,60 @@ class _ChatDrawerState extends State<ChatDrawer> {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           IconButton(
             onPressed: _openSessions,
             tooltip: '会话列表',
-            icon: Icon(CupertinoIcons.list_bullet,
-                color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(
+              CupertinoIcons.list_bullet,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           IconButton(
             onPressed: _openStylePresets,
             tooltip: '画风收藏',
-            icon: Icon(CupertinoIcons.square_grid_2x2,
-                color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(
+              CupertinoIcons.square_grid_2x2,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           IconButton(
             onPressed: _openMemories,
             tooltip: '学习记忆',
-            icon: Icon(CupertinoIcons.book,
-                color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(
+              CupertinoIcons.book,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           if (title == null) const Spacer(),
           IconButton(
             onPressed: _createNewSession,
             tooltip: '新建会话',
-            icon: Icon(CupertinoIcons.square_pencil,
-                color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(
+              CupertinoIcons.square_pencil,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           IconButton(
             onPressed: () => showChatSettingsSheet(context, _vm),
             tooltip: '配置',
-            icon: Icon(CupertinoIcons.gear_alt,
-                color: Theme.of(context).colorScheme.onSurface),
+            icon: Icon(
+              CupertinoIcons.gear_alt,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           IconButton(
             onPressed: widget.onClose,
-            tooltip: '关闭',
-            icon: Icon(CupertinoIcons.xmark_circle_fill,
-                color: Theme.of(context).colorScheme.onSurface),
+            tooltip: widget.embedded ? '返回创作' : '关闭',
+            icon: Icon(
+              CupertinoIcons.xmark_circle_fill,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
         ],
       ),
@@ -388,20 +475,21 @@ class _ChatDrawerState extends State<ChatDrawer> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(CupertinoIcons.wand_stars,
-                  size: 34,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant
-                      .withValues(alpha: 0.5)),
+              Icon(
+                CupertinoIcons.wand_stars,
+                size: 34,
+                color: Theme.of(context).colorScheme.onSurfaceVariant
+                    .withValues(alpha: 0.5),
+              ),
               SizedBox(height: 12),
               Text(
                 '描述你想生成的画面，我来帮你整理成提示词。\n信息不足时会给出可点击选项确认。',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 14,
-                    height: 1.6,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  fontSize: 14,
+                  height: 1.6,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -429,10 +517,10 @@ class _ChatDrawerState extends State<ChatDrawer> {
                   : null,
               onAnswerInteraction: (optionId, customAnswer) =>
                   _vm.answerInteraction(
-                message: message,
-                optionId: optionId,
-                customAnswer: customAnswer,
-              ),
+                    message: message,
+                    optionId: optionId,
+                    customAnswer: customAnswer,
+                  ),
             );
           },
         ),
@@ -442,16 +530,20 @@ class _ChatDrawerState extends State<ChatDrawer> {
             bottom: 12,
             child: FloatingActionButton(
               mini: true,
-              backgroundColor:
-                  theme.colorScheme.surface.withValues(alpha: 0.92),
+              backgroundColor: theme.colorScheme.surface.withValues(
+                alpha: 0.92,
+              ),
               elevation: 2,
               onPressed: _scrollToBottomAndClear,
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(CupertinoIcons.arrow_down,
-                      size: 18, color: theme.colorScheme.onSurface),
+                  Icon(
+                    CupertinoIcons.arrow_down,
+                    size: 18,
+                    color: theme.colorScheme.onSurface,
+                  ),
                   if (_unreadCount > 0)
                     Positioned(
                       right: -2,
@@ -462,15 +554,18 @@ class _ChatDrawerState extends State<ChatDrawer> {
                           color: Colors.redAccent,
                           shape: BoxShape.circle,
                         ),
-                        constraints:
-                            const BoxConstraints(minWidth: 14, minHeight: 14),
+                        constraints: const BoxConstraints(
+                          minWidth: 14,
+                          minHeight: 14,
+                        ),
                         child: Text(
                           _unreadCount > 9 ? '9+' : '$_unreadCount',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600),
+                            fontSize: 9,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:equatable/equatable.dart';
@@ -10,6 +11,56 @@ enum InpaintStrokeMode { paint, erase }
 enum InpaintStrokeType { path, rectangle }
 
 enum InpaintCandidateStatus { pending, kept, primary }
+
+/// Square brush grid size in source-image pixels.
+const double inpaintBrushGridCellSize = 8;
+
+/// Returns the grid cells covered by a square brush stroke, joined with a
+/// Bresenham line so quick pointer movements do not leave gaps.
+Set<(int, int)> inpaintSquareBrushCells(InpaintStroke stroke) {
+  if (!stroke.square || stroke.points.isEmpty) return {};
+  final diameter =
+      math.max(1, (stroke.size / inpaintBrushGridCellSize).round());
+  final half = diameter ~/ 2;
+  final shift = diameter.isEven ? 0.5 : 0.0;
+  final points = stroke.points
+      .map((point) => (
+            (point.x / inpaintBrushGridCellSize + shift).floor(),
+            (point.y / inpaintBrushGridCellSize + shift).floor(),
+          ))
+      .toList(growable: false);
+  final cells = <(int, int)>{};
+
+  for (var index = 0; index < points.length; index++) {
+    final from = index == 0 ? points[index] : points[index - 1];
+    final to = points[index];
+    var x = from.$1;
+    var y = from.$2;
+    final dx = (to.$1 - x).abs();
+    final dy = (to.$2 - y).abs();
+    final sx = x < to.$1 ? 1 : -1;
+    final sy = y < to.$2 ? 1 : -1;
+    var error = dx - dy;
+    while (true) {
+      for (var oy = -half; oy < diameter - half; oy++) {
+        for (var ox = -half; ox < diameter - half; ox++) {
+          cells.add((x + ox, y + oy));
+        }
+      }
+      if (x == to.$1 && y == to.$2) break;
+      final twice = error * 2;
+      if (twice > -dy) {
+        error -= dy;
+        x += sx;
+      }
+      if (twice < dx) {
+        error += dx;
+        y += sy;
+      }
+    }
+  }
+  return cells;
+}
 
 class InpaintPoint extends Equatable {
   final double x;
@@ -224,6 +275,48 @@ class InpaintCandidate extends Equatable {
         worldRect,
         status,
         seed,
+      ];
+}
+
+/// A generated inpaint patch displayed above the immutable source image.
+class InpaintResultLayer extends Equatable {
+  final String id;
+  final String name;
+  final String imagePath;
+  final int width;
+  final int height;
+  final InpaintViewport worldRect;
+  final bool visible;
+
+  const InpaintResultLayer({
+    required this.id,
+    required this.name,
+    required this.imagePath,
+    required this.width,
+    required this.height,
+    required this.worldRect,
+    this.visible = true,
+  });
+
+  InpaintResultLayer copyWith({bool? visible}) => InpaintResultLayer(
+        id: id,
+        name: name,
+        imagePath: imagePath,
+        width: width,
+        height: height,
+        worldRect: worldRect,
+        visible: visible ?? this.visible,
+      );
+
+  @override
+  List<Object?> get props => [
+        id,
+        name,
+        imagePath,
+        width,
+        height,
+        worldRect,
+        visible,
       ];
 }
 

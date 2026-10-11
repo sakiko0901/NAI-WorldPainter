@@ -20,16 +20,16 @@ void main() {
     final theme = buildNaiHuishiTheme(Brightness.dark, useGoogleFonts: false);
 
     expect(theme.brightness, Brightness.dark);
-    expect(theme.scaffoldBackgroundColor, const Color(0xFF0A0A0C));
-    expect(theme.colorScheme.primary, const Color(0xFFF5D57A));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFF101216));
+    expect(theme.colorScheme.primary, const Color(0xFFE3CE98));
   });
 
   test('light theme uses soft white and blue palette with extra colors', () {
     final theme = buildNaiHuishiTheme(Brightness.light, useGoogleFonts: false);
 
     expect(theme.brightness, Brightness.light);
-    expect(theme.scaffoldBackgroundColor, const Color(0xFFF2F4F8));
-    expect(theme.colorScheme.primary, const Color(0xFF3B82F6));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFFF5F6F8));
+    expect(theme.colorScheme.primary, const Color(0xFF507AB2));
     expect(theme.colorScheme.secondary, const Color(0xFF8B5CF6));
     expect(theme.colorScheme.tertiary, const Color(0xFF14B8A6));
     expect(theme.colorScheme.error, const Color(0xFFFF6B6B));

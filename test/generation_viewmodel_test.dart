@@ -2,9 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
+import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
+import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
@@ -41,7 +45,7 @@ void main() {
       saveStarted: saveStarted,
       allowSave: allowSave,
     );
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: saveImage,
@@ -76,7 +80,7 @@ void main() {
     final history = _FailingUpdateHistoryRepository();
     final queue = GenerationQueue(_BadGatewayGenerationRepository(), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: SaveImageUseCase(history),
@@ -98,7 +102,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -135,7 +139,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -179,7 +183,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -223,7 +227,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -248,7 +252,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -282,7 +286,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -316,7 +320,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -365,7 +369,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -421,7 +425,7 @@ void main() {
       final history = _MemoryHistoryRepository();
       final queue = GenerationQueue(repository, history);
       addTearDown(queue.dispose);
-      final viewModel = GenerationViewModel(
+      final viewModel = _createGenerationViewModel(
         generateImage: GenerateImageUseCase(history),
         manageSettings: ManageSettingsUseCase(_SettingsRepository()),
         saveImage: SaveImageUseCase(history),
@@ -464,7 +468,7 @@ void main() {
     final repository = _CapturingGenerationRepository(image.path);
     final queue = GenerationQueue(repository, history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: SaveImageUseCase(history),
@@ -517,7 +521,7 @@ void main() {
       final repository = _CapturingGenerationRepository('unused');
       final queue = GenerationQueue(repository, history);
       addTearDown(queue.dispose);
-      final viewModel = GenerationViewModel(
+      final viewModel = _createGenerationViewModel(
         generateImage: GenerateImageUseCase(history),
         manageSettings: ManageSettingsUseCase(_SettingsRepository()),
         saveImage: SaveImageUseCase(history),
@@ -554,7 +558,7 @@ void main() {
     final repository = _CapturingGenerationRepository('unused');
     final queue = GenerationQueue(repository, history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -605,7 +609,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: SaveImageUseCase(history),
@@ -642,7 +646,7 @@ void main() {
     final repository = _CapturingGenerationRepository('unused');
     final queue = GenerationQueue(repository, history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: SaveImageUseCase(history),
@@ -688,7 +692,7 @@ void main() {
       final history = _MemoryHistoryRepository();
       final queue = GenerationQueue(repository, history);
       addTearDown(queue.dispose);
-      final viewModel = GenerationViewModel(
+      final viewModel = _createGenerationViewModel(
         generateImage: GenerateImageUseCase(history),
         manageSettings: ManageSettingsUseCase(_SettingsRepository()),
         saveImage: SaveImageUseCase(history),
@@ -724,7 +728,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(_SettingsRepository()),
       saveImage: SaveImageUseCase(history),
@@ -761,7 +765,7 @@ void main() {
       final repository = _CapturingGenerationRepository(output.path);
       final queue = GenerationQueue(repository, history);
       addTearDown(queue.dispose);
-      final viewModel = GenerationViewModel(
+      final viewModel = _createGenerationViewModel(
         generateImage: GenerateImageUseCase(history),
         manageSettings: ManageSettingsUseCase(_SettingsRepository()),
         saveImage: SaveImageUseCase(history),
@@ -797,7 +801,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -850,7 +854,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -906,7 +910,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -960,7 +964,7 @@ void main() {
       history,
     );
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -1015,7 +1019,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -1055,7 +1059,7 @@ void main() {
     final queue =
         GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
     addTearDown(queue.dispose);
-    final viewModel = GenerationViewModel(
+    final viewModel = _createGenerationViewModel(
       generateImage: GenerateImageUseCase(history),
       manageSettings: ManageSettingsUseCase(settings),
       saveImage: SaveImageUseCase(history),
@@ -1107,6 +1111,337 @@ void main() {
     expect(viewModel.supportsPreciseReferences, isTrue);
     expect(viewModel.preciseReferences, task.preciseReferences);
   });
+
+  test('official upscale records dimensions from the returned PNG', () async {
+    final directory = await Directory.systemTemp.createTemp('vm_upscale_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = await _writeTestPng(directory, 'source.png', 3, 4);
+    final output = await _writeTestPng(directory, 'upscaled.png', 12, 16);
+    final api = _TestOfficialNovelAiApiService(
+      upscaleOutputPath: output.path,
+    );
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _SuccessfulGenerationRepository(source.path),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+      officialApi: api,
+      officialTokenStore: _TestOfficialNovelAiTokenStore('test-token'),
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    final sourceTask = _successfulImageTask(
+      taskId: 'source-upscale',
+      imagePath: source.path,
+      width: 3,
+      height: 4,
+    );
+    viewModel.sessionResults = [sourceTask];
+    viewModel.selectedResultTaskId = sourceTask.taskId;
+
+    expect(await viewModel.upscaleWithOfficial(4), isTrue);
+
+    final result = viewModel.selectedResult!;
+    expect(api.upscaleRequests.single, (
+      imagePath: source.path,
+      token: 'test-token',
+      scale: 4,
+    ));
+    expect(result.imagePath, output.path);
+    expect(result.width, 12);
+    expect(result.height, 16);
+    expect(result.size, '12x16');
+  });
+
+  test('official enhance uses source settings and preserves the current draft',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('vm_enhance_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = await _writeTestPng(directory, 'source.png', 5, 7);
+    final output = await _writeTestPng(directory, 'enhanced.png', 17, 9);
+    final api = _TestOfficialNovelAiApiService(
+      enhanceOutputPath: output.path,
+    );
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _SuccessfulGenerationRepository(source.path),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+      officialApi: api,
+      officialTokenStore: _TestOfficialNovelAiTokenStore('test-token'),
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    final sourceTask = _successfulImageTask(
+      taskId: 'official-source',
+      imagePath: source.path,
+      width: 5,
+      height: 7,
+      model: 'nai-diffusion-5-curated',
+      steps: 21,
+      scale: 7.25,
+      prompt: 'source prompt',
+      negativePrompt: 'source negative',
+    );
+    viewModel.sessionResults = [sourceTask];
+    viewModel.selectedResultTaskId = sourceTask.taskId;
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'gpt:gpt-image-1',
+        displayName: 'GPT Image',
+        actualModel: 'gpt-image-1',
+        provider: ImageProviderType.gpt,
+      ),
+    ];
+    viewModel.selectedModel = 'gpt:gpt-image-1';
+    viewModel.selectedResolution = '1024x1024';
+    viewModel.steps = 8;
+    viewModel.scale = 4.5;
+    viewModel.prompt = 'draft prompt';
+    viewModel.negativePrompt = 'draft negative';
+
+    expect(
+      await viewModel.enhanceWithOfficial(scale: 1.5, strength: 0.42),
+      isTrue,
+    );
+
+    final request = api.enhanceRequests.single;
+    expect(request.imagePath, source.path);
+    expect(request.token, 'test-token');
+    expect(request.model, 'nai-diffusion-5-curated');
+    expect(request.steps, 21);
+    expect(request.prompt, 'source prompt');
+    expect(request.scale, 1.5);
+    expect(request.scaleValue, 7.25);
+    expect(viewModel.selectedModel, 'gpt:gpt-image-1');
+    expect(viewModel.selectedResolution, '1024x1024');
+    expect(viewModel.steps, 8);
+    expect(viewModel.scale, 4.5);
+    expect(viewModel.prompt, 'draft prompt');
+    expect(viewModel.negativePrompt, 'draft negative');
+
+    final result = viewModel.selectedResult!;
+    expect(result.imagePath, output.path);
+    expect(result.width, 17);
+    expect(result.height, 9);
+    expect(result.size, '17x9');
+  });
+
+  test('inpaint handler completion resets cancellation for the next run',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _SuccessfulGenerationRepository('unused'),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    final handlerStarted = Completer<void>();
+    final finishFirstHandler = Completer<void>();
+    var firstHandlerEntered = false;
+    var generatedRuns = 0;
+    viewModel.generationMode = GenerationMode.inpainting;
+    viewModel.inpaintWorkspaceHandler = () async {
+      if (!firstHandlerEntered) {
+        firstHandlerEntered = true;
+        handlerStarted.complete();
+        await finishFirstHandler.future;
+        generatedRuns++;
+        return true;
+      }
+      if (viewModel.isBatchCancelling) return false;
+      generatedRuns++;
+      return true;
+    };
+
+    final firstRun = viewModel.generate();
+    await handlerStarted.future;
+    viewModel.cancelBatch();
+    expect(viewModel.isBatchCancelling, isTrue);
+    finishFirstHandler.complete();
+    await firstRun;
+
+    expect(viewModel.isGenerating, isFalse);
+    expect(viewModel.isBatchCancelling, isFalse);
+    expect(generatedRuns, 1);
+    await viewModel.generate();
+    expect(generatedRuns, 2);
+  });
+}
+
+GenerationViewModel _createGenerationViewModel({
+  required GenerateImageUseCase generateImage,
+  required ManageSettingsUseCase manageSettings,
+  required SaveImageUseCase saveImage,
+  required GenerationQueue queue,
+  OfficialNovelAiApiService? officialApi,
+  OfficialNovelAiTokenStore? officialTokenStore,
+}) =>
+    GenerationViewModel(
+      generateImage: generateImage,
+      manageSettings: manageSettings,
+      saveImage: saveImage,
+      queue: queue,
+      officialApi: officialApi ?? _TestOfficialNovelAiApiService(),
+      officialTokenStore:
+          officialTokenStore ?? _TestOfficialNovelAiTokenStore(),
+      dailyStats: _TestDailyStatsLocalDatasource(),
+    );
+
+class _TestOfficialNovelAiApiService extends OfficialNovelAiApiService {
+  _TestOfficialNovelAiApiService({
+    this.upscaleOutputPath,
+    this.enhanceOutputPath,
+  });
+
+  final String? upscaleOutputPath;
+  final String? enhanceOutputPath;
+  final upscaleRequests = <({String imagePath, String token, int scale})>[];
+  final enhanceRequests = <({
+    String imagePath,
+    String token,
+    String model,
+    String prompt,
+    int steps,
+    double scale,
+    double scaleValue,
+  })>[];
+
+  @override
+  Future<OfficialNovelAiAccount> verifyToken(String token) async =>
+      const OfficialNovelAiAccount();
+
+  @override
+  Future<OfficialNovelAiV5Usage?> fetchV5Usage(String token) async => null;
+
+  @override
+  Future<String> upscaleImage({
+    required String imagePath,
+    required String token,
+    int scale = 2,
+    void Function(String status)? onStatus,
+  }) async {
+    upscaleRequests.add((imagePath: imagePath, token: token, scale: scale));
+    final outputPath = upscaleOutputPath;
+    if (outputPath == null) {
+      throw StateError('No upscale output was configured for this test');
+    }
+    return outputPath;
+  }
+
+  @override
+  Future<String> enhanceImage({
+    required String imagePath,
+    required String token,
+    required String model,
+    required String prompt,
+    String? negativePrompt,
+    int? seed,
+    int steps = 23,
+    double scaleValue = 5.0,
+    required double strength,
+    double noise = 0.0,
+    double scale = 1.5,
+    bool upscaledEnhance = false,
+    void Function(String status)? onStatus,
+  }) async {
+    enhanceRequests.add((
+      imagePath: imagePath,
+      token: token,
+      model: model,
+      prompt: prompt,
+      steps: steps,
+      scale: scale,
+      scaleValue: scaleValue,
+    ));
+    final outputPath = enhanceOutputPath;
+    if (outputPath == null) {
+      throw StateError('No enhance output was configured for this test');
+    }
+    return outputPath;
+  }
+}
+
+class _TestOfficialNovelAiTokenStore extends OfficialNovelAiTokenStore {
+  _TestOfficialNovelAiTokenStore([this.token]);
+
+  final String? token;
+
+  @override
+  Future<String?> read() async => token;
+}
+
+class _TestDailyStatsLocalDatasource implements DailyStatsLocalDatasource {
+  @override
+  Future<void> recordSuccess(DateTime time) async {}
+
+  @override
+  Future<int> getSuccessCount(DateTime time) async => 0;
+
+  @override
+  Future<Map<String, int>> getRecentCounts({int days = 7}) async => const {};
+}
+
+GenerationTask _successfulImageTask({
+  required String taskId,
+  required String imagePath,
+  required int width,
+  required int height,
+  String model = 'nai-diffusion-4-5-full',
+  int steps = 23,
+  double scale = 5,
+  String prompt = 'source prompt',
+  String? negativePrompt,
+}) =>
+    GenerationTask(
+      taskId: taskId,
+      model: model,
+      endpointId: AppConstants.novelAiOfficialEndpointId,
+      protocol: AppConstants.novelAiOfficialProtocol,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      width: width,
+      height: height,
+      size: '${width}x$height',
+      scale: scale,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'native',
+      steps: steps,
+      status: 'success',
+      imagePath: imagePath,
+      createdAt: DateTime(2026),
+    );
+
+Future<File> _writeTestPng(
+  Directory directory,
+  String name,
+  int width,
+  int height,
+) async {
+  final file = File('${directory.path}${Platform.pathSeparator}$name');
+  final image = img.Image(width: width, height: height);
+  await file.writeAsBytes(img.encodePng(image));
+  return file;
 }
 
 class _DelayedSaveImageUseCase extends SaveImageUseCase {
@@ -1354,6 +1689,12 @@ class _SettingsRepository implements SettingsRepository {
   @override
   Future<List<PreciseReferenceImage>> getPreciseReferencesDraft() async =>
       const [];
+
+  @override
+  Future<List<String>> getCustomResolutions() async => const [];
+
+  @override
+  Future<void> setCustomResolutions(List<String> value) async {}
 
   @override
   Future<int> getBatchCount() async => savedBatchCount;

@@ -19,8 +19,11 @@ import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
 /// 工作区顶部的选择模式。
 enum InpaintUiMode {
-  box, // 方框：图片固定，操作选择框
-  image, // 图片：方框固定，操作图片
+  view, // 整体移动：图片与输出框同步
+  image, // 移动源图：输出框固定
+  frame, // 移动输出框：源图固定
+  brush, // 绘制当前图层
+  erase, // 擦除当前图层
 }
 
 // ============================================================================
@@ -73,9 +76,8 @@ class _RasterizeInput {
 
 class _RasterizeResult {
   final Uint8List basePng;
-  final Uint8List workspacePng;
   final Uint8List maskPng;
-  const _RasterizeResult(this.basePng, this.workspacePng, this.maskPng);
+  const _RasterizeResult(this.basePng, this.maskPng);
 }
 
 _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
@@ -96,54 +98,67 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
   );
   return _RasterizeResult(
     Uint8List.fromList(img.encodePng(result.image)),
-    Uint8List.fromList(img.encodePng(composed)),
     rasterizer.encodeMask(result.mask),
   );
 }
 
-/// 候选应用：提取补丁 → 羽化合并 → 输出 PNG。
-class _ApplyPatchInput {
-  final Uint8List basePng;
+/// 候选转为带蒙版透明度的独立结果图层。
+class _MaskLayerInput {
   final Uint8List maskPng;
   final Uint8List generatedPng;
-  final InpaintViewport worldRect;
   final int featherPixels;
-  const _ApplyPatchInput({
-    required this.basePng,
+  const _MaskLayerInput({
     required this.maskPng,
     required this.generatedPng,
-    required this.worldRect,
     required this.featherPixels,
   });
 }
 
-Uint8List _applyPatchIsolate(_ApplyPatchInput input) {
-  final base = img.decodePng(input.basePng);
+Uint8List _maskLayerIsolate(_MaskLayerInput input) {
   final mask = img.decodePng(input.maskPng);
   final generated = img.decodePng(input.generatedPng);
-  if (base == null || mask == null || generated == null) {
+  if (mask == null || generated == null) {
     throw const FormatException('候选图片解码失败');
   }
   const rasterizer = InpaintRasterizer();
-  final extracted = rasterizer.extractPatch(
+  final layer = rasterizer.maskGeneratedLayer(
     generated: generated,
     mask: mask,
-    worldRect: input.worldRect,
     outwardFeatherPixels: input.featherPixels,
   );
-  if (extracted == null) throw const FormatException('候选没有可提取的内容');
-  final merged = rasterizer.mergePatch(
-    base: base,
-    patch: extracted.image,
-    patchRect: extracted.worldRect,
-    feather: InpaintFeather(
-      top: input.featherPixels,
-      right: input.featherPixels,
-      bottom: input.featherPixels,
-      left: input.featherPixels,
-    ),
+  return Uint8List.fromList(img.encodePng(layer));
+}
+
+class _CompositeLayerInput {
+  final Uint8List imagePng;
+  final InpaintViewport worldRect;
+
+  const _CompositeLayerInput(this.imagePng, this.worldRect);
+}
+
+class _CompositeWorkspaceInput {
+  final Uint8List sourcePng;
+  final List<InpaintStroke> strokes;
+  final List<_CompositeLayerInput> layers;
+
+  const _CompositeWorkspaceInput(this.sourcePng, this.strokes, this.layers);
+}
+
+Uint8List _composeWorkspaceIsolate(_CompositeWorkspaceInput input) {
+  final source = img.decodePng(input.sourcePng);
+  if (source == null) throw const FormatException('原图解码失败');
+  final layers = <InpaintRasterLayer>[];
+  for (final layer in input.layers) {
+    final image = img.decodePng(layer.imagePng);
+    if (image == null) throw const FormatException('结果图层解码失败');
+    layers.add(InpaintRasterLayer(image: image, worldRect: layer.worldRect));
+  }
+  final composite = const InpaintRasterizer().composeLayers(
+    source: source,
+    strokes: input.strokes,
+    layers: layers,
   );
-  return Uint8List.fromList(img.encodePng(merged));
+  return Uint8List.fromList(img.encodePng(composite));
 }
 
 /// 等比例放大图片分辨率。
@@ -217,7 +232,7 @@ Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
   return Uint8List.fromList(img.encodePng(preview));
 }
 
-enum _GestureKind { none, draw, moveBox, panScene, moveGlobal, compareDrag }
+enum _GestureKind { none, draw, moveBox, panScene, moveGlobal }
 
 /// 局部重绘工作区（嵌入生成页内的圆角卡片组件）。
 class InpaintWorkspaceCard extends StatefulWidget {
@@ -231,10 +246,10 @@ class InpaintWorkspaceCard extends StatefulWidget {
   State<InpaintWorkspaceCard> createState() => _InpaintWorkspaceCardState();
 }
 
-class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
+class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
+    with AutomaticKeepAliveClientMixin<InpaintWorkspaceCard> {
   static const double _boxMinSize = 48;
-  static const double _compareHitExtent = 28;
-  static const double _snapTolerancePx = 12;
+  static const double _snapTolerancePx = 8;
 
   final _picker = ImagePicker();
   late final GenerationViewModel _generation;
@@ -258,24 +273,21 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   final List<InpaintStroke> _strokes = [];
   final List<List<InpaintStroke>> _undo = [];
   final List<List<InpaintStroke>> _redo = [];
+  final List<List<InpaintStroke>> _maskUndo = [];
+  final List<List<InpaintStroke>> _maskRedo = [];
+  final List<InpaintResultLayer> _resultLayers = [];
   InpaintPaintTarget _target = InpaintPaintTarget.mask;
-  double _brushSize = 32;
+  double _brushSize = 48;
   int _expandPixels = 8;
   int _featherPixels = 8;
   double _inpaintStrength = 0.96;
-  bool _showMask = false;
+  bool _showMask = true;
   bool _disabledOriginalImage = false;
   bool _colorCorrect = true;
-  int _promptTab = 0;
-  bool _promptExpanded = false;
+  bool _promptExpanded = true;
   bool _paramsExpanded = false;
   bool _busy = false;
   InpaintStroke? _draft;
-  List<InpaintCandidate> _candidates = [];
-  int _activeCandidate = 0;
-  double _comparePosition = 0.5;
-  bool _compareDragging = false;
-  bool _batchCancelled = false;
   int _batchCompleted = 0;
   int _batchTotal = 1;
   final Map<int, Offset> _pointers = {};
@@ -284,18 +296,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   double? _lastGestureDistance;
   String? _sessionSourcePath;
   String? _sessionMaskPath;
+  String? _loadingSourcePath;
+  String? _failedSourcePath;
+  int _sourceLoadRevision = 0;
   int _generationRevision = 0;
   String? _activeRevision;
-  bool _showBatchFinished = false;
   bool _officialUpscaling = false;
-  bool _applying = false;
-
-  /// 应用候选后合并出的整张图路径（保存相册的数据源）。
-  String? _appliedResultPath;
-
-  /// 是否存在已应用但尚未保存的整图（应用后 _loadImage 会把
-  /// _appliedResultPath 置为新图本身，仍视为可保存）。
-  bool get _hasUnsavedAppliedResult => _appliedResultPath != null;
+  bool _addingLayer = false;
+  int _layerSequence = 0;
 
   /// 遮罩预览：后台生成，签名匹配才显示（防抖 + 防错位）。
   String? _maskPreviewSignature;
@@ -303,18 +311,13 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   Uint8List? _maskPreviewBytes;
   Timer? _maskPreviewDebounce;
 
-  InpaintUiMode _uiMode = InpaintUiMode.box;
-
-  /// 底部遮罩笔被点选后进入绘制模式（优先于方框/图片手势）。
-  bool _drawToolActive = false;
+  InpaintUiMode _uiMode = InpaintUiMode.view;
 
   /// 笔刷形状：圆形（默认）或方形。
   bool _squareBrush = false;
 
-  /// 长按遮罩笔上下滑动调节笔刷大小。
-  /// 记录长按起点，滑动增量映射到笔刷值。
-  double? _brushDragStartY;
-  double? _brushDragStartValue;
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -342,7 +345,12 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   /// 误当新图加载造成"图片被裁切"。
   void _onVmChanged() {
     final path = _generation.sourceImagePath;
-    if (path == null || path == _sourcePath) return;
+    if (path == null ||
+        path == _sourcePath ||
+        path == _loadingSourcePath ||
+        path == _failedSourcePath) {
+      return;
+    }
     if (_sessionSourcePath != null && path == _sessionSourcePath) return;
     if (_sessionMaskPath != null && path == _sessionMaskPath) return;
     if (!File(path).existsSync()) return;
@@ -351,6 +359,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
 
   @override
   void dispose() {
+    InpaintWorkspaceCard.gestureActive.value = false;
     _generation.removeListener(_onVmChanged);
     if (_generation.inpaintWorkspaceHandler == _prepareGeneration) {
       _generation.inpaintWorkspaceHandler = null;
@@ -366,46 +375,74 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     bool resetSession = true,
   }) async {
     final file = File(path);
-    if (!await file.exists()) return;
-    // 后台解码大图，避免主线程阻塞。
-    final result = await compute<_DecodeImageInput, _DecodeImageResult>(
-      _decodeImageIsolate,
-      _DecodeImageInput(await file.readAsBytes()),
-    );
-    if (!mounted) return;
-    // 保留磁盘上的 PNG 字节供后台光栅化复用（RGBA 无损）。
-    _sourcePngBytes = result.pngBytes;
-    setState(() {
-      _sourcePath = path;
-      _sourceWidth = result.width;
-      _sourceHeight = result.height;
-      _transform = const InpaintTransform();
-      _box = null;
-      _strokes.clear();
-      _undo.clear();
-      _redo.clear();
-      if (resetSession) {
-        _candidates = [];
-        _activeCandidate = 0;
-        _comparePosition = 0.5;
-        _sessionSourcePath = null;
-        _sessionMaskPath = null;
-        _appliedResultPath = null;
-        _activeRevision = null;
-        _showBatchFinished = false;
+    final revision = ++_sourceLoadRevision;
+    _loadingSourcePath = path;
+    _failedSourcePath = null;
+    try {
+      if (!await file.exists()) {
+        throw FileSystemException('找不到图片文件', path);
       }
-    });
+      // 后台解码大图，避免主线程阻塞。
+      final fileBytes = await file.readAsBytes();
+      final result = await compute<_DecodeImageInput, _DecodeImageResult>(
+        _decodeImageIsolate,
+        _DecodeImageInput(fileBytes),
+      );
+      if (!mounted || revision != _sourceLoadRevision) return;
+      // 保留磁盘上的 PNG 字节供后台光栅化复用（RGBA 无损）。
+      _sourcePngBytes = result.pngBytes;
+      setState(() {
+        _sourcePath = path;
+        _sourceWidth = result.width;
+        _sourceHeight = result.height;
+        _transform = const InpaintTransform();
+        _box = null;
+        _strokes.clear();
+        _undo.clear();
+        _redo.clear();
+        _maskUndo.clear();
+        _maskRedo.clear();
+        if (resetSession) {
+          _resultLayers.clear();
+          _layerSequence = 0;
+          _sessionSourcePath = null;
+          _sessionMaskPath = null;
+          _activeRevision = null;
+        }
+      });
+    } catch (error) {
+      if (mounted && revision == _sourceLoadRevision) {
+        _failedSourcePath = path;
+        showFloatingToast(context, '图片加载失败：$error');
+      }
+    } finally {
+      if (revision == _sourceLoadRevision) _loadingSourcePath = null;
+    }
   }
 
   Future<void> _pickSource() async {
     final file = await _picker.pickImage(source: ImageSource.gallery);
-    if (file != null) await _loadImage(file.path);
+    if (file == null) return;
+    // 先标记请求路径，避免 VM notify 与显式加载同时触发两次大图解码。
+    _loadingSourcePath = file.path;
+    _generation.setSourceImagePath(file.path);
+    await _loadImage(file.path);
   }
 
   void _saveHistory() {
     _undo.add(List.of(_strokes));
     if (_undo.length > 60) _undo.removeAt(0);
     _redo.clear();
+  }
+
+  List<InpaintStroke> get _maskStrokes => _strokes
+      .where((stroke) => stroke.target == InpaintPaintTarget.mask)
+      .toList(growable: false);
+
+  void _saveMaskHistory() {
+    _maskUndo.add(_maskStrokes);
+    if (_maskUndo.length > 80) _maskUndo.removeAt(0);
+    _maskRedo.clear();
   }
 
   List<InpaintStroke> get _allStrokes => [
@@ -417,28 +454,78 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     if (_busy) return;
     if (_strokes.isEmpty) return;
     _saveHistory();
+    if (_maskStrokes.isNotEmpty) _saveMaskHistory();
     setState(() => _strokes.clear());
+  }
+
+  void _clearCurrentLayer() {
+    if (_busy || !_strokes.any((stroke) => stroke.target == _target)) return;
+    _saveHistory();
+    if (_target == InpaintPaintTarget.mask) _saveMaskHistory();
+    setState(() => _strokes.removeWhere((stroke) => stroke.target == _target));
   }
 
   void _undoStroke() {
     if (_undo.isEmpty || _busy) return;
     _redo.add(List.of(_strokes));
     final previous = _undo.removeLast();
+    final currentMasks = _maskStrokes;
     setState(() {
       _strokes
         ..clear()
         ..addAll(previous);
     });
+    _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: true);
   }
 
   void _redoStroke() {
     if (_redo.isEmpty || _busy) return;
     _undo.add(List.of(_strokes));
     final next = _redo.removeLast();
+    final currentMasks = _maskStrokes;
     setState(() {
       _strokes
         ..clear()
         ..addAll(next);
+    });
+    _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: false);
+  }
+
+  void _recordGlobalMaskChange(
+    List<InpaintStroke> before,
+    List<InpaintStroke> after, {
+    required bool undo,
+  }) {
+    if (listEquals(before, after)) return;
+    final from = undo ? _maskRedo : _maskUndo;
+    final to = undo ? _maskUndo : _maskRedo;
+    from.add(before);
+    if (from.length > 80) from.removeAt(0);
+    to.add(after);
+    if (to.length > 80) to.removeAt(0);
+  }
+
+  void _undoMask() => _applyMaskHistory(_maskUndo, _maskRedo);
+
+  void _redoMask() => _applyMaskHistory(_maskRedo, _maskUndo);
+
+  void _applyMaskHistory(
+    List<List<InpaintStroke>> from,
+    List<List<InpaintStroke>> to,
+  ) {
+    if (_busy || from.isEmpty) return;
+    final current = _maskStrokes;
+    var target = from.removeLast();
+    while (from.isNotEmpty && listEquals(current, target)) {
+      target = from.removeLast();
+    }
+    if (listEquals(current, target)) return;
+    to.add(current);
+    if (to.length > 80) to.removeAt(0);
+    setState(() {
+      _strokes
+        ..removeWhere((stroke) => stroke.target == InpaintPaintTarget.mask)
+        ..addAll(target);
     });
   }
 
@@ -473,35 +560,23 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     });
   }
 
-  /// 方框模式双指缩放：以捏合中心为锚点等比缩放选择框，图片保持固定。
-  /// 框最大不超过图片在屏幕上的尺寸（不可选取图片以外区域）。
+  /// 输出框双指缩放：以捏合中心为锚点等比缩放，允许框独立移出源图。
   void _zoomBox(double factor, Offset anchor) {
     final box = _box;
-    if (box == null || _sourceWidth <= 0) return;
-    final s = _transform.scale;
-    if (s <= 0) return;
-    // 上限 = 图片在屏幕上的尺寸。
-    final maxScreenWidth = _sourceWidth * s;
-    final maxScreenHeight = _sourceHeight * s;
-    var width = (box.width * factor)
-        .clamp(_boxMinSize, math.max(maxScreenWidth, _boxMinSize))
-        .toDouble();
+    if (box == null) return;
+    final width = (box.width * factor).clamp(_boxMinSize, 8192.0).toDouble();
     var height = width / _boxAspect;
-    if (height > maxScreenHeight) {
-      height = math.max(maxScreenHeight, _boxMinSize);
-      width = (height * _boxAspect).clamp(_boxMinSize, maxScreenWidth);
-    }
     final centerX = anchor.dx + (box.x + box.width / 2 - anchor.dx) * factor;
     final centerY = anchor.dy + (box.y + box.height / 2 - anchor.dy) * factor;
-    setState(() => _box = _snapBox(InpaintBox(
+    setState(() => _box = InpaintBox(
           x: centerX - width / 2,
           y: centerY - height / 2,
           width: width,
           height: height,
-        )));
+        ));
   }
 
-  /// 候选预览时的同步缩放：场景与选择框围绕锚点一起缩放，保持对齐。
+  /// 整体模式下源图与输出框围绕同一锚点缩放，保持相对位置。
   void _zoomGlobal(double factor, Offset anchor) {
     final before = _screenToWorld(anchor);
     final scale = (_transform.scale * factor).clamp(0.05, 12.0).toDouble();
@@ -529,7 +604,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     });
   }
 
-  /// 候选预览时的同步平移：框随场景一起移动，保持与生成区域对齐。
+  /// 整体模式下源图与输出框同步平移。
   void _moveGlobal(Offset delta) {
     final box = _box;
     setState(() {
@@ -541,26 +616,11 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     });
   }
 
-  /// 移动选择框：限制在图片范围内（世界坐标钳制），不可选取图片以外的区域。
+  /// 移动输出框：允许框脱离源图，NovelAI 会将外侧区域作为待生成内容。
   void _moveBox(Offset delta) {
     final box = _box;
-    if (box == null || _sourceWidth <= 0) return;
-    final s = _transform.scale;
-    if (s <= 0) return;
-    final next = box.translate(delta.dx, delta.dy);
-    final maxWidth = (box.width / s).clamp(0.0, _sourceWidth.toDouble());
-    final maxHeight = (box.height / s).clamp(0.0, _sourceHeight.toDouble());
-    // 世界坐标范围：x ∈ [0, sourceW - boxW]，y 同理。
-    final worldX = (next.x - _transform.offsetX) / s;
-    final worldY = (next.y - _transform.offsetY) / s;
-    final clampedX = worldX.clamp(0.0, _sourceWidth - maxWidth);
-    final clampedY = worldY.clamp(0.0, _sourceHeight - maxHeight);
-    setState(() => _box = InpaintBox(
-          x: clampedX * s + _transform.offsetX,
-          y: clampedY * s + _transform.offsetY,
-          width: box.width,
-          height: box.height,
-        ));
+    if (box == null) return;
+    setState(() => _box = box.translate(delta.dx, delta.dy));
   }
 
   void _fitStageToContent() {
@@ -587,6 +647,41 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     });
   }
 
+  void _resetFrame() {
+    if (_sourceWidth <= 0 || _sourceHeight <= 0) return;
+    final resolution = _resolution;
+    final width = resolution.$1 * _transform.scale;
+    final height = resolution.$2 * _transform.scale;
+    final centerX = _transform.offsetX + _sourceWidth * _transform.scale / 2;
+    final centerY = _transform.offsetY + _sourceHeight * _transform.scale / 2;
+    setState(() {
+      _box = InpaintBox(
+        x: centerX - width / 2,
+        y: centerY - height / 2,
+        width: width,
+        height: height,
+      );
+    });
+  }
+
+  void _zoomWorkspace(double factor) {
+    final anchor = _uiMode == InpaintUiMode.frame
+        ? Offset(_box?.x ?? _stageSize.width / 2,
+                _box?.y ?? _stageSize.height / 2) +
+            Offset((_box?.width ?? 0) / 2, (_box?.height ?? 0) / 2)
+        : Offset(_stageSize.width / 2, _stageSize.height / 2);
+    switch (_uiMode) {
+      case InpaintUiMode.view:
+        _zoomGlobal(factor, anchor);
+      case InpaintUiMode.frame:
+        _zoomBox(factor, anchor);
+      case InpaintUiMode.image:
+      case InpaintUiMode.brush:
+      case InpaintUiMode.erase:
+        _zoomScene(factor, anchor);
+    }
+  }
+
   /// 切换分辨率后调整选择框：保持中心与宽度，重算高度。
   void _syncBoxToResolution() {
     final box = _box;
@@ -603,72 +698,62 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         ));
   }
 
-  /// 边缘吸附：选择框边缘接近图片边缘时精确对齐（容差内强制归零缝隙）。
-  /// 框超出图片边缘时钳回图片范围内，保证视觉上完全贴合。
+  /// 在屏幕上将输出框边缘吸附到源图边缘；输出框可以独立移出源图。
   InpaintBox _snapBox(InpaintBox box) {
-    if (_sourceWidth <= 0) return box;
-    final s = _transform.scale;
-    if (s <= 0) return box;
-    final tolerance = _snapTolerancePx / s;
-    const contentLeft = 0.0;
-    const contentTop = 0.0;
-    final contentRight = _sourceWidth.toDouble();
-    final contentBottom = _sourceHeight.toDouble();
-    final boxWorldWidth = box.width / s;
-    final boxWorldHeight = box.height / s;
+    final bounds = _imageScreenBounds;
+    if (bounds == null) return box;
+    final dx = _nearestSnap([
+      bounds.left - box.x,
+      bounds.right - (box.x + box.width),
+      bounds.left - (box.x + box.width),
+      bounds.right - box.x,
+    ]);
+    final dy = _nearestSnap([
+      bounds.top - box.y,
+      bounds.bottom - (box.y + box.height),
+      bounds.top - (box.y + box.height),
+      bounds.bottom - box.y,
+    ]);
+    return box.translate(dx ?? 0, dy ?? 0);
+  }
 
-    // 屏幕坐标 → 世界坐标计算贴合，再换回屏幕坐标。
-    final worldX = (box.x - _transform.offsetX) / s;
-    final worldY = (box.y - _transform.offsetY) / s;
-    final worldRight = worldX + boxWorldWidth;
-    final worldBottom = worldY + boxWorldHeight;
-
-    var snapX = worldX;
-    var snapY = worldY;
-    var snappedX = false;
-    var snappedY = false;
-
-    // 左边缘：接近图片左缘则对齐；框左缘已越出图片左缘则钳回。
-    if ((worldX - contentLeft).abs() <= tolerance || worldX < contentLeft) {
-      snapX = contentLeft;
-      snappedX = true;
-    }
-    // 右边缘：接近或越出图片右缘则右缘对齐图片右缘。
-    if ((worldRight - contentRight).abs() <= tolerance ||
-        worldRight > contentRight) {
-      snapX = contentRight - boxWorldWidth;
-      snappedX = true;
-    }
-    if ((worldY - contentTop).abs() <= tolerance || worldY < contentTop) {
-      snapY = contentTop;
-      snappedY = true;
-    }
-    if ((worldBottom - contentBottom).abs() <= tolerance ||
-        worldBottom > contentBottom) {
-      snapY = contentBottom - boxWorldHeight;
-      snappedY = true;
-    }
-
-    // 两侧同时触发（框比图片宽/高）时保证左上角不产生负偏移。
-    if (snapX < contentLeft) snapX = contentLeft;
-    if (snapY < contentTop) snapY = contentTop;
-
-    if (!snappedX && !snappedY) return box;
-    return InpaintBox(
-      x: snapX * s + _transform.offsetX,
-      y: snapY * s + _transform.offsetY,
-      width: box.width,
-      height: box.height,
+  Rect? get _imageScreenBounds {
+    if (_sourceWidth <= 0 || _sourceHeight <= 0) return null;
+    return Rect.fromLTWH(
+      _transform.offsetX,
+      _transform.offsetY,
+      _sourceWidth * _transform.scale,
+      _sourceHeight * _transform.scale,
     );
   }
 
-  bool _hitCompareHandle(Offset point) {
+  double? _nearestSnap(List<double> offsets) {
+    final eligible = offsets.where((value) => value.abs() <= _snapTolerancePx);
+    if (eligible.isEmpty) return null;
+    return eligible.reduce((a, b) => a.abs() <= b.abs() ? a : b);
+  }
+
+  void _snapImageToFrame() {
     final box = _box;
-    if (box == null || _currentCandidate == null) return false;
-    final splitX = box.x + box.width * _comparePosition;
-    return (point.dx - splitX).abs() <= _compareHitExtent &&
-        point.dy >= box.y &&
-        point.dy <= box.y + box.height;
+    final bounds = _imageScreenBounds;
+    if (box == null || bounds == null) return;
+    final dx = _nearestSnap([
+      box.x - bounds.left,
+      box.x + box.width - bounds.right,
+      box.x - bounds.right,
+      box.x + box.width - bounds.left,
+    ]);
+    final dy = _nearestSnap([
+      box.y - bounds.top,
+      box.y + box.height - bounds.bottom,
+      box.y - bounds.bottom,
+      box.y + box.height - bounds.top,
+    ]);
+    if (dx == null && dy == null) return;
+    _transform = _transform.copyWith(
+      offsetX: _transform.offsetX + (dx ?? 0),
+      offsetY: _transform.offsetY + (dy ?? 0),
+    );
   }
 
   void _startStroke(Offset point) {
@@ -678,7 +763,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     setState(() {
       _draft = InpaintStroke(
         target: _target,
-        mode: InpaintStrokeMode.paint,
+        mode: _uiMode == InpaintUiMode.erase
+            ? InpaintStrokeMode.erase
+            : InpaintStrokeMode.paint,
         type: InpaintStrokeType.path,
         size: _brushSize,
         square: _squareBrush,
@@ -709,6 +796,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     final draft = _draft;
     if (draft == null) return;
     if (draft.type == InpaintStrokeType.path && draft.points.isEmpty) return;
+    if (draft.target == InpaintPaintTarget.mask) _saveMaskHistory();
     setState(() {
       _strokes.add(draft);
       _draft = null;
@@ -720,24 +808,23 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   void _onPointerDown(PointerDownEvent event) {
     _pointers[event.pointer] = event.localPosition;
     if (_pointers.length == 1) {
-      final point = event.localPosition;
-      if (_currentCandidate != null) {
-        _gesture = _hitCompareHandle(point)
-            ? _GestureKind.compareDrag
-            : _GestureKind.moveGlobal;
-      } else if (_sourceWidth <= 0 || _busy) {
+      if (_sourceWidth <= 0 || _busy) {
         _gesture = _GestureKind.none;
-      } else if (_drawToolActive && _target == InpaintPaintTarget.mask) {
+      } else if (_uiMode == InpaintUiMode.brush ||
+          _uiMode == InpaintUiMode.erase) {
         _gesture = _GestureKind.draw;
-        _startStroke(point);
+        _startStroke(event.localPosition);
       } else {
         switch (_uiMode) {
-          case InpaintUiMode.box:
-            // 方框模式：图片固定，单指始终移动选择框。
+          case InpaintUiMode.view:
+            _gesture = _GestureKind.moveGlobal;
+          case InpaintUiMode.frame:
             _gesture = _GestureKind.moveBox;
           case InpaintUiMode.image:
-            // 图片模式：方框固定，单指移动图片。
             _gesture = _GestureKind.panScene;
+          case InpaintUiMode.brush:
+          case InpaintUiMode.erase:
+            _gesture = _GestureKind.draw;
         }
       }
     } else if (_pointers.length == 2) {
@@ -762,37 +849,33 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         final points = _pointers.values.toList();
         final center =
             points.reduce((a, b) => a + b) / points.length.toDouble();
-        // 双指同向滑动：整体平移，语义与单指一致（方框模式移框，图片模式移图）。
+        // 双指同向滑动遵循当前工具的移动目标。
         final oldCenter = _lastGestureCenter ?? center;
         final panDelta = center - oldCenter;
-        if (_currentCandidate != null) {
-          _moveGlobal(panDelta);
-        } else if (_drawToolActive && _target == InpaintPaintTarget.mask) {
-          _panScene(panDelta);
-        } else {
-          switch (_uiMode) {
-            case InpaintUiMode.box:
-              _moveBox(panDelta);
-            case InpaintUiMode.image:
-              _panScene(panDelta);
-          }
+        switch (_uiMode) {
+          case InpaintUiMode.view:
+            _moveGlobal(panDelta);
+          case InpaintUiMode.frame:
+            _moveBox(panDelta);
+          case InpaintUiMode.image:
+          case InpaintUiMode.brush:
+          case InpaintUiMode.erase:
+            _panScene(panDelta);
         }
         // 双指张合：缩放。
         final distance = (points[0] - points[1]).distance;
         final oldDistance = _lastGestureDistance;
         if (oldDistance != null && oldDistance > 0 && distance > 0) {
           final factor = distance / oldDistance;
-          if (_currentCandidate != null) {
-            _zoomGlobal(factor, center);
-          } else if (_drawToolActive && _target == InpaintPaintTarget.mask) {
-            _zoomScene(factor, center);
-          } else {
-            switch (_uiMode) {
-              case InpaintUiMode.box:
-                _zoomBox(factor, center);
-              case InpaintUiMode.image:
-                _zoomScene(factor, center);
-            }
+          switch (_uiMode) {
+            case InpaintUiMode.view:
+              _zoomGlobal(factor, center);
+            case InpaintUiMode.frame:
+              _zoomBox(factor, center);
+            case InpaintUiMode.image:
+            case InpaintUiMode.brush:
+            case InpaintUiMode.erase:
+              _zoomScene(factor, center);
           }
         }
         _lastGestureDistance = distance;
@@ -809,8 +892,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         _panScene(event.delta);
       case _GestureKind.moveGlobal:
         _moveGlobal(event.delta);
-      case _GestureKind.compareDrag:
-        _updateComparePosition(event.localPosition);
       case _GestureKind.none:
         break;
     }
@@ -820,14 +901,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     _pointers.remove(event.pointer);
     if (_pointers.isEmpty) {
       if (_gesture == _GestureKind.draw) _finishStroke();
-      if (_box != null) {
-        // 任一拖动结束后执行一次边缘吸附。
+      if (_uiMode == InpaintUiMode.frame && _box != null) {
         setState(() => _box = _snapBox(_box!));
+      } else if (_uiMode == InpaintUiMode.image) {
+        _snapImageToFrame();
       }
       _gesture = _GestureKind.none;
       _lastGestureCenter = null;
       _lastGestureDistance = null;
-      _compareDragging = false;
       // 手势结束，解除页面滚动锁定。
       InpaintWorkspaceCard.gestureActive.value = false;
     }
@@ -841,23 +922,12 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
       _gesture = _GestureKind.none;
       _lastGestureCenter = null;
       _lastGestureDistance = null;
-      _compareDragging = false;
       InpaintWorkspaceCard.gestureActive.value = false;
     }
     setState(() {});
   }
 
-  void _updateComparePosition(Offset point) {
-    final box = _box;
-    if (box == null || box.width <= 0) return;
-    _compareDragging = true;
-    setState(() {
-      _comparePosition =
-          ((point.dx - box.x) / box.width).clamp(0.0, 1.0).toDouble();
-    });
-  }
-
-  // ---- 生成（完整管线在工作区内：光栅化 → 队列 → 候选 → 对比）----
+  // ---- 生成（真实 NovelAI 请求成功后，立刻追加结果图层）----
   // 触发入口是页面底部的悬浮生成按钮（通过 VM 的钩子调用本方法）。
 
   /// 页面底部生成按钮触发：在工作区内完成本轮局部重绘生成。
@@ -876,7 +946,16 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
       return false;
     }
     _finishStroke();
-    final total = _generation.batchCount.clamp(1, 30);
+    final total = _generation.batchCount.clamp(1, 30).toInt();
+    final resolution = _resolution;
+    final strokes = List<InpaintStroke>.of(_allStrokes);
+    final expandPixels = _expandPixels;
+    final featherPixels = _featherPixels;
+    final prompt = _promptController.text;
+    final negativePrompt = _negativeController.text;
+    final strength = _inpaintStrength;
+    final disabledOriginalImage = _disabledOriginalImage;
+    final colorCorrect = _colorCorrect;
     final revision = 'workspace-${++_generationRevision}';
     // 选择框（屏幕坐标）→ 图像世界坐标。
     final worldRect = InpaintViewport(
@@ -887,79 +966,89 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     );
     setState(() {
       _busy = true;
-      _batchCancelled = false;
       _batchCompleted = 0;
       _batchTotal = total;
       _activeRevision = revision;
-      _showBatchFinished = false;
-      // 新一轮生成开始，旧的已应用结果不再是"当前修改后的图"。
-      _appliedResultPath = null;
     });
     try {
+      // 固定本轮模型、分辨率、提示词与采样选项，避免光栅化期间 UI/VM
+      // 变化让同一批结果落入不同尺寸或使用不同提示词。
+      final requestTemplates = List<GenerationTask>.generate(
+        total,
+        (_) => _generation.buildInpaintTask(
+          sourcePath: _sourcePath!,
+          maskPath: '',
+          prompt: prompt,
+          negativePrompt: negativePrompt,
+          strength: strength,
+          disabledOriginalImage: disabledOriginalImage,
+          colorCorrect: colorCorrect,
+        ),
+        growable: false,
+      );
       // 光栅化与 PNG 编码在后台 isolate 执行，避免大图阻塞主线程导致 ANR 闪退。
       final raster = await compute<_RasterizeInput, _RasterizeResult>(
         _rasterizeIsolate,
         _RasterizeInput(
           sourcePng: sourcePng,
-          strokes: _allStrokes,
+          strokes: strokes,
           worldRect: worldRect,
-          outputWidth: _resolution.$1,
-          outputHeight: _resolution.$2,
-          expandPixels: _expandPixels,
+          outputWidth: resolution.$1,
+          outputHeight: resolution.$2,
+          expandPixels: expandPixels,
         ),
       );
       final dir = await ImageUtils.getImageDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final basePath = '${dir.path}${Platform.pathSeparator}'
-          'inpaint_${timestamp}_base.png';
-      final workspacePath = '${dir.path}${Platform.pathSeparator}'
-          'inpaint_${timestamp}_workspace.png';
+          'inpaint_${timestamp}_${revision}_base.png';
       final maskPath = '${dir.path}${Platform.pathSeparator}'
-          'inpaint_${timestamp}_mask.png';
+          'inpaint_${timestamp}_${revision}_mask.png';
       await File(basePath).writeAsBytes(raster.basePng, flush: true);
-      await File(workspacePath).writeAsBytes(raster.workspacePng, flush: true);
       await File(maskPath).writeAsBytes(raster.maskPng, flush: true);
       _sessionSourcePath = basePath;
       _sessionMaskPath = maskPath;
-      await _generation.updateInpaintPrompt(_promptController.text);
-      await _generation.updateInpaintNegativePrompt(_negativeController.text);
-      _generation.updateInpaintOptions(
-        disabledOriginalImage: _disabledOriginalImage,
-        colorCorrect: _colorCorrect,
-      );
-      _generation.updateInpaintStrength(_inpaintStrength);
       for (var index = 0; index < total; index++) {
-        if (_batchCancelled) break;
-        final task = _generation.buildInpaintTask(
-          sourcePath: basePath,
-          maskPath: maskPath,
-          prompt: _promptController.text,
-          negativePrompt: _negativeController.text,
-          strength: _inpaintStrength,
-          disabledOriginalImage: _disabledOriginalImage,
-          colorCorrect: _colorCorrect,
+        if (_generation.isBatchCancelling) break;
+        final task = requestTemplates[index].copyWith(
+          sourceImagePath: basePath,
+          maskImagePath: maskPath,
         );
         final completed = await _queue.enqueueTransientAndWait(task);
         if (!mounted || revision != _activeRevision) return false;
         if (completed.status == 'success') {
-          final path = await _saveImage.saveTransient(completed);
-          final candidate = InpaintCandidate(
-            id: completed.taskId,
-            imagePath: path,
-            baseImagePath: basePath,
-            workspaceImagePath: workspacePath,
-            maskImagePath: maskPath,
-            worldRect: worldRect,
-            seed: completed.seed,
+          final generatedPath = await _saveImage.saveTransient(completed);
+          if (!mounted || revision != _activeRevision) return false;
+          setState(() => _addingLayer = true);
+          final layerPng = await compute<_MaskLayerInput, Uint8List>(
+            _maskLayerIsolate,
+            _MaskLayerInput(
+              maskPng: await File(maskPath).readAsBytes(),
+              generatedPng: await File(generatedPath).readAsBytes(),
+              featherPixels: featherPixels,
+            ),
           );
+          final dir = await ImageUtils.getImageDirectory();
+          final layerPath = '${dir.path}${Platform.pathSeparator}'
+              'inpaint_layer_${DateTime.now().millisecondsSinceEpoch}_'
+              '${index + 1}.png';
+          await File(layerPath).writeAsBytes(layerPng, flush: true);
+          if (!mounted || revision != _activeRevision) return false;
           setState(() {
-            _candidates = [..._candidates, candidate];
-            _activeCandidate = _candidates.length - 1;
-            _comparePosition = 0.5;
+            _layerSequence++;
+            _resultLayers.add(InpaintResultLayer(
+              id: completed.taskId,
+              name: '重绘 $_layerSequence',
+              imagePath: layerPath,
+              width: resolution.$1,
+              height: resolution.$2,
+              worldRect: worldRect,
+            ));
             _batchCompleted++;
+            _addingLayer = false;
           });
         } else {
-          showFloatingToast(context, completed.errorMessage ?? '候选生成失败');
+          showFloatingToast(context, completed.errorMessage ?? '重绘失败');
           break;
         }
       }
@@ -971,77 +1060,59 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
       if (mounted && revision == _activeRevision) {
         setState(() {
           _busy = false;
-          _showBatchFinished = true;
+          _addingLayer = false;
         });
       }
     }
   }
 
-  InpaintCandidate? get _currentCandidate =>
-      _candidates.isEmpty ? null : _candidates[_activeCandidate];
-
-
-  void _selectCandidate(int offset) {
-    if (_candidates.isEmpty) return;
-    setState(() {
-      _activeCandidate =
-          (_activeCandidate + offset + _candidates.length) % _candidates.length;
-      _comparePosition = 0.5;
-    });
-  }
-
-  /// 保存整张图到相册：仅在应用候选后可用，保存的是当前工作区底图
-  /// （已合并重绘结果的完整图片）。应用前没有"修改后的图"可保存。
-  Future<void> _saveCandidateToGallery() async {
-    final path = _appliedResultPath;
-    if (path == null || !File(path).existsSync()) {
-      showFloatingToast(context, '请先应用候选，再保存修改后的图片');
-      return;
-    }
-    final gallerySaved = await _saveImage.saveToGallery(path);
-    if (mounted) {
-      showFloatingToast(
-          context, gallerySaved ? '整张修改后的图已保存到相册' : '保存失败，请检查相册权限');
-    }
-  }
-
-  Future<void> _applyCandidate() async {
-    final candidate = _currentCandidate;
-    if (candidate == null || _applying) return;
-    setState(() => _applying = true);
+  Future<void> _saveCompositeToGallery() async {
+    final sourcePng = _sourcePngBytes;
+    if (sourcePng == null || _addingLayer) return;
     try {
-      // 补丁提取 + 羽化合并 + PNG 编码全部在后台 isolate 执行。
-      final mergedPng = await compute<_ApplyPatchInput, Uint8List>(
-        _applyPatchIsolate,
-        _ApplyPatchInput(
-          basePng: await File(candidate.workspaceImagePath).readAsBytes(),
-          maskPng: await File(candidate.maskImagePath).readAsBytes(),
-          generatedPng: await File(candidate.imagePath).readAsBytes(),
-          worldRect: candidate.worldRect,
-          featherPixels: _featherPixels,
-        ),
+      final visibleLayers = _resultLayers.where((layer) => layer.visible);
+      final input = _CompositeWorkspaceInput(
+        sourcePng,
+        List.of(_strokes),
+        [
+          for (final layer in visibleLayers)
+            _CompositeLayerInput(
+              await File(layer.imagePath).readAsBytes(),
+              layer.worldRect,
+            ),
+        ],
+      );
+      final composite = await compute<_CompositeWorkspaceInput, Uint8List>(
+        _composeWorkspaceIsolate,
+        input,
       );
       final dir = await ImageUtils.getImageDirectory();
       final path = '${dir.path}${Platform.pathSeparator}'
-          'inpaint_applied_${DateTime.now().millisecondsSinceEpoch}.png';
-      await File(path).writeAsBytes(mergedPng, flush: true);
-      // 应用后保留当前方框位置与尺寸，便于继续框选重绘。
-      final keepBox = _box;
-      final keepTransform = _transform;
-      await _loadImage(path);
-      if (!mounted) return;
-      setState(() {
-        _box = keepBox;
-        _transform = keepTransform;
-        // 记录合并后的整图，"保存相册"保存的就是它。
-        _appliedResultPath = path;
-      });
-      showFloatingToast(context, '候选结果已应用，可继续局部重绘');
+          'inpaint_composite_${DateTime.now().millisecondsSinceEpoch}.png';
+      await File(path).writeAsBytes(composite, flush: true);
+      final saved = await _saveImage.saveToGallery(path);
+      if (mounted) {
+        showFloatingToast(
+          context,
+          saved ? '合成图片已保存到相册' : '保存失败，请检查相册权限',
+        );
+      }
     } catch (error) {
-      if (mounted) showFloatingToast(context, '应用候选失败：$error');
-    } finally {
-      if (mounted) setState(() => _applying = false);
+      if (mounted) showFloatingToast(context, '合成保存失败：$error');
     }
+  }
+
+  void _toggleResultLayer(InpaintResultLayer layer) {
+    setState(() {
+      final index = _resultLayers.indexWhere((entry) => entry.id == layer.id);
+      if (index >= 0) {
+        _resultLayers[index] = layer.copyWith(visible: !layer.visible);
+      }
+    });
+  }
+
+  void _removeResultLayer(InpaintResultLayer layer) {
+    setState(() => _resultLayers.removeWhere((entry) => entry.id == layer.id));
   }
 
   (int, int) get _resolution {
@@ -1088,6 +1159,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final colors = Theme.of(context).colorScheme;
     // 遮罩预览开启时调度后台生成（签名防抖）。
     if (_showMask) _scheduleMaskPreview();
@@ -1103,117 +1175,150 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         _buildHeader(colors),
         _buildStage(),
         _buildToolbar(colors),
+        _buildPromptPanel(colors),
       ]),
     );
   }
 
-  /// 顶部：折叠的正负提示词栏 → 分辨率 + 方框/图片切换。
+  /// 画布上方只保留紧凑的图片状态、换图和输出分辨率入口。
   Widget _buildHeader(ColorScheme colors) {
-    return Column(children: [
-      // 折叠提示词栏。
-      Material(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
-        child: InkWell(
-          onTap: () => setState(() => _promptExpanded = !_promptExpanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(children: [
-              Icon(
-                CupertinoIcons.textformat_abc,
-                size: 15,
-                color: colors.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '重绘提示词',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+    return Padding(
+      key: const ValueKey('inpaint-workspace-header'),
+      padding: const EdgeInsets.fromLTRB(10, 2, 8, 4),
+      child: Row(
+        children: [
+          const Icon(CupertinoIcons.photo, size: 15),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _sourcePath == null
+                  ? '选择原图'
+                  : '${_sourceWidth} × ${_sourceHeight} px',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+            ),
+          ),
+          IconButton(
+            tooltip: '更换图片',
+            visualDensity: VisualDensity.compact,
+            onPressed: _busy ? null : _pickSource,
+            icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 18),
+          ),
+          _resolutionButton(colors),
+        ],
+      ),
+    );
+  }
+
+  /// 正负提示词并列提供独立编辑区；参数仍由同一面板展开。
+  Widget _buildPromptPanel(ColorScheme colors) {
+    return Column(
+      key: const ValueKey('inpaint-prompt-panel'),
+      children: [
+        Material(
+          color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+          child: InkWell(
+            onTap: () => setState(() => _promptExpanded = !_promptExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(children: [
+                Icon(CupertinoIcons.textformat_abc,
+                    size: 15, color: colors.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(
+                  '重绘提示词',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _promptExpanded
+                      ? CupertinoIcons.chevron_up
+                      : CupertinoIcons.chevron_down,
+                  size: 14,
                   color: colors.onSurfaceVariant,
                 ),
+              ]),
+            ),
+          ),
+        ),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 180),
+          crossFadeState: _promptExpanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+            child: Column(children: [
+              _buildPromptField(
+                controller: _promptController,
+                label: '正向提示词',
+                hint: '描述希望在框选区域生成的内容',
+                onChanged: (value) => _generation.updateInpaintPrompt(value),
               ),
-              const Spacer(),
-              Icon(
-                _promptExpanded
-                    ? CupertinoIcons.chevron_up
-                    : CupertinoIcons.chevron_down,
-                size: 14,
-                color: colors.onSurfaceVariant,
+              const SizedBox(height: 8),
+              _buildPromptField(
+                controller: _negativeController,
+                label: '负向提示词',
+                hint: '描述希望排除的内容',
+                onChanged: (value) =>
+                    _generation.updateInpaintNegativePrompt(value),
+              ),
+              if (_paramsExpanded) ...[
+                const SizedBox(height: 6),
+                _buildParams(),
+              ],
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () =>
+                      setState(() => _paramsExpanded = !_paramsExpanded),
+                  icon: Icon(
+                    _paramsExpanded
+                        ? CupertinoIcons.chevron_up
+                        : CupertinoIcons.slider_horizontal_3,
+                    size: 14,
+                  ),
+                  label: Text(
+                    _paramsExpanded ? '收起生成参数' : '生成参数',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
               ),
             ]),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildPromptField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required ValueChanged<String> onChanged,
+  }) {
+    return TextField(
+      controller: controller,
+      enabled: !_busy,
+      minLines: 3,
+      maxLines: 6,
+      textInputAction: TextInputAction.newline,
+      style: const TextStyle(fontSize: 13),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        hintText: hint,
+        alignLabelWithHint: true,
+        border: const OutlineInputBorder(),
       ),
-      AnimatedCrossFade(
-        duration: const Duration(milliseconds: 180),
-        crossFadeState: _promptExpanded
-            ? CrossFadeState.showSecond
-            : CrossFadeState.showFirst,
-        firstChild: const SizedBox(width: double.infinity),
-        secondChild: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-          child: Column(children: [
-            CupertinoSlidingSegmentedControl<int>(
-              groupValue: _promptTab,
-              children: const {0: Text('正面'), 1: Text('负面')},
-              onValueChanged: (value) =>
-                  setState(() => _promptTab = value ?? 0),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller:
-                  _promptTab == 0 ? _promptController : _negativeController,
-              minLines: 2,
-              maxLines: 5,
-              textInputAction: TextInputAction.newline,
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: _promptTab == 0 ? '重绘正向提示词' : '重绘负向提示词',
-                border: const OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                if (_promptTab == 0) {
-                  _generation.updateInpaintPrompt(value);
-                } else {
-                  _generation.updateInpaintNegativePrompt(value);
-                }
-              },
-            ),
-            if (_paramsExpanded) ...[
-              const SizedBox(height: 6),
-              _buildParams(),
-            ],
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () =>
-                    setState(() => _paramsExpanded = !_paramsExpanded),
-                icon: Icon(
-                  _paramsExpanded
-                      ? CupertinoIcons.chevron_up
-                      : CupertinoIcons.slider_horizontal_3,
-                  size: 14,
-                ),
-                label: Text(
-                  _paramsExpanded ? '收起参数' : '重绘参数',
-                  style: const TextStyle(fontSize: 11),
-                ),
-              ),
-            ),
-          ]),
-        ),
-      ),
-      // 分辨率 + 方框/图片切换。
-      Padding(
-        padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
-        child: Row(children: [
-          _resolutionButton(colors),
-          const SizedBox(width: 10),
-          Expanded(child: _buildModeSwitch(colors)),
-        ]),
-      ),
-    ]);
+      onChanged: onChanged,
+    );
   }
 
   Widget _resolutionButton(ColorScheme colors) {
@@ -1222,12 +1327,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         visualDensity: VisualDensity.compact,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         side: BorderSide(color: colors.primary.withValues(alpha: 0.45)),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
       onPressed: _busy ? null : _chooseResolution,
-      icon: Icon(CupertinoIcons.crop,
-          size: 14, color: colors.primary),
+      icon: Icon(CupertinoIcons.crop, size: 14, color: colors.primary),
       label: Text(
         _generation.selectedResolution,
         style: TextStyle(
@@ -1239,109 +1342,13 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     );
   }
 
-  /// 方框/图片左右滑动切换按钮。
-  Widget _buildModeSwitch(ColorScheme colors) {
-    return Container(
-      height: 34,
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(17),
-      ),
-      child: Stack(children: [
-        AnimatedAlign(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          alignment:
-              _uiMode == InpaintUiMode.box ? Alignment.centerLeft : Alignment.centerRight,
-          child: Container(
-            width: 72,
-            margin: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: colors.primary,
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-        ),
-        Row(children: [
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() {
-                _uiMode = InpaintUiMode.box;
-                _drawToolActive = false;
-              }),
-              child: Center(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      CupertinoIcons.rectangle_dock,
-                      size: 14,
-                      color: _uiMode == InpaintUiMode.box
-                          ? colors.onPrimary
-                          : colors.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '方框',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: _uiMode == InpaintUiMode.box
-                            ? colors.onPrimary
-                            : colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() {
-                _uiMode = InpaintUiMode.image;
-                _drawToolActive = false;
-              }),
-              child: Center(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      CupertinoIcons.photo,
-                      size: 14,
-                      color: _uiMode == InpaintUiMode.image
-                          ? colors.onPrimary
-                          : colors.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '图片',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: _uiMode == InpaintUiMode.image
-                            ? colors.onPrimary
-                            : colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ]),
-      ]),
-    );
-  }
-
   Widget _buildStage() {
     final colors = Theme.of(context).colorScheme;
     final sourcePath = _sourcePath;
     final sourceWidth = _sourceWidth;
     if (sourcePath == null || sourceWidth <= 0) {
       return AspectRatio(
+        key: const ValueKey('inpaint-workspace-stage'),
         aspectRatio: 0.86,
         child: GestureDetector(
           onTap: _pickSource,
@@ -1377,6 +1384,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
       );
     }
     return AspectRatio(
+      key: const ValueKey('inpaint-workspace-stage'),
       aspectRatio: 0.86,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
@@ -1410,66 +1418,72 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
                 onPointerUp: _onPointerUp,
                 onPointerCancel: _onPointerCancel,
                 child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned(
-                    left: _transform.offsetX,
-                    top: _transform.offsetY,
-                    width: _sourceWidth * _transform.scale,
-                    height: _sourceHeight * _transform.scale,
-                    child: Image.file(File(sourcePath), fit: BoxFit.fill),
-                  ),
-                  if (_box != null) _buildBoxDimmer(),
-                  CustomPaint(
-                    painter: _InpaintCanvasPainter(
-                      transform: _transform,
-                      strokes: _allStrokes,
-                      squareBrush: _squareBrush,
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned(
+                      left: _transform.offsetX,
+                      top: _transform.offsetY,
+                      width: _sourceWidth * _transform.scale,
+                      height: _sourceHeight * _transform.scale,
+                      child: Image.file(File(sourcePath), fit: BoxFit.fill),
                     ),
-                  ),
-                  if (_showMask &&
-                      _box != null &&
-                      !_busy &&
-                      _maskPreviewKey == _maskPreviewSignature &&
-                      _maskPreviewBytes != null)
-                    _FinalMaskOverlay(
-                      transform: _transform,
-                      box: _box!,
-                      bytes: _maskPreviewBytes!,
+                    for (final layer
+                        in _resultLayers.where((item) => item.visible))
+                      Positioned(
+                        left: _transform.offsetX +
+                            layer.worldRect.x * _transform.scale,
+                        top: _transform.offsetY +
+                            layer.worldRect.y * _transform.scale,
+                        width: layer.worldRect.width * _transform.scale,
+                        height: layer.worldRect.height * _transform.scale,
+                        child: IgnorePointer(
+                          child: Image.file(File(layer.imagePath),
+                              fit: BoxFit.fill),
+                        ),
+                      ),
+                    if (_box != null) _buildBoxDimmer(),
+                    CustomPaint(
+                      painter: _InpaintCanvasPainter(
+                        transform: _transform,
+                        strokes: _allStrokes,
+                      ),
                     ),
-                  if (_box != null) _buildBoxFrame(),
-                  if (_currentCandidate != null && _box != null)
-                    _CompareLayer(
-                      box: _box!,
-                      generatedPath: _currentCandidate!.imagePath,
-                      basePath: _currentCandidate!.baseImagePath,
-                      position: _comparePosition,
-                      dragging: _compareDragging,
-                    ),
-                  if (_busy) _buildBusyOverlay(),
-                  if (_officialUpscaling)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: ColoredBox(
-                          color: Colors.black38,
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const CircularProgressIndicator(),
-                                const SizedBox(height: 8),
-                                Text(
-                                  _generation.officialUpscaleStatus ?? '官方超分中…',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                              ],
+                    if (_showMask &&
+                        _box != null &&
+                        !_busy &&
+                        _maskPreviewKey == _maskPreviewSignature &&
+                        _maskPreviewBytes != null)
+                      _FinalMaskOverlay(
+                        transform: _transform,
+                        box: _box!,
+                        bytes: _maskPreviewBytes!,
+                      ),
+                    if (_box != null) _buildBoxFrame(),
+                    if (_busy) _buildBusyOverlay(),
+                    if (_officialUpscaling)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ColoredBox(
+                            color: Colors.black38,
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const CircularProgressIndicator(),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _generation.officialUpscaleStatus ??
+                                        '官方超分中…',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
+                  ],
+                ),
               ),
             );
           }),
@@ -1500,9 +1514,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
   /// 选择框边框与分辨率标签。
   Widget _buildBoxFrame() {
     final box = _box!;
-    final hasCandidate = _currentCandidate != null;
     final colors = Theme.of(context).colorScheme;
-    final borderColor = hasCandidate ? colors.tertiary : colors.primary;
+    const borderColor = Color(0xffffd27b);
     return Positioned.fromRect(
       rect: box.rect,
       child: IgnorePointer(
@@ -1516,8 +1529,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
               left: 6,
               top: 6,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: colors.surface.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(999),
@@ -1554,7 +1566,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
               children: [
                 const CircularProgressIndicator(),
                 const SizedBox(height: 10),
-                Text('生成中 $_batchCompleted/$_batchTotal',
+                Text(
+                    _addingLayer
+                        ? '添加结果图层…'
+                        : '生成中 $_batchCompleted/$_batchTotal',
                     style: const TextStyle(fontSize: 13)),
               ],
             ),
@@ -1564,303 +1579,404 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
     );
   }
 
-  /// 工作区下边工具栏：遮罩/图像层、遮罩笔（长按上下滑调节大小）、
-  /// 方形/圆形笔刷切换、撤销重做、遮罩预览。
+  /// 工作区下边工具栏：五种操作模式、笔刷参数、历史与图层管理。
   Widget _buildToolbar(ColorScheme colors) {
-    final hasCandidate = _currentCandidate != null;
-    final isMask = _target == InpaintPaintTarget.mask;
+    final isDrawing =
+        _uiMode == InpaintUiMode.brush || _uiMode == InpaintUiMode.erase;
     return Padding(
+      key: const ValueKey('inpaint-workspace-toolbar'),
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Column(children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(children: [
-            _layerChip(colors),
-            const SizedBox(width: 4),
-            if (isMask) ...[
-              // 遮罩笔：点按启用绘制；长按后上下滑动调节笔刷大小。
-              _maskBrushChip(colors, enabled: !hasCandidate),
-              const SizedBox(width: 4),
-              // 笔刷形状切换：方形 / 圆形。
-              _brushShapeChip(colors, enabled: !hasCandidate),
-            ],
-            const SizedBox(width: 4),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: '撤销',
-              onPressed: _undo.isEmpty || hasCandidate ? null : _undoStroke,
-              icon: const Icon(CupertinoIcons.arrow_uturn_left, size: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildToolstrip(colors),
+          _buildToolContext(colors),
+          if (isDrawing) _buildBrushControls(colors),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: '撤销笔迹',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _undo.isEmpty || _busy ? null : _undoStroke,
+                  icon: const Icon(CupertinoIcons.arrow_uturn_left, size: 18),
+                ),
+                IconButton(
+                  tooltip: '重做笔迹',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _redo.isEmpty || _busy ? null : _redoStroke,
+                  icon: const Icon(CupertinoIcons.arrow_uturn_right, size: 18),
+                ),
+                IconButton(
+                  tooltip: '撤销蒙版',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _maskUndo.isEmpty || _busy ? null : _undoMask,
+                  icon: const Icon(Icons.undo, size: 19),
+                ),
+                IconButton(
+                  tooltip: '重做蒙版',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _maskRedo.isEmpty || _busy ? null : _redoMask,
+                  icon: const Icon(Icons.redo, size: 19),
+                ),
+                IconButton(
+                  tooltip: _showMask ? '隐藏蒙版' : '显示蒙版',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() => _showMask = !_showMask),
+                  icon: Icon(
+                    _showMask ? CupertinoIcons.eye_fill : CupertinoIcons.eye,
+                    size: 18,
+                  ),
+                ),
+                IconButton(
+                  tooltip:
+                      _target == InpaintPaintTarget.mask ? '清空蒙版' : '清空图像笔迹',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _busy ? null : _clearCurrentLayer,
+                  icon: const Icon(CupertinoIcons.trash, size: 18),
+                ),
+                _cornerMenuButton(colors),
+                const SizedBox(width: 4),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  onPressed: _sourcePath == null || _busy || _addingLayer
+                      ? null
+                      : _saveCompositeToGallery,
+                  icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 15),
+                  label: const Text('保存合成', style: TextStyle(fontSize: 12)),
+                ),
+              ],
             ),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: '重做',
-              onPressed: _redo.isEmpty || hasCandidate ? null : _redoStroke,
-              icon: const Icon(CupertinoIcons.arrow_uturn_right, size: 18),
-            ),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: '最终遮罩预览',
-              onPressed:
-                  hasCandidate ? null : () => setState(() => _showMask = !_showMask),
-              icon: Icon(
-                _showMask ? CupertinoIcons.eye_fill : CupertinoIcons.eye,
-                size: 18,
-              ),
-            ),
-            // 当前笔刷大小指示（随长按调节实时刷新）。
-            if (isMask)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  '${_brushSize.round()}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: _drawToolActive ? colors.primary : colors.onSurfaceVariant,
+          ),
+          if (_resultLayers.isNotEmpty) _buildResultLayers(colors),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolContext(ColorScheme colors) {
+    final hint = switch (_uiMode) {
+      InpaintUiMode.view => '整体平移 · 双指缩放',
+      InpaintUiMode.image => '移动图像 · 靠近输出框边缘时吸附',
+      InpaintUiMode.frame => '移动输出框 · 可移出原图 · 双指缩放',
+      InpaintUiMode.brush => '绘制笔迹 · 双指移动与缩放原图',
+      InpaintUiMode.erase => '擦除当前绘制图层',
+    };
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            hint,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
+          ),
+        ),
+        IconButton(
+          tooltip: '缩小',
+          visualDensity: VisualDensity.compact,
+          onPressed: _sourcePath == null || _busy
+              ? null
+              : () => _zoomWorkspace(1 / 1.2),
+          icon: const Icon(Icons.remove, size: 18),
+        ),
+        Text(
+          (_transform.scale * 100).round().toString() + '%',
+          style: const TextStyle(fontSize: 10),
+        ),
+        IconButton(
+          tooltip: '放大',
+          visualDensity: VisualDensity.compact,
+          onPressed:
+              _sourcePath == null || _busy ? null : () => _zoomWorkspace(1.2),
+          icon: const Icon(Icons.add, size: 18),
+        ),
+        if (_uiMode == InpaintUiMode.frame)
+          TextButton(
+            onPressed: _busy ? null : _resetFrame,
+            child: const Text('重置框', style: TextStyle(fontSize: 10)),
+          )
+        else
+          IconButton(
+            tooltip: '适应窗口',
+            visualDensity: VisualDensity.compact,
+            onPressed: _sourcePath == null || _busy ? null : _fitStageToContent,
+            icon: const Icon(Icons.fit_screen, size: 17),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildToolstrip(ColorScheme colors) {
+    const modes = [
+      (InpaintUiMode.view, '整体', Icons.open_with),
+      (InpaintUiMode.image, '图像', Icons.image_outlined),
+      (InpaintUiMode.frame, '输出框', Icons.crop_free),
+      (InpaintUiMode.brush, '画笔', Icons.brush_outlined),
+      (InpaintUiMode.erase, '橡皮', Icons.auto_fix_off),
+    ];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          for (final mode in modes)
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(9),
+                onTap: _busy ? null : () => setState(() => _uiMode = mode.$1),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
+                  decoration: BoxDecoration(
+                    color: _uiMode == mode.$1
+                        ? (mode.$1 == InpaintUiMode.erase
+                            ? colors.error.withValues(alpha: 0.16)
+                            : colors.primary.withValues(alpha: 0.16))
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        mode.$3,
+                        size: 18,
+                        color: _uiMode == mode.$1
+                            ? (mode.$1 == InpaintUiMode.erase
+                                ? colors.error
+                                : colors.primary)
+                            : colors.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        mode.$2,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: _uiMode == mode.$1
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                          color: _uiMode == mode.$1
+                              ? (mode.$1 == InpaintUiMode.erase
+                                  ? colors.error
+                                  : colors.primary)
+                              : colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-          ]),
-        ),
-        // 底部功能行：左下角菜单（重置视图 / 清空遮罩），右下角应用 + 保存相册。
-        // 生成统一使用页面下方的悬浮生成按钮，工作区不再放生成入口。
-        Row(children: [
-          _cornerMenuButton(colors),
-          const Spacer(),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
-            onPressed: hasCandidate && !_busy ? _applyCandidate : null,
-            icon: const Icon(CupertinoIcons.checkmark_circle, size: 15),
-            label: Text(
-              _applying ? '应用中…' : '应用',
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              side: BorderSide(
-                  color: _appliedResultPath != null
-                      ? colors.primary.withValues(alpha: 0.45)
-                      : colors.onSurfaceVariant.withValues(alpha: 0.25)),
-            ),
-            onPressed: (_appliedResultPath != null ||
-                    _hasUnsavedAppliedResult)
-                ? _saveCandidateToGallery
-                : null,
-            icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 15),
-            label: const Text('保存相册', style: TextStyle(fontSize: 13)),
-          ),
-        ]),
-        if (_candidates.length > 1)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Row(children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                onPressed: () => _selectCandidate(-1),
-                icon: const Icon(CupertinoIcons.chevron_left, size: 16),
-              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrushControls(ColorScheme colors) {
+    final isErase = _uiMode == InpaintUiMode.erase;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
               Text(
-                '${_activeCandidate + 1}/${_candidates.length}',
-                style: const TextStyle(fontSize: 12),
+                '绘制',
+                style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
               ),
-              IconButton(
+              const SizedBox(width: 6),
+              ChoiceChip(
+                label: const Text('蒙版'),
+                selected: _target == InpaintPaintTarget.mask,
                 visualDensity: VisualDensity.compact,
-                onPressed: () => _selectCandidate(1),
-                icon: const Icon(CupertinoIcons.chevron_right, size: 16),
+                onSelected: _busy
+                    ? null
+                    : (_) => setState(() => _target = InpaintPaintTarget.mask),
               ),
-              if (_showBatchFinished)
-                Expanded(
-                  child: Text(
-                    '生成完成 · 拖动框内分割线可对比结果',
-                    style: TextStyle(fontSize: 11, color: colors.primary),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+              const SizedBox(width: 4),
+              ChoiceChip(
+                label: const Text('图像'),
+                selected: _target == InpaintPaintTarget.image,
+                visualDensity: VisualDensity.compact,
+                onSelected: _busy
+                    ? null
+                    : (_) => setState(() => _target = InpaintPaintTarget.image),
+              ),
+              const Spacer(),
+              ChoiceChip(
+                avatar: const Icon(Icons.circle, size: 13),
+                label: const Text('圆形'),
+                selected: !_squareBrush,
+                visualDensity: VisualDensity.compact,
+                onSelected:
+                    _busy ? null : (_) => setState(() => _squareBrush = false),
+              ),
+              const SizedBox(width: 4),
+              ChoiceChip(
+                avatar: const Icon(Icons.grid_4x4, size: 13),
+                label: const Text('方格'),
+                selected: _squareBrush,
+                visualDensity: VisualDensity.compact,
+                onSelected:
+                    _busy ? null : (_) => setState(() => _squareBrush = true),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              Text(
+                isErase ? '橡皮' : '笔刷',
+                style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+              ),
+              Expanded(
+                child: Slider(
+                  value: _brushSize.clamp(8.0, 160.0),
+                  min: 8,
+                  max: 160,
+                  divisions: 38,
+                  label: _brushSize.round().toString(),
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _brushSize = value),
                 ),
-            ]),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text(
+                  _brushSize.round().toString() + ' px',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
           ),
-      ]),
-    );
-  }
-
-  Widget _layerChip(ColorScheme colors) {
-    final isMask = _target == InpaintPaintTarget.mask;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _target =
-            isMask ? InpaintPaintTarget.image : InpaintPaintTarget.mask;
-        // 切换图层时退出绘制模式，避免误画。
-        _drawToolActive = false;
-      }),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: isMask
-              ? colors.primary.withValues(alpha: 0.14)
-              : colors.tertiary.withValues(alpha: 0.14),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isMask
-                ? colors.primary.withValues(alpha: 0.4)
-                : colors.tertiary.withValues(alpha: 0.4),
-          ),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(
-            CupertinoIcons.layers,
-            size: 14,
-            color: isMask ? colors.primary : colors.tertiary,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            isMask ? '遮罩' : '图像',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: isMask ? colors.primary : colors.tertiary,
-            ),
-          ),
-        ]),
+        ],
       ),
     );
   }
 
-  /// 遮罩笔 chip：点按启用绘制；长按后上下滑动调节笔刷大小
-  /// （上滑增大、下滑减小，松手结束）。
-  Widget _maskBrushChip(ColorScheme colors, {required bool enabled}) {
-    return GestureDetector(
-      onTap: enabled
-          ? () => setState(() => _drawToolActive = !_drawToolActive)
-          : null,
-      onLongPressStart: (details) {
-        if (!enabled) return;
-        _brushDragStartY = details.globalPosition.dy;
-        _brushDragStartValue = _brushSize;
-        setState(() => _drawToolActive = true);
-      },
-      onLongPressMoveUpdate: (details) {
-        final startY = _brushDragStartY;
-        final startValue = _brushDragStartValue;
-        if (startY == null || startValue == null) return;
-        // 上滑增大、下滑减小：1px ≈ 0.8 笔刷单位。
-        final delta = (startY - details.globalPosition.dy) * 0.8;
-        setState(() {
-          _brushSize = (startValue + delta).clamp(1.0, 400.0).toDouble();
-        });
-      },
-      onLongPressEnd: (_) {
-        _brushDragStartY = null;
-        _brushDragStartValue = null;
-      },
-      onLongPressCancel: () {
-        _brushDragStartY = null;
-        _brushDragStartValue = null;
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: _drawToolActive
-              ? colors.primary.withValues(alpha: 0.16)
-              : colors.surfaceContainerHighest.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _drawToolActive
-                ? colors.primary.withValues(alpha: 0.5)
-                : Colors.white.withValues(alpha: 0.08),
+  Widget _buildResultLayers(ColorScheme colors) {
+    return Container(
+      margin: const EdgeInsets.only(top: 5),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: colors.outlineVariant.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.layers_outlined, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                '结果图层 ' + _resultLayers.length.toString(),
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const Spacer(),
+              Text(
+                '原图底层已锁定',
+                style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
+              ),
+            ],
           ),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(
-            CupertinoIcons.paintbrush,
-            size: 14,
-            color: _drawToolActive ? colors.primary : colors.onSurfaceVariant,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            '遮罩笔',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color:
-                  _drawToolActive ? colors.primary : colors.onSurfaceVariant,
+          for (final layer in _resultLayers.reversed)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: SizedBox(
+                      width: 34,
+                      height: 34,
+                      child:
+                          Image.file(File(layer.imagePath), fit: BoxFit.cover),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(layer.name,
+                            style: const TextStyle(fontSize: 11),
+                            overflow: TextOverflow.ellipsis),
+                        Text(
+                          layer.width.toString() +
+                              ' × ' +
+                              layer.height.toString(),
+                          style: TextStyle(
+                              fontSize: 9, color: colors.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip:
+                        layer.visible ? '隐藏' + layer.name : '显示' + layer.name,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _busy ? null : () => _toggleResultLayer(layer),
+                    icon: Icon(
+                      layer.visible
+                          ? CupertinoIcons.eye_fill
+                          : CupertinoIcons.eye_slash,
+                      size: 17,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '移除' + layer.name,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _busy ? null : () => _removeResultLayer(layer),
+                    icon: const Icon(CupertinoIcons.trash, size: 17),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ]),
+        ],
       ),
     );
   }
 
-  /// 笔刷形状切换 chip：方形 / 圆形两种笔刷。
-  Widget _brushShapeChip(ColorScheme colors, {required bool enabled}) {
-    final isSquare = _squareBrush;
-    return GestureDetector(
-      onTap: enabled
-          ? () => setState(() => _squareBrush = !_squareBrush)
-          : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: _drawToolActive
-              ? colors.primary.withValues(alpha: 0.16)
-              : colors.surfaceContainerHighest.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _drawToolActive
-                ? colors.primary.withValues(alpha: 0.5)
-                : Colors.white.withValues(alpha: 0.08),
-          ),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          // 形状示意：方形实心方块 / 圆形实心圆。
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color:
-                  _drawToolActive ? colors.primary : colors.onSurfaceVariant,
-              borderRadius:
-                  isSquare ? BorderRadius.circular(2) : BorderRadius.circular(6),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            isSquare ? '方形' : '圆形',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color:
-                  _drawToolActive ? colors.primary : colors.onSurfaceVariant,
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  /// 左下角功能菜单：重置视图 / 清空全部遮罩 / 导入图片 / 放大图片。
   Widget _cornerMenuButton(ColorScheme colors) {
     return PopupMenuButton<String>(
       tooltip: '工作区菜单',
       padding: EdgeInsets.zero,
       icon: const Icon(CupertinoIcons.ellipsis_circle, size: 20),
-      onSelected: (value) {
-        switch (value) {
-          case 'fit':
-            _fitStageToContent();
-          case 'clear_mask':
-            _clearAllStrokes();
-          case 'pick':
-            _pickSource();
-          case 'upscale_px':
-            _upscalePixels();
-        }
-      },
+      onSelected: _busy
+          ? null
+          : (value) {
+              switch (value) {
+                case 'fit':
+                  _fitStageToContent();
+                case 'clear_mask':
+                  _clearAllStrokes();
+                case 'pick':
+                  _pickSource();
+                case 'upscale_px':
+                  _upscalePixels();
+              }
+            },
       itemBuilder: (context) => [
         const PopupMenuItem(
           value: 'fit',
@@ -1874,8 +1990,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
           value: 'clear_mask',
           enabled: _strokes.isNotEmpty && !_busy,
           child: Row(children: [
-            Icon(CupertinoIcons.trash,
-                size: 18, color: colors.error),
+            Icon(CupertinoIcons.trash, size: 18, color: colors.error),
             const SizedBox(width: 8),
             Text('清空全部遮罩',
                 style: TextStyle(
@@ -1884,8 +1999,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
           ]),
         ),
         const PopupMenuDivider(),
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'pick',
+          enabled: !_busy,
           child: Row(children: [
             Icon(CupertinoIcons.photo, size: 18),
             SizedBox(width: 8),
@@ -1967,21 +2083,26 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
         Checkbox(
           visualDensity: VisualDensity.compact,
           value: _disabledOriginalImage,
-          onChanged: (value) => setState(() {
-            _disabledOriginalImage = value ?? false;
-            _generation.updateInpaintOptions(
-                disabledOriginalImage: _disabledOriginalImage);
-          }),
+          onChanged: _busy
+              ? null
+              : (value) => setState(() {
+                    _disabledOriginalImage = value ?? false;
+                    _generation.updateInpaintOptions(
+                        disabledOriginalImage: _disabledOriginalImage);
+                  }),
         ),
         const Text('忽略原图', style: TextStyle(fontSize: 12)),
         const SizedBox(width: 12),
         Checkbox(
           visualDensity: VisualDensity.compact,
           value: _colorCorrect,
-          onChanged: (value) => setState(() {
-            _colorCorrect = value ?? true;
-            _generation.updateInpaintOptions(colorCorrect: _colorCorrect);
-          }),
+          onChanged: _busy
+              ? null
+              : (value) => setState(() {
+                    _colorCorrect = value ?? true;
+                    _generation.updateInpaintOptions(
+                        colorCorrect: _colorCorrect);
+                  }),
         ),
         const Text('色彩校正', style: TextStyle(fontSize: 12)),
       ]),
@@ -2010,7 +2131,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
           label: label == '强度'
               ? value.toStringAsFixed(2)
               : value.round().toString(),
-          onChanged: (v) => setState(() => onChanged(v)),
+          onChanged: _busy ? null : (v) => setState(() => onChanged(v)),
         ),
       ),
     ]);
@@ -2029,7 +2150,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
       _transform.offsetY.toStringAsFixed(1),
       _transform.scale.toStringAsFixed(3),
       _expandPixels,
-      _strokes.length,
+      Object.hashAll(_allStrokes),
       _generation.selectedResolution,
     ].join('|');
   }
@@ -2075,91 +2196,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard> {
 }
 
 /// 候选对比层：框内左侧显示生成结果，右侧显示原图，分割线可拖动。
-class _CompareLayer extends StatelessWidget {
-  final InpaintBox box;
-  final String generatedPath;
-  final String basePath;
-  final double position;
-  final bool dragging;
-
-  const _CompareLayer({
-    required this.box,
-    required this.generatedPath,
-    required this.basePath,
-    required this.position,
-    required this.dragging,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final splitX = box.width * position.clamp(0.0, 1.0);
-    return Positioned.fromRect(
-      rect: box.rect,
-      child: Stack(
-        children: [
-          // 底层：原图铺满整框。
-          Positioned.fill(
-            child: Image.file(File(basePath), fit: BoxFit.fill),
-          ),
-          // 上层：生成结果，仅占分割线左侧区域；OverflowBox 让内部图片
-          // 仍以整框尺寸铺满，再由外层宽度裁剪出左侧部分。
-          Positioned(
-            left: 0,
-            top: 0,
-            width: math.max(splitX, 0.001),
-            height: box.height,
-            child: ClipRect(
-              child: OverflowBox(
-                maxWidth: box.width,
-                maxHeight: box.height,
-                alignment: Alignment.centerLeft,
-                child: SizedBox(
-                  width: box.width,
-                  height: box.height,
-                  child: Image.file(File(generatedPath), fit: BoxFit.fill),
-                ),
-              ),
-            ),
-          ),
-          // 分割线。
-          Positioned(
-            left: splitX - 1,
-            top: 0,
-            width: 2,
-            height: box.height,
-            child: const ColoredBox(
-              color: Color(0xF2FFFFFF),
-            ),
-          ),
-          // 拖动手柄。
-          Positioned(
-            left: splitX - 16,
-            top: box.height / 2 - 16,
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: dragging
-                    ? Colors.white
-                    : Colors.white.withValues(alpha: 0.92),
-                shape: BoxShape.circle,
-                boxShadow: const [
-                  BoxShadow(color: Colors.black26, blurRadius: 4),
-                ],
-              ),
-              child: const Icon(
-                CupertinoIcons.arrow_left_right,
-                size: 16,
-                color: Colors.black54,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _FinalMaskOverlay extends StatelessWidget {
   final InpaintTransform transform;
   final InpaintBox box;
@@ -2187,61 +2223,95 @@ class _InpaintCanvasPainter extends CustomPainter {
   final InpaintTransform transform;
   final List<InpaintStroke> strokes;
 
-  /// 是否方形笔刷（false = 圆形）。
-  final bool squareBrush;
-
   const _InpaintCanvasPainter({
     required this.transform,
     required this.strokes,
-    this.squareBrush = false,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (final stroke in strokes) {
-      if (stroke.points.isEmpty) continue;
-      final color = stroke.target == InpaintPaintTarget.mask
-          ? const Color(0x802196F3) // 蓝色遮罩（半透明）
-          : Colors.amber.withValues(alpha: 0.65);
-      final screenHalf = stroke.size * transform.scale / 2;
-      if (squareBrush) {
-        // 方形笔刷：沿路径逐点绘制方块并合并填充。
-        final fill = Paint()..color = color;
+    final bounds = Offset.zero & size;
+    for (final target in InpaintPaintTarget.values) {
+      canvas.saveLayer(bounds, Paint());
+      for (final stroke in strokes.where((stroke) => stroke.target == target)) {
+        final erase = stroke.mode == InpaintStrokeMode.erase;
+        final color = target == InpaintPaintTarget.mask
+            ? const Color(0x802196F3)
+            : Color(stroke.color).withValues(alpha: stroke.opacity);
+        final paint = Paint()
+          ..color = color
+          ..blendMode = erase ? BlendMode.clear : BlendMode.srcOver
+          ..isAntiAlias = true;
+
+        if (stroke.type == InpaintStrokeType.rectangle &&
+            stroke.rectangle != null) {
+          final rect = stroke.rectangle!;
+          canvas.drawRect(
+            Rect.fromLTRB(
+              rect.left * transform.scale + transform.offsetX,
+              rect.top * transform.scale + transform.offsetY,
+              rect.right * transform.scale + transform.offsetX,
+              rect.bottom * transform.scale + transform.offsetY,
+            ),
+            paint,
+          );
+          continue;
+        }
+        if (stroke.points.isEmpty) continue;
+        if (stroke.square) {
+          for (final cell in inpaintSquareBrushCells(stroke)) {
+            canvas.drawRect(
+              Rect.fromLTWH(
+                cell.$1 * inpaintBrushGridCellSize * transform.scale +
+                    transform.offsetX,
+                cell.$2 * inpaintBrushGridCellSize * transform.scale +
+                    transform.offsetY,
+                inpaintBrushGridCellSize * transform.scale,
+                inpaintBrushGridCellSize * transform.scale,
+              ),
+              paint,
+            );
+          }
+          continue;
+        }
+
         final path = Path();
-        for (final point in stroke.points) {
-          final screen = Offset(point.x * transform.scale + transform.offsetX,
-              point.y * transform.scale + transform.offsetY);
-          path.addRect(Rect.fromCenter(
-            center: screen,
-            width: screenHalf * 2,
-            height: screenHalf * 2,
-          ));
+        for (var index = 0; index < stroke.points.length; index++) {
+          final point = stroke.points[index];
+          final screen = Offset(
+            point.x * transform.scale + transform.offsetX,
+            point.y * transform.scale + transform.offsetY,
+          );
+          if (index == 0) {
+            path.moveTo(screen.dx, screen.dy);
+          } else {
+            path.lineTo(screen.dx, screen.dy);
+          }
         }
-        canvas.drawPath(path, fill);
-        continue;
-      }
-      // 圆形笔刷：圆头线帽连线。
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = stroke.size * transform.scale
-        ..color = color;
-      final path = Path();
-      for (var i = 0; i < stroke.points.length; i++) {
-        final point = stroke.points[i];
-        final screen = Offset(point.x * transform.scale + transform.offsetX,
-            point.y * transform.scale + transform.offsetY);
-        if (i == 0) {
-          path.moveTo(screen.dx, screen.dy);
+        if (stroke.points.length == 1) {
+          final point = stroke.points.single;
+          canvas.drawCircle(
+            Offset(
+              point.x * transform.scale + transform.offsetX,
+              point.y * transform.scale + transform.offsetY,
+            ),
+            math.max(0.5, stroke.size * transform.scale / 2),
+            paint,
+          );
         } else {
-          path.lineTo(screen.dx, screen.dy);
+          paint
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..strokeWidth = stroke.size * transform.scale;
+          canvas.drawPath(path, paint);
         }
       }
-      canvas.drawPath(path, paint);
+      canvas.restore();
     }
   }
 
   @override
-  bool shouldRepaint(covariant _InpaintCanvasPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _InpaintCanvasPainter oldDelegate) =>
+      oldDelegate.transform != transform || oldDelegate.strokes != strokes;
 }

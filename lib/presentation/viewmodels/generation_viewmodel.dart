@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
@@ -282,9 +283,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       height: res.$2,
       steps: isV5Model ? steps.clamp(1, 28) : steps.clamp(1, 50),
       model: model,
-      strength: img2imgSourceImagePath != null
-          ? img2imgStrength
-          : 1.0,
+      strength: img2imgSourceImagePath != null ? img2imgStrength : 1.0,
     );
   }
 
@@ -1524,6 +1523,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         await inpaintWorkspaceHandler!();
       } finally {
         _generateInFlight = false;
+        _cancelBatch = false;
+        _batchRemaining = 0;
         notifyListeners();
       }
       return;
@@ -1915,8 +1916,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           notifyListeners();
         },
       );
+      final dimensions = await compute(_processedImageDimensions, outputPath);
       officialUpscaleStatus = null;
       final newTask = task!.copyWith(
+        width: dimensions.$1,
+        height: dimensions.$2,
+        size: '${dimensions.$1}x${dimensions.$2}',
         taskId: const Uuid().v4(),
         imagePath: outputPath,
         imageUrl: null,
@@ -1974,9 +1979,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           code: 'NO_OFFICIAL_TOKEN',
         );
       }
-      final model = currentModelOption?.actualModel ??
-          _resolveActualModelId(selectedModel);
       final sourceTask = task!;
+      final model = _resolveActualModelId(sourceTask.model);
       final promptText =
           (promptOverride != null && promptOverride.trim().isNotEmpty)
               ? promptOverride.trim()
@@ -1990,8 +1994,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         prompt: promptText,
         negativePrompt: sourceTask.negativePrompt ?? negativePrompt,
         seed: sourceTask.seed,
-        steps: isV5Model ? 23 : steps.clamp(1, 50),
-        scaleValue: scale,
+        steps: _isV5ModelId(model)
+            ? sourceTask.steps.clamp(1, 28)
+            : sourceTask.steps.clamp(1, 50),
+        scaleValue: sourceTask.scale,
+        scale: scale,
         strength: strength,
         noise: noise,
         upscaledEnhance: max,
@@ -2000,8 +2007,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           notifyListeners();
         },
       );
+      final dimensions = await compute(_processedImageDimensions, outputPath);
       officialEnhanceStatus = null;
       final newTask = sourceTask.copyWith(
+        model: model,
+        prompt: promptText,
+        width: dimensions.$1,
+        height: dimensions.$2,
+        size: '${dimensions.$1}x${dimensions.$2}',
         taskId: const Uuid().v4(),
         imagePath: outputPath,
         imageUrl: null,
@@ -2483,4 +2496,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _taskSub?.cancel();
     super.dispose();
   }
+}
+
+(int, int) _processedImageDimensions(String path) {
+  final image = img.decodeImage(File(path).readAsBytesSync());
+  if (image == null) throw const FormatException('无法读取处理后的图片');
+  return (image.width, image.height);
 }

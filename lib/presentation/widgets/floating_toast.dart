@@ -34,8 +34,13 @@ void showFloatingToast(
             child: Material(
               color: Colors.transparent,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.sizeOf(context).width - 32,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: bgColor,
                   borderRadius: BorderRadius.circular(14),
@@ -48,12 +53,14 @@ void showFloatingToast(
                       Icon(icon, size: 16, color: iconColor),
                       SizedBox(width: 8),
                     ],
-                    Text(
-                      text,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: textColor,
-                        fontWeight: FontWeight.w500,
+                    Flexible(
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: textColor,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ],

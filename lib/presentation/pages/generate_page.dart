@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -19,38 +19,16 @@ import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 import 'package:nai_huishi/presentation/widgets/img2img_crop_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
-import 'package:nai_huishi/presentation/widgets/prompt_capsule_sheet.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
-
-class _ChatFab extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _ChatFab({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Icon(
-            CupertinoIcons.wand_stars,
-            size: 26,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-      ),
-    );
-  }
-}
+import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
+import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
 
 class GeneratePage extends StatefulWidget {
   final ValueChanged<int>? onNavigate;
 
-  const GeneratePage({super.key, this.onNavigate});
+  final VoidCallback? onOpenAssistant;
+
+  const GeneratePage({super.key, this.onNavigate, this.onOpenAssistant});
 
   @override
   State<GeneratePage> createState() => _GeneratePageState();
@@ -60,8 +38,8 @@ class _GeneratePageState extends State<GeneratePage> {
   late final GenerationViewModel _vm;
   late final ImagePicker _imagePicker;
   late final ScrollController _scrollController;
-  int _promptSegmentIndex = 0; // 0: 正面, 1: 负面
   bool _isPreparingImg2Img = false;
+  bool _hasOpenedInpaint = false;
   String? _img2ImgOriginalPath;
 
   @override
@@ -70,6 +48,7 @@ class _GeneratePageState extends State<GeneratePage> {
     _imagePicker = ImagePicker();
     _scrollController = ScrollController();
     _vm = sl<GenerationViewModel>();
+    _hasOpenedInpaint = _vm.generationMode == GenerationMode.inpainting;
 
     // 我们不再直接使用 TextEditingController 以避免频繁重绘导致光标丢失。我们只传 initialValue 并在 onChanged 派发事件。
     // 但是 prompt 和 negative prompt 由于需要切换 Tab，如果频繁注销重建会导致光标和焦点丢失，所以这两个主输入框保留 controller
@@ -116,6 +95,8 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   void _onVmChanged() {
+    _hasOpenedInpaint =
+        _hasOpenedInpaint || _vm.generationMode == GenerationMode.inpainting;
     if (_promptController.text != _vm.prompt && !_promptFocusNode.hasFocus) {
       _promptController.text = _vm.prompt;
     }
@@ -151,14 +132,15 @@ class _GeneratePageState extends State<GeneratePage> {
     }
 
     if (mounted) setState(() {});
-    if (resultArrived && !_userScrolledDuringGeneration) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _revealLatestResult());
+    if (resultArrived && !_userScrolledDuringGeneration && !_isEditingPrompt) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _revealLatestResult(),
+      );
     }
   }
 
   Future<void> _revealLatestResult() async {
-    if (!mounted || _userScrolledDuringGeneration) return;
+    if (!mounted || _userScrolledDuringGeneration || _isEditingPrompt) return;
     final resultContext = _resultSectionKey.currentContext;
     if (resultContext == null) return;
     await Scrollable.ensureVisible(
@@ -175,162 +157,59 @@ class _GeneratePageState extends State<GeneratePage> {
     setState(() {});
   }
 
-  String? _toastMessage;
-  bool _toastVisible = false;
+  bool get _isEditingPrompt =>
+      _promptFocusNode.hasFocus ||
+      _negativeFocusNode.hasFocus ||
+      _inpaintPromptFocusNode.hasFocus ||
+      _inpaintNegativeFocusNode.hasFocus;
   bool _isChatDrawerOpen = false;
 
-  /// 弹选择器，返回写入目标：
-  /// null = 用户取消
-  /// -1  = 全局提示词
-  /// 0~N = 角色索引（不存在的槽会自动创建）
-  Future<int?> _showApplyTargetPicker({required bool isNegative}) async {
-    final characters = _vm.characters;
-    final maxSlots = 6;
-    // 已有N个角色时，再多显示一个「新建」槽（上限6）
-    final showSlots = characters.length < maxSlots
-        ? characters.length + 1
-        : characters.length;
-
-    return showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return Container(
-          margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
-          ),
-          decoration: BoxDecoration(
-            color: Color(0xFF1C1C21),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  isNegative ? '写入负向提示词到…' : '写入正向提示词到…',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                ),
-                SizedBox(height: 12),
-                ListTile(
-                  leading: Icon(CupertinoIcons.globe),
-                  title: Text('全局提示词'),
-                  onTap: () => Navigator.of(ctx).pop(-1),
-                ),
-                Divider(height: 1),
-                for (int i = 0; i < showSlots; i++)
-                  ListTile(
-                    leading: CircleAvatar(
-                      radius: 14,
-                      backgroundColor: i >= characters.length
-                          ? Theme.of(ctx)
-                              .colorScheme
-                              .primary
-                              .withValues(alpha: 0.2)
-                          : null,
-                      child: Text('${i + 1}', style: TextStyle(fontSize: 12)),
-                    ),
-                    title: i >= characters.length
-                        ? Text('角色 ${i + 1}（新建）',
-                            style: TextStyle(
-                                color: Theme.of(ctx).colorScheme.primary))
-                        : Text(
-                            characters[i].prompt.isEmpty
-                                ? '角色 ${i + 1}（空）'
-                                : '角色 ${i + 1}：${characters[i].prompt.length > 20 ? '${characters[i].prompt.substring(0, 20)}…' : characters[i].prompt}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                    onTap: () => Navigator.of(ctx).pop(i),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// 判断标注是否为角色标签
-  static bool _isCharacterLabelStr(String label) {
-    return label.contains('角色');
-  }
-
-  /// 判断标注是否为负向标签
-  static bool _isNegativeLabelStr(String label) {
-    return label.contains('负向') || label.contains('负面');
-  }
-
   void _showToast(String message) {
-    setState(() {
-      _toastMessage = message;
-      _toastVisible = true;
-    });
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _toastVisible = false);
-      }
-    });
+    showFloatingToast(context, message);
   }
 
   @override
   void dispose() {
     _vm.removeListener(_onVmChanged);
-    InpaintWorkspaceCard.gestureActive
-        .removeListener(_onInpaintGestureChanged);
+    InpaintWorkspaceCard.gestureActive.removeListener(_onInpaintGestureChanged);
     _promptController.dispose();
     _negativeController.dispose();
     _promptFocusNode.dispose();
     _negativeFocusNode.dispose();
+    _inpaintPromptController.dispose();
+    _inpaintNegativeController.dispose();
+    _inpaintPromptFocusNode.dispose();
+    _inpaintNegativeFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
-      resizeToAvoidBottomInset: false,
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: ClipRRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: AppBar(
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              centerTitle: true,
-              title: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(CupertinoIcons.sparkles, size: 16),
-                  SizedBox(width: 6),
-                  Text(
-                    '创作',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                ],
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        leadingWidth: 100,
+        leading: widget.onNavigate == null
+            ? null
+            : TextButton.icon(
+                onPressed: () => widget.onNavigate!(0),
+                icon: const Icon(Icons.photo_library_outlined, size: 20),
+                label: const Text('画廊', style: TextStyle(fontSize: 14)),
               ),
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Center(
-                    child: _ChatFab(
-                      onTap: () => setState(() => _isChatDrawerOpen = true),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        title: const Text('创作'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: '生成参数',
+            icon: const Icon(Icons.tune),
+            onPressed: _vm.isGenerating ? null : _openGenerationSettings,
           ),
-        ),
+        ],
       ),
+      bottomNavigationBar:
+          _isChatDrawerOpen || keyboardOpen ? null : _buildFloatingBottomBar(),
       body: Stack(
         children: [
           NotificationListener<ScrollNotification>(
@@ -343,133 +222,87 @@ class _GeneratePageState extends State<GeneratePage> {
               return false;
             },
             child: ListView(
+              key: const PageStorageKey('creation-scroll'),
               controller: _scrollController,
-              // 局部重绘工作区绘制/手势激活时锁定页面滚动，避免涂抹遮罩
-              // 时页面跟着移动。
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               physics: _vm.generationMode == GenerationMode.inpainting &&
-                      _inpaintWorkspaceLocked
+                      (_inpaintWorkspaceLocked ||
+                          InpaintWorkspaceCard.gestureActive.value)
                   ? const NeverScrollableScrollPhysics()
                   : null,
-              padding: EdgeInsets.only(
-                top: MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
-                bottom:
-                    120 + MediaQuery.paddingOf(context).bottom, // 给底部悬浮栏留出空间
-                left: 16,
-                right: 16,
+              padding: EdgeInsets.symmetric(
+                horizontal: MediaQuery.sizeOf(context).width < 360 ? 12 : 16,
+                vertical: 16,
               ),
               children: [
                 _buildModeSection(),
-                SizedBox(height: 16),
-
-                // 提示词区域（局部重绘模式的提示词在工作区卡片内编辑）
-                if (_vm.generationMode != GenerationMode.inpainting)
+                const SizedBox(height: 16),
+                if (_vm.generationMode != GenerationMode.inpainting) ...[
+                  _buildResultSection(),
+                  const SizedBox(height: 16),
                   _buildPromptSection(),
-                SizedBox(height: 16),
-
-                if (_vm.generationMode == GenerationMode.inpainting) ...[
-                  _buildInpaintingSection(),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 12),
+                  if (!_vm.isNonNovelAiProvider &&
+                      _vm.supportsCharacterPrompts) ...[
+                    _CharacterControlSection(vm: _vm),
+                    const SizedBox(height: 12),
+                  ],
+                  if (!_vm.isNonNovelAiProvider &&
+                      (_vm.supportsVibeReferences ||
+                          _vm.supportsPreciseReferences))
+                    _CharacterReferenceSection(
+                        vm: _vm,
+                        imagePicker: _imagePicker,
+                        onShowMessage: _showToast),
+                  if (_vm.isNonNovelAiProvider)
+                    _buildGptReferenceImageSection(),
+                  const SizedBox(height: 12),
+                  _buildGenerationSettingsButton(),
                 ],
-
-                // 最新结果卡片
-                _buildResultSection(),
+                if (_hasOpenedInpaint)
+                  Offstage(
+                    key: const ValueKey('retained-inpaint-workspace'),
+                    offstage: _vm.generationMode != GenerationMode.inpainting,
+                    child: _buildInpaintingSection(),
+                  ),
+                const SizedBox(height: 16),
               ],
             ),
           ),
-
-          // 悬浮底部生成栏
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _buildFloatingBottomBar(),
-          ),
-
-          if (_isChatDrawerOpen)
-            ChatDrawer(
-              onClose: _closeChatDrawer,
-            ),
-
-          // 悬浮提示
-          if (_toastVisible && _toastMessage != null)
-            Positioned(
-              top: MediaQuery.paddingOf(context).top + kToolbarHeight + 12,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: AnimatedOpacity(
-                  opacity: _toastVisible ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Builder(
-                    builder: (ctx) {
-                      final isDark =
-                          Theme.of(ctx).brightness == Brightness.dark;
-                      final bgColor = isDark
-                          ? Colors.black.withValues(alpha: 0.75)
-                          : Colors.black.withValues(alpha: 0.72);
-                      final borderColor = isDark
-                          ? Colors.white.withValues(alpha: 0.1)
-                          : Colors.white.withValues(alpha: 0.12);
-                      final textColor = Colors.white;
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: borderColor),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(CupertinoIcons.checkmark_circle,
-                                size: 18,
-                                color: Theme.of(ctx).colorScheme.primary),
-                            SizedBox(width: 8),
-                            Text(
-                              _toastMessage!,
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  color: textColor,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
+          if (_isChatDrawerOpen) ChatDrawer(onClose: _closeChatDrawer),
         ],
       ),
     );
   }
 
   Widget _buildModeSection() {
-    // 局部重绘仅 NovelAI 和 GPT 可用
-    final allowInpainting = !_vm.isNanoProvider;
+    // 统一重绘工作区目前只支持 NovelAI。
+    final allowInpainting = !_vm.isNonNovelAiProvider;
 
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardTheme.color,
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 0.5,
+        ),
       ),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(4),
       child: allowInpainting
           ? CupertinoSlidingSegmentedControl<GenerationMode>(
               groupValue: _vm.generationMode,
-              backgroundColor: Colors.black.withValues(alpha: 0.2),
+              backgroundColor: Theme.of(context).colorScheme.surface,
               thumbColor: Theme.of(context)
                   .colorScheme
                   .surfaceContainerHighest
                   .withValues(alpha: 0.8),
               children: {
                 GenerationMode.textToImage: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 12,
+                  ),
                   child: Text(
                     '文生图',
                     style: TextStyle(
@@ -482,8 +315,10 @@ class _GeneratePageState extends State<GeneratePage> {
                   ),
                 ),
                 GenerationMode.inpainting: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 12,
+                  ),
                   child: Text(
                     '局部重绘',
                     style: TextStyle(
@@ -497,7 +332,8 @@ class _GeneratePageState extends State<GeneratePage> {
                 ),
               },
               onValueChanged: (value) {
-                if (value != null) {
+                if (value != null && !_vm.isGenerating) {
+                  FocusManager.instance.primaryFocus?.unfocus();
                   _vm.setGenerationMode(value);
                 }
               },
@@ -537,8 +373,10 @@ class _GeneratePageState extends State<GeneratePage> {
       decoration: BoxDecoration(
         color: Theme.of(context).cardTheme.color,
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 0.5,
+        ),
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -546,16 +384,19 @@ class _GeneratePageState extends State<GeneratePage> {
         children: [
           Row(
             children: [
-              Icon(CupertinoIcons.photo_on_rectangle,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+              Icon(
+                CupertinoIcons.photo_on_rectangle,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
               SizedBox(width: 8),
               Text(
                 '参考图（可选，${images.length}/16）',
                 style: TextStyle(
-                    fontSize: 13,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600),
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const Spacer(),
               if (images.isNotEmpty)
@@ -564,8 +405,9 @@ class _GeneratePageState extends State<GeneratePage> {
                   icon: Icon(CupertinoIcons.xmark_circle, size: 14),
                   label: Text('清空', style: TextStyle(fontSize: 12)),
                   style: TextButton.styleFrom(
-                      foregroundColor:
-                          Theme.of(context).colorScheme.onSurfaceVariant),
+                    foregroundColor:
+                        Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
             ],
           ),
@@ -573,12 +415,13 @@ class _GeneratePageState extends State<GeneratePage> {
           Text(
             '上传参考图后走图像编辑接口，提示词描述修改意图。最多16张。',
             style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.5),
-                height: 1.5),
+              fontSize: 11,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.5),
+              height: 1.5,
+            ),
           ),
           if (images.isNotEmpty) ...[
             SizedBox(height: 12),
@@ -624,9 +467,11 @@ class _GeneratePageState extends State<GeneratePage> {
                             color: Colors.black.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(CupertinoIcons.xmark,
-                              size: 12,
-                              color: Theme.of(context).colorScheme.onSurface),
+                          child: Icon(
+                            CupertinoIcons.xmark,
+                            size: 12,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
                       ),
                     ),
@@ -653,7 +498,8 @@ class _GeneratePageState extends State<GeneratePage> {
                 foregroundColor: Colors.white,
                 side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
@@ -746,36 +592,6 @@ class _GeneratePageState extends State<GeneratePage> {
     return applied;
   }
 
-  Future<void> _openPromptCapsule({
-    required bool isInpaint,
-    required bool isNegative,
-  }) async {
-    final title = isInpaint
-        ? (isNegative ? '灵感胶囊 · 重绘负面' : '灵感胶囊 · 重绘正面')
-        : (isNegative ? '灵感胶囊 · 负面提示词' : '灵感胶囊 · 正面提示词');
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => PromptCapsuleSheet(
-        title: title,
-        onSelect: (tag) async {
-          if (isNegative) {
-            await _vm.appendToNegativePrompt(tag.promptText);
-          } else {
-            await _vm.appendToPrompt(tag.promptText);
-          }
-          if (!mounted) return;
-          showFloatingToast(
-            context,
-            '已插入 ${tag.zh}',
-            icon: CupertinoIcons.sparkles,
-          );
-        },
-      ),
-    );
-  }
-
   Future<void> _openExpandedPromptEditor({
     required String title,
     required String initialValue,
@@ -812,8 +628,9 @@ class _GeneratePageState extends State<GeneratePage> {
                     width: 44,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant
-                          .withValues(alpha: 0.35),
+                      color: theme.colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.35,
+                      ),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),
@@ -875,49 +692,6 @@ class _GeneratePageState extends State<GeneratePage> {
     controller.dispose();
   }
 
-  Widget _buildPromptCapsuleButton({
-    required bool isInpaint,
-    required bool isNegative,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: Theme.of(context)
-              .colorScheme
-              .surfaceContainerHighest
-              .withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: Theme.of(context)
-                .colorScheme
-                .outlineVariant
-                .withValues(alpha: 0.3),
-          ),
-        ),
-        child: InkWell(
-          onTap: () => _openPromptCapsule(
-            isInpaint: isInpaint,
-            isNegative: isNegative,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.sparkles, size: 16),
-                SizedBox(width: 8),
-                Text('灵感胶囊'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildPromptField({
     required TextEditingController controller,
     required FocusNode focusNode,
@@ -932,13 +706,9 @@ class _GeneratePageState extends State<GeneratePage> {
         TextField(
           controller: controller,
           focusNode: focusNode,
-          minLines: 7,
+          minLines: 6,
           maxLines: 14,
-          style: TextStyle(
-            fontSize: 14,
-            height: 1.5,
-            color: textColor,
-          ),
+          style: TextStyle(fontSize: 14, height: 1.5, color: textColor),
           decoration: InputDecoration(
             hintText: hintText,
             hintStyle: TextStyle(
@@ -951,7 +721,7 @@ class _GeneratePageState extends State<GeneratePage> {
             border: InputBorder.none,
             focusedBorder: InputBorder.none,
             enabledBorder: InputBorder.none,
-            contentPadding: const EdgeInsets.only(right: 36),
+            contentPadding: const EdgeInsets.only(right: 48),
           ),
           onChanged: onChanged,
         ),
@@ -965,9 +735,9 @@ class _GeneratePageState extends State<GeneratePage> {
               onSubmitted: onExpandedSubmit,
             ),
             tooltip: '放大编辑',
-            visualDensity: VisualDensity.compact,
+            visualDensity: VisualDensity.standard,
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: Icon(
               CupertinoIcons.arrow_up_left_arrow_down_right,
               size: 15,
@@ -983,123 +753,40 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildPromptSection() {
-    if (_vm.isNonNovelAiProvider) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08), width: 0.5),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: TextField(
-          controller: _promptController,
-          focusNode: _promptFocusNode,
-          minLines: 7,
-          maxLines: 14,
-          style: TextStyle(fontSize: 14, height: 1.5),
-          decoration: InputDecoration(
-            hintText: '描述你想要的画面...',
-            hintStyle: TextStyle(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.55)),
-            fillColor: Colors.transparent,
-            border: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-          ),
-          onChanged: _vm.updatePrompt,
-        ),
-      );
-    }
-
+    final theme = Theme.of(context);
+    Widget editor({required bool negative}) => Padding(
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text(negative ? '负向提示词' : '正向提示词',
+                style: theme.textTheme.titleSmall),
+            const SizedBox(height: 12),
+            _buildPromptField(
+              controller: negative ? _negativeController : _promptController,
+              focusNode: negative ? _negativeFocusNode : _promptFocusNode,
+              hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',
+              onChanged: negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
+              textColor: theme.colorScheme.onSurface,
+              editorTitle: negative ? '负向提示词' : '正向提示词',
+              onExpandedSubmit:
+                  negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
+            ),
+          ]),
+        );
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+        color: theme.cardTheme.color,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: CupertinoSlidingSegmentedControl<int>(
-              groupValue: _promptSegmentIndex,
-              backgroundColor: Colors.black.withValues(alpha: 0.2),
-              thumbColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.8),
-              children: {
-                0: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '正面提示词',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _promptSegmentIndex == 0
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                1: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '负面提示词',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _promptSegmentIndex == 1
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              },
-              onValueChanged: (v) {
-                if (v != null) setState(() => _promptSegmentIndex = v);
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: IndexedStack(
-              index: _promptSegmentIndex,
-              children: [
-                _buildPromptField(
-                  controller: _promptController,
-                  focusNode: _promptFocusNode,
-                  hintText: '描述你想要的画面...',
-                  onChanged: _vm.updatePrompt,
-                  textColor: Theme.of(context).colorScheme.onSurface,
-                  editorTitle: '编辑正面提示词',
-                  onExpandedSubmit: _vm.updatePrompt,
-                ),
-                _buildPromptField(
-                  controller: _negativeController,
-                  focusNode: _negativeFocusNode,
-                  hintText: '描述你不想要的画面...',
-                  onChanged: _vm.updateNegativePrompt,
-                  textColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                  editorTitle: '编辑负面提示词',
-                  onExpandedSubmit: _vm.updateNegativePrompt,
-                ),
-              ],
-            ),
-          ),
-          _buildPromptCapsuleButton(
-            isInpaint: false,
-            isNegative: _promptSegmentIndex == 1,
-          ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        editor(negative: false),
+        if (!_vm.isNonNovelAiProvider) ...[
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          editor(negative: true),
         ],
-      ),
+      ]),
     );
   }
 
@@ -1159,9 +846,13 @@ class _GeneratePageState extends State<GeneratePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('图生图',
-            style: TextStyle(
-                fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+        Text(
+          '图生图',
+          style: TextStyle(
+            fontSize: 12,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: 8),
         SegmentedButton<Img2ImgMode>(
           segments: const [
@@ -1170,20 +861,25 @@ class _GeneratePageState extends State<GeneratePage> {
           ],
           selected: {_vm.img2ImgMode},
           style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) =>
-                states.contains(WidgetState.selected)
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.selected)
+                  ? const Color(0xFFF5D57A)
+                  : theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.45,
+                    ),
+            ),
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.selected)
+                  ? Colors.black
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+            side: WidgetStateProperty.resolveWith(
+              (states) => BorderSide(
+                color: states.contains(WidgetState.selected)
                     ? const Color(0xFFF5D57A)
-                    : theme.colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.45)),
-            foregroundColor: WidgetStateProperty.resolveWith((states) =>
-                states.contains(WidgetState.selected)
-                    ? Colors.black
-                    : theme.colorScheme.onSurfaceVariant),
-            side: WidgetStateProperty.resolveWith((states) => BorderSide(
-                  color: states.contains(WidgetState.selected)
-                      ? const Color(0xFFF5D57A)
-                      : theme.colorScheme.outline.withValues(alpha: 0.28),
-                )),
+                    : theme.colorScheme.outline.withValues(alpha: 0.28),
+              ),
+            ),
           ),
           onSelectionChanged: (selection) =>
               _vm.updateImg2ImgMode(selection.first),
@@ -1193,11 +889,13 @@ class _GeneratePageState extends State<GeneratePage> {
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest
-                .withValues(alpha: 0.35),
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.35,
+            ),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+              color: theme.colorScheme.outline.withValues(alpha: 0.2),
+            ),
           ),
           child: hasImage
               ? Row(
@@ -1207,8 +905,12 @@ class _GeneratePageState extends State<GeneratePage> {
                       onTap: () => _openImagePreview(context, imagePath: path),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.file(file!,
-                            width: 72, height: 72, fit: BoxFit.cover),
+                        child: Image.file(
+                          file!,
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1216,14 +918,18 @@ class _GeneratePageState extends State<GeneratePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(isTiled ? '已选择分块原图' : '已启用图生图',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600)),
+                          Text(
+                            isTiled ? '已选择分块原图' : '已启用图生图',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
                           const SizedBox(height: 4),
-                          Text(isTiled ? '将整张原图分块高清重绘，约放大 1.6 倍' : '点击缩略图可查看大图',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: theme.colorScheme.onSurfaceVariant)),
+                          Text(
+                            isTiled ? '将整张原图分块高清重绘，约放大 1.6 倍' : '点击缩略图可查看大图',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                           const SizedBox(height: 6),
                           Wrap(
                             spacing: 4,
@@ -1262,9 +968,11 @@ class _GeneratePageState extends State<GeneratePage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(CupertinoIcons.photo_on_rectangle, size: 17),
-                  label: Text(_isPreparingImg2Img
-                      ? '正在压缩图片…'
-                      : (isTiled ? '上传分块原图' : '上传图生图源图')),
+                  label: Text(
+                    _isPreparingImg2Img
+                        ? '正在压缩图片…'
+                        : (isTiled ? '上传分块原图' : '上传图生图源图'),
+                  ),
                 ),
         ),
         if (hasImage) ...[
@@ -1277,15 +985,23 @@ class _GeneratePageState extends State<GeneratePage> {
             divisions: isTiled ? 50 : 99,
             onChanged: _vm.updateImg2ImgStrength,
           ),
-          Text(isTiled ? '数值过高会导致块间不一致，建议 0.2–0.4' : '数值越高，生成结果越偏离原图。',
-              style: TextStyle(
-                  fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+          Text(
+            isTiled ? '数值过高会导致块间不一致，建议 0.2–0.4' : '数值越高，生成结果越偏离原图。',
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
           if (isTiled)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text('自动按 640×640 分块、320 重叠，每块输出 1024×1024，处理耗时较长。',
-                  style: TextStyle(
-                      fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+              child: Text(
+                '自动按 640×640 分块、320 重叠，每块输出 1024×1024，处理耗时较长。',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
         ],
       ],
@@ -1298,10 +1014,13 @@ class _GeneratePageState extends State<GeneratePage> {
       icon: CupertinoIcons.cube_box,
       initiallyExpanded: initiallyExpanded,
       children: [
-        Text('AI 模型',
-            style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        Text(
+          'AI 模型',
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
         SizedBox(height: 8),
         _dropdownShell(
           child: Builder(
@@ -1340,8 +1059,10 @@ class _GeneratePageState extends State<GeneratePage> {
                         : '';
                     return DropdownMenuItem(
                       value: opt.modelId,
-                      child: Text('$tag$epName${opt.displayName}',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      child: Text(
+                        '$tag$epName${opt.displayName}',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     );
                   }).toList(),
                   onChanged: (v) {
@@ -1353,18 +1074,26 @@ class _GeneratePageState extends State<GeneratePage> {
           ),
         ),
         SizedBox(height: 20),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          spacing: 12,
+          runSpacing: 4,
           children: [
-            Text('图像尺寸',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const Spacer(),
-            Text(_vm.selectedResolution,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.bold)),
+            Text(
+              '图像尺寸',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              _vm.selectedResolution,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         SizedBox(height: 8),
@@ -1375,18 +1104,23 @@ class _GeneratePageState extends State<GeneratePage> {
               child: DropdownButton<String>(
                 isExpanded: true,
                 borderRadius: BorderRadius.circular(22),
-                value: _vm.availableResolutions
-                        .contains(_vm.selectedResolution)
+                value: _vm.availableResolutions.contains(_vm.selectedResolution)
                     ? _vm.selectedResolution
                     : null,
-                hint: Text(_vm.resolutionLabel(_vm.selectedResolution),
-                    style: _dropdownTextStyle(context)),
+                hint: Text(
+                  _vm.resolutionLabel(_vm.selectedResolution),
+                  style: _dropdownTextStyle(context),
+                ),
                 icon: Icon(CupertinoIcons.chevron_down, size: 16),
                 dropdownColor: _dropdownColor(context),
                 style: _dropdownTextStyle(context),
                 items: _vm.availableResolutions
-                    .map((r) => DropdownMenuItem(
-                        value: r, child: Text(_vm.resolutionLabel(r))))
+                    .map(
+                      (r) => DropdownMenuItem(
+                        value: r,
+                        child: Text(_vm.resolutionLabel(r)),
+                      ),
+                    )
                     .toList(),
                 onChanged: (v) {
                   if (v != null) _vm.updateSelectedResolution(v);
@@ -1399,16 +1133,22 @@ class _GeneratePageState extends State<GeneratePage> {
           SizedBox(height: 16),
           Row(
             children: [
-              Text('图片质量',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              Text(
+                '图片质量',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
               const Spacer(),
-              Text(_vm.selectedNanoImageSize,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.primary,
-                      fontWeight: FontWeight.bold)),
+              Text(
+                _vm.selectedNanoImageSize,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
           SizedBox(height: 8),
@@ -1422,8 +1162,12 @@ class _GeneratePageState extends State<GeneratePage> {
                 dropdownColor: _dropdownColor(context),
                 style: _dropdownTextStyle(context),
                 items: ApiConstants.nanoImageSizes
-                    .map((s) => DropdownMenuItem(
-                        value: s, child: Text(_vm.nanoImageSizeLabel(s))))
+                    .map(
+                      (s) => DropdownMenuItem(
+                        value: s,
+                        child: Text(_vm.nanoImageSizeLabel(s)),
+                      ),
+                    )
                     .toList(),
                 onChanged: (v) {
                   if (v != null) _vm.updateSelectedNanoImageSize(v);
@@ -1445,7 +1189,7 @@ class _GeneratePageState extends State<GeneratePage> {
             child: Text(
               _vm.isV5Model
                   ? 'V5 渠道固定单张生成，步数最多 28，画面总像素不超过 1024×1024；不支持 Vibe 与角色参考。'
-                  : '7877 使用 OpenAI Images 兼容接口；高级参数请从左上角进入。',
+                  : '7877 Images',
               style: TextStyle(
                 fontSize: 11,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1456,18 +1200,22 @@ class _GeneratePageState extends State<GeneratePage> {
         if (_vm.isOfficialEndpoint && _vm.officialCostPerImage != null) ...[
           Row(
             children: [
-              Text('预计消耗',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              Text(
+                '预计消耗',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
               const Spacer(),
               Text(
                 '${_vm.officialCostPerImage! * _vm.batchCount} Anlas'
                 '（${_vm.officialCostPerImage!}/张${_vm.batchCount > 1 ? ' × ${_vm.batchCount}' : ''}）',
                 style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.bold),
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -1475,17 +1223,21 @@ class _GeneratePageState extends State<GeneratePage> {
         ],
         Row(
           children: [
-            Text('批量生成',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            Text(
+              '批量生成',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
             const Spacer(),
             Text(
               '${_vm.batchCount} 张',
               style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.bold),
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
@@ -1503,9 +1255,10 @@ class _GeneratePageState extends State<GeneratePage> {
             showValueIndicator: ShowValueIndicator.never,
           ),
           child: Slider(
-            value: _vm.batchCount
-                .toDouble()
-                .clamp(1.0, AppConstants.maxBatchCount.toDouble()),
+            value: _vm.batchCount.toDouble().clamp(
+                  1.0,
+                  AppConstants.maxBatchCount.toDouble(),
+                ),
             min: 1,
             max: AppConstants.maxBatchCount.toDouble(),
             divisions: AppConstants.maxBatchCount - 1,
@@ -1519,11 +1272,12 @@ class _GeneratePageState extends State<GeneratePage> {
           child: Text(
             '同一组提示词连续出图，每张间隔 1 秒',
             style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.5)),
+              fontSize: 11,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.5),
+            ),
           ),
         ),
       ],
@@ -1532,33 +1286,6 @@ class _GeneratePageState extends State<GeneratePage> {
 
   /// 工作台上方的官方超分按钮：点击弹出倍率选择（2x / 4x）。
   /// 结果区的"局部重绘"按钮：把该图与当前正负提示词导入工作区并跳转。
-  Widget _buildInpaintImportButton() {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: OutlinedButton.icon(
-        onPressed: _importResultToInpaint,
-        icon: Icon(CupertinoIcons.paintbrush,
-            size: 15, color: Theme.of(context).colorScheme.primary),
-        label: Text('局部重绘',
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.primary)),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          side: BorderSide(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: 0.45)),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-        ),
-      ),
-    );
-  }
-
   Future<void> _importResultToInpaint() async {
     final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
     final path = displayTask?.imagePath;
@@ -1612,19 +1339,25 @@ class _GeneratePageState extends State<GeneratePage> {
             }
 
             return AlertDialog(
-              backgroundColor: const Color(0xFF1C1C21),
+              backgroundColor: Theme.of(context).colorScheme.surface,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              title: const Text('自定义画幅',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: const Text(
+                '自定义画幅',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('边长需为 64 的倍数（64–1920）',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                  Text(
+                    '边长需为 64 的倍数（64–1920）',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1633,7 +1366,7 @@ class _GeneratePageState extends State<GeneratePage> {
                           controller: widthController,
                           keyboardType: TextInputType.number,
                           inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly
+                            FilteringTextInputFormatter.digitsOnly,
                           ],
                           decoration: const InputDecoration(
                             labelText: '宽度',
@@ -1650,7 +1383,7 @@ class _GeneratePageState extends State<GeneratePage> {
                           controller: heightController,
                           keyboardType: TextInputType.number,
                           inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly
+                            FilteringTextInputFormatter.digitsOnly,
                           ],
                           decoration: const InputDecoration(
                             labelText: '高度',
@@ -1662,10 +1395,13 @@ class _GeneratePageState extends State<GeneratePage> {
                   ),
                   if (errorText != null) ...[
                     const SizedBox(height: 10),
-                    Text(errorText!,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(ctx).colorScheme.error)),
+                    Text(
+                      errorText!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(ctx).colorScheme.error,
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -1698,41 +1434,8 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   /// 工作台的官方 Enhance 按钮：按提示词重绘放大（仅官方渠道显示）。
-  Widget _buildEnhanceButton() {
-    final busy = _vm.isOfficialEnhancing;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: OutlinedButton.icon(
-        onPressed: busy ? null : _showEnhanceSheet,
-        icon: busy
-            ? const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(CupertinoIcons.wand_stars,
-                size: 15, color: Theme.of(context).colorScheme.primary),
-        label: Text(busy ? 'Enhance 中…' : 'Enhance',
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.primary)),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          side: BorderSide(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: 0.45)),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-        ),
-      ),
-    );
-  }
-
   Future<void> _showEnhanceSheet() async {
+    final sourceId = (_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId;
     double magnitude = 0.3;
     double noise = 0.1;
     bool useMax = false;
@@ -1752,11 +1455,14 @@ class _GeneratePageState extends State<GeneratePage> {
                 bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
               ),
               decoration: BoxDecoration(
-                color: const Color(0xFF1C1C21),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(28)),
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
                 border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+                  color: Colors.white.withValues(alpha: 0.08),
+                  width: 0.5,
+                ),
               ),
               child: SafeArea(
                 top: false,
@@ -1764,20 +1470,27 @@ class _GeneratePageState extends State<GeneratePage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('Enhance · 重绘放大',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w700)),
+                    const Text(
+                      'Enhance · 重绘放大',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Text('按当前提示词重绘放大，消耗 Anlas。',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color:
-                                Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                    Text(
+                      '使用原图提示词（为空时取当前草稿）与当前模型设置重绘，消耗 Anlas。',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                     const SizedBox(height: 14),
                     Text(
-                        '重绘幅度 ${(magnitude * 100).round()}%'
-                        '（低 ≈ 贴原图，高 ≈ 改得多）',
-                        style: const TextStyle(fontSize: 12)),
+                      '重绘幅度 ${(magnitude * 100).round()}%'
+                      '（低 ≈ 贴原图，高 ≈ 改得多）',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     Slider(
                       value: magnitude,
                       min: 0.05,
@@ -1785,8 +1498,10 @@ class _GeneratePageState extends State<GeneratePage> {
                       divisions: 55,
                       onChanged: (v) => setSheetState(() => magnitude = v),
                     ),
-                    Text('细节噪声 ${(noise * 100).round()}%',
-                        style: const TextStyle(fontSize: 12)),
+                    Text(
+                      '细节噪声 ${(noise * 100).round()}%',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     Slider(
                       value: noise,
                       min: 0,
@@ -1797,13 +1512,17 @@ class _GeneratePageState extends State<GeneratePage> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
-                      title: const Text('Max 放大（V5）',
-                          style: TextStyle(fontSize: 13)),
-                      subtitle: Text('服务端放大到 2× / 像素上限，Opus 也扣 Anlas',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color:
-                                  Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                      title: const Text(
+                        'Max 放大（V5）',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        '服务端放大到 2× / 像素上限，Opus 也扣 Anlas',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                       value: useMax,
                       onChanged: (v) => setSheetState(() => useMax = v),
                     ),
@@ -1834,6 +1553,10 @@ class _GeneratePageState extends State<GeneratePage> {
       },
     );
     if (confirmed != true || !mounted) return;
+    if ((_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId != sourceId) {
+      _showToast('当前结果已变化，请重新选择要增强的图片');
+      return;
+    }
     final ok = await _vm.enhanceWithOfficial(
       scale: useMax ? 1.0 : 1.5,
       strength: magnitude,
@@ -1848,41 +1571,8 @@ class _GeneratePageState extends State<GeneratePage> {
     }
   }
 
-  Widget _buildOfficialUpscaleButton() {
-    final busy = _vm.isOfficialUpscaling;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: OutlinedButton.icon(
-        onPressed: busy ? null : _showOfficialUpscaleSheet,
-        icon: busy
-            ? const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(CupertinoIcons.arrow_up_left_square,
-                size: 15, color: Theme.of(context).colorScheme.primary),
-        label: Text(busy ? '超分中…' : '超分',
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.primary)),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          side: BorderSide(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: 0.45)),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-        ),
-      ),
-    );
-  }
-
   Future<void> _showOfficialUpscaleSheet() async {
+    final sourceId = (_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId;
     final scale = await showModalBottomSheet<int>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1896,10 +1586,12 @@ class _GeneratePageState extends State<GeneratePage> {
             bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFF1C1C21),
+            color: Theme.of(context).colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             border: Border.all(
-                color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+              color: Colors.white.withValues(alpha: 0.08),
+              width: 0.5,
+            ),
           ),
           child: SafeArea(
             top: false,
@@ -1907,14 +1599,18 @@ class _GeneratePageState extends State<GeneratePage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('官方超分',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const Text(
+                  '官方超分',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 4),
-                Text('使用 NovelAI 官方接口放大当前图片，消耗 Anlas。',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                Text(
+                  '使用 NovelAI 官方接口放大当前图片，消耗 Anlas。',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 ListTile(
                   leading: const Icon(CupertinoIcons.zoom_in),
@@ -1936,6 +1632,10 @@ class _GeneratePageState extends State<GeneratePage> {
       },
     );
     if (scale == null || !mounted) return;
+    if ((_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId != sourceId) {
+      _showToast('当前结果已变化，请重新选择要放大的图片');
+      return;
+    }
     final ok = await _vm.upscaleWithOfficial(scale);
     if (!mounted) return;
     if (ok) {
@@ -1946,217 +1646,55 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildResultSection() {
-    final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
-    if (displayTask == null && _vm.errorMessage == null)
-      return const SizedBox.shrink();
-
-    final results = _vm.sessionResults;
-    final showStrip = results.length > 1;
-    final headerLabel =
-        results.length > 1 ? '本次结果 (${results.length})' : '最新结果';
-
-    return KeyedSubtree(
+    final task = _vm.selectedResult ?? _vm.lastCompletedTask;
+    final hasLocalImage =
+        task?.imagePath != null && File(task!.imagePath!).existsSync();
+    return GenerationResultCard(
       key: _resultSectionKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 8, bottom: 8),
-            child: Row(
-              children: [
-                Text(headerLabel,
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color:
-                            Theme.of(context).colorScheme.onSurfaceVariant)),
-                const Spacer(),
-                if (displayTask?.imagePath != null &&
-                    File(displayTask!.imagePath!).existsSync()) ...[
-                  _buildInpaintImportButton(),
-                  if (_vm.isOfficialEndpoint) _buildEnhanceButton(),
-                  _buildOfficialUpscaleButton(),
-                ],
-              ],
-            ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardTheme.color,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.08), width: 0.5),
-            ),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_vm.errorMessage != null)
-                  Text(_vm.errorMessage!,
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 13))
-                else if (displayTask != null) ...[
-                  if (displayTask.imagePath != null &&
-                      File(displayTask.imagePath!).existsSync())
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: GestureDetector(
-                        onTap: () => _openImagePreview(
-                          context,
-                          imagePath: displayTask.imagePath,
-                          imageUrl: displayTask.imageUrl,
-                        ),
-                        child: Image.file(File(displayTask.imagePath!),
-                            fit: BoxFit.cover),
-                      ),
-                    )
-                  else if (displayTask.imageUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: GestureDetector(
-                        onTap: () => _openImagePreview(
-                          context,
-                          imagePath: displayTask.imagePath,
-                          imageUrl: displayTask.imageUrl,
-                        ),
-                        child: Image.network(displayTask.imageUrl!,
-                            fit: BoxFit.cover),
-                      ),
-                    ),
-                  if (showStrip) ...[
-                    SizedBox(height: 12),
-                    SizedBox(
-                      height: 72,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 4),
-                        itemCount: results.length,
-                        separatorBuilder: (_, __) => SizedBox(width: 8),
-                        itemBuilder: (context, index) {
-                          final t = results[index];
-                          final isSelected = t.taskId ==
-                              (_vm.selectedResultTaskId ??
-                                  _vm.lastCompletedTask?.taskId);
-                          Widget thumb;
-                          if (t.imagePath != null &&
-                              File(t.imagePath!).existsSync()) {
-                            thumb = Image.file(File(t.imagePath!),
-                                fit: BoxFit.cover, width: 64, height: 64);
-                          } else if (t.imageUrl != null) {
-                            thumb = Image.network(t.imageUrl!,
-                                fit: BoxFit.cover, width: 64, height: 64);
-                          } else {
-                            thumb = Container(
-                              width: 64,
-                              height: 64,
-                              color: Colors.black26,
-                              child: Icon(CupertinoIcons.photo,
-                                  size: 24,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.25)),
-                            );
-                          }
-                          return GestureDetector(
-                            onTap: () => _vm.selectResult(t.taskId),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 180),
-                              width: 64,
-                              height: 64,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: isSelected
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Colors.white.withValues(alpha: 0.15),
-                                  width: isSelected ? 2 : 1,
-                                ),
-                                boxShadow: isSelected
-                                    ? [
-                                        BoxShadow(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                              .withValues(alpha: 0.35),
-                                          blurRadius: 10,
-                                          spreadRadius: 0,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    thumb,
-                                    Positioned(
-                                      right: 2,
-                                      bottom: 2,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 5, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black
-                                              .withValues(alpha: 0.55),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                        child: Text(
-                                          '${index + 1}',
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  SizedBox(height: 16),
-                  SizedBox(
-                    height: 44,
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        final filePath = await _vm.saveImage(displayTask);
-                        if (!context.mounted || filePath == null) return;
-                        _showToast('已保存到相册');
-                      },
-                      icon: Icon(CupertinoIcons.square_arrow_down, size: 18),
-                      label: Text('保存到相册',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black.withValues(alpha: 0.3),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
+      task: task,
+      results: _vm.sessionResults,
+      generating: _vm.isGenerating,
+      error: _vm.errorMessage,
+      onSelect: (result) => _vm.selectResult(result.taskId),
+      onPreview: task == null
+          ? null
+          : () => _openImagePreview(
+                context,
+                imagePath: task.imagePath,
+                imageUrl: task.imageUrl,
+              ),
+      onSave: task == null
+          ? null
+          : () async {
+              final path = await _vm.saveImage(task);
+              if (mounted && path != null) _showToast('已保存到相册');
+            },
+      onInpaint: hasLocalImage && !_vm.isNonNovelAiProvider
+          ? (result) {
+              _vm.selectResult(result.taskId);
+              return _importResultToInpaint();
+            }
+          : null,
+      onUpscale: hasLocalImage
+          ? (result) {
+              _vm.selectResult(result.taskId);
+              return _showOfficialUpscaleSheet();
+            }
+          : null,
+      onEnhance: hasLocalImage && _vm.isOfficialEndpoint
+          ? (result) {
+              _vm.selectResult(result.taskId);
+              return _showEnhanceSheet();
+            }
+          : null,
     );
   }
 
-  void _openImagePreview(BuildContext context,
-      {String? imagePath, String? imageUrl}) {
+  void _openImagePreview(
+    BuildContext context, {
+    String? imagePath,
+    String? imageUrl,
+  }) {
     showFullscreenImagePreview(
       context,
       imagePath: imagePath,
@@ -2165,163 +1703,70 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildFloatingBottomBar() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary = Theme.of(context).colorScheme.primary;
-    final barColor = isDark
-        ? const Color(0xFF0A0A0C).withValues(alpha: 0.5)
-        : Colors.white.withValues(alpha: 0.82);
-    final barBorder = isDark
-        ? Colors.white.withValues(alpha: 0.1)
-        : const Color(0xFFBBD7FF).withValues(alpha: 0.9);
-    final idleButtonColors = isDark
-        ? [const Color(0xFFF5D57A), const Color(0xFFD4A373)]
-        : [const Color(0xFF60A5FA), const Color(0xFF2563EB)];
-    final buttonTextColor = isDark ? Colors.black87 : Colors.white;
-    final navIconColor = Theme.of(context).colorScheme.onSurfaceVariant;
-
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          decoration: BoxDecoration(
-            color: barColor,
-            border: Border(top: BorderSide(color: barBorder, width: 0.5)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildGenerationSettingsButton(),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    if (widget.onNavigate != null) ...[
-                      IconButton(
-                        icon: Icon(CupertinoIcons.clock, color: navIconColor),
-                        onPressed: () => widget.onNavigate!(0),
-                      ),
-                      SizedBox(width: 8),
-                    ],
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: _vm.isGenerating
-                            ? () => _vm.isTiledImg2Img
-                                ? _vm.cancelTiledImg2Img()
-                                : _vm.cancelBatch()
-                            : () => _vm.generate(),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          height: 56,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: _vm.isGenerating
-                                  ? [
-                                      primary.withValues(alpha: 0.28),
-                                      primary.withValues(alpha: 0.16)
-                                    ]
-                                  : idleButtonColors,
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(28),
-                            boxShadow: _vm.isGenerating
-                                ? null
-                                : [
-                                    BoxShadow(
-                                      color: primary.withValues(alpha: 0.3),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                          ),
-                          child: Center(
-                            child: _vm.isGenerating
-                                ? Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface)),
-                                      SizedBox(width: 12),
-                                      Text(
-                                        _vm.isTiledImg2Img
-                                            ? (_vm.isTiledCancelling
-                                                ? '取消中…'
-                                                : '取消分块重绘 ${_vm.tiledCompleted}/${_vm.tiledTotal}')
-                                            : (_vm.isBatchCancelling
-                                                ? '取消中…'
-                                                : (_vm.batchCount > 1
-                                                    ? '取消生成 ${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}'
-                                                    : '取消生成')),
-                                        style: TextStyle(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurface,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16),
-                                      ),
-                                    ],
-                                  )
-                                : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(CupertinoIcons.wand_rays,
-                                          color: buttonTextColor, size: 20),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        'Generate',
-                                        style: TextStyle(
-                                          color: buttonTextColor,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                          letterSpacing: 0.5,
-                                        ),
-                                      ),
-                                      if (_vm.pendingCount > 0) ...[
-                                        SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black.withValues(
-                                                alpha: isDark ? 0.2 : 0.16),
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          child: Text(
-                                            '${_vm.pendingCount} in queue',
-                                            style: TextStyle(
-                                                color: buttonTextColor,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (widget.onNavigate != null) ...[
-                      SizedBox(width: 8),
-                      IconButton(
-                        icon:
-                            Icon(CupertinoIcons.settings, color: navIconColor),
-                        onPressed: () => widget.onNavigate!(2),
-                      ),
-                    ],
-                  ],
+    final theme = Theme.of(context);
+    final cancelling =
+        _vm.isTiledImg2Img ? _vm.isTiledCancelling : _vm.isBatchCancelling;
+    final progress = _vm.isTiledImg2Img
+        ? '${_vm.tiledCompleted}/${_vm.tiledTotal}'
+        : '${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}';
+    final model = _vm.currentModelOption?.displayName ?? '选择模型';
+    final cost = _vm.officialCostPerImage;
+    return Material(
+      color: theme.colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
+                '${cost == null ? '' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                onPressed: cancelling
+                    ? null
+                    : () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        if (_vm.isGenerating) {
+                          _vm.isTiledImg2Img
+                              ? _vm.cancelTiledImg2Img()
+                              : _vm.cancelBatch();
+                        } else {
+                          _vm.generate();
+                        }
+                      },
+                icon: Icon(
+                  _vm.isGenerating
+                      ? Icons.stop_circle_outlined
+                      : Icons.auto_awesome,
+                ),
+                label: Text(
+                  _vm.isGenerating
+                      ? (cancelling ? '正在停止后续任务…' : '停止后续生成 · $progress')
+                      : (_vm.batchCount > 1
+                          ? '生成 ${_vm.batchCount} 张图片'
+                          : '生成图片'),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -2329,71 +1774,19 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildGenerationSettingsButton() {
-    final option = _vm.currentModelOption;
-    final model =
-        option?.displayName.isNotEmpty == true ? option!.displayName : '生成设置';
     final referenceCount = _vm.isNonNovelAiProvider
         ? _vm.gptImagePaths.length
-        : _vm.referenceMode == ReferenceMode.vibe
-            ? _vm.vibeReferences.length
-            : _vm.preciseReferences.length;
-    final details = <String>[
-      model,
-      _vm.resolutionLabel(_vm.selectedResolution),
-      if (referenceCount > 0) '$referenceCount 张参考图',
-      if (_vm.generationMode == GenerationMode.textToImage &&
-          _vm.supportsPreciseReferences &&
-          _vm.preciseReferences.isEmpty)
-        '可添加精密参照',
-    ];
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _openGenerationSettings,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Theme.of(context)
-                .colorScheme
-                .surfaceContainerHighest
-                .withValues(alpha: 0.58),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurface
-                  .withValues(alpha: 0.1),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(CupertinoIcons.slider_horizontal_3,
-                  size: 18, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 8),
-              const Text('生成设置',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  details.join(' · '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Icon(CupertinoIcons.chevron_up,
-                  size: 15,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ],
-          ),
+        : _vm.vibeReferences.length + _vm.preciseReferences.length;
+    return Card(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Icon(Icons.tune, color: Theme.of(context).colorScheme.primary),
+        title: const Text('生成参数'),
+        subtitle: Text(
+          '模型与画幅 · ${_vm.characters.length} 个角色 · $referenceCount 张参考图',
         ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: _vm.isGenerating ? null : _openGenerationSettings,
       ),
     );
   }
@@ -2406,13 +1799,6 @@ class _GeneratePageState extends State<GeneratePage> {
       builder: (sheetContext) => _GenerationSettingsSheet(
         vm: _vm,
         buildModelSection: () => _buildModelSection(initiallyExpanded: false),
-        buildCharacterSection: () => _CharacterControlSection(vm: _vm),
-        buildReferenceSection: () => _CharacterReferenceSection(
-          vm: _vm,
-          imagePicker: _imagePicker,
-          onShowMessage: _showToast,
-        ),
-        buildGptReferenceSection: _buildGptReferenceImageSection,
       ),
     );
   }
@@ -2421,16 +1807,10 @@ class _GeneratePageState extends State<GeneratePage> {
 class _GenerationSettingsSheet extends StatelessWidget {
   final GenerationViewModel vm;
   final Widget Function() buildModelSection;
-  final Widget Function() buildCharacterSection;
-  final Widget Function() buildReferenceSection;
-  final Widget Function() buildGptReferenceSection;
 
   const _GenerationSettingsSheet({
     required this.vm,
     required this.buildModelSection,
-    required this.buildCharacterSection,
-    required this.buildReferenceSection,
-    required this.buildGptReferenceSection,
   });
 
   @override
@@ -2445,10 +1825,6 @@ class _GenerationSettingsSheet extends StatelessWidget {
       child: AnimatedBuilder(
         animation: vm,
         builder: (context, _) {
-          final isNovelAiTextToImage = !vm.isNonNovelAiProvider &&
-              vm.generationMode == GenerationMode.textToImage;
-          final isExternalTextToImage = vm.isNonNovelAiProvider &&
-              vm.generationMode == GenerationMode.textToImage;
           return Align(
             alignment: Alignment.bottomCenter,
             child: AnimatedSize(
@@ -2484,44 +1860,31 @@ class _GenerationSettingsSheet extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        Text('生成设置',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: theme.colorScheme.onSurface,
-                            )),
+                        Text(
+                          '生成参数',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
                         const SizedBox(height: 12),
                         KeyedSubtree(
                           key: const ValueKey('generation_settings_model'),
                           child: buildModelSection(),
                         ),
-                        if (isNovelAiTextToImage) ...[
-                          if (vm.supportsCharacterPrompts) ...[
-                            const SizedBox(height: 12),
-                            KeyedSubtree(
-                              key: const ValueKey(
-                                  'generation_settings_character'),
-                              child: buildCharacterSection(),
-                            ),
-                          ],
-                          if (vm.supportsVibeReferences ||
-                              vm.supportsPreciseReferences) ...[
-                            const SizedBox(height: 12),
-                            KeyedSubtree(
-                              key: const ValueKey(
-                                  'generation_settings_reference'),
-                              child: buildReferenceSection(),
-                            ),
-                          ],
-                        ],
-                        if (isExternalTextToImage) ...[
-                          const SizedBox(height: 12),
-                          KeyedSubtree(
-                            key:
-                                const ValueKey('generation_settings_reference'),
-                            child: buildGptReferenceSection(),
-                          ),
-                        ],
+                        const SizedBox(height: 12),
+                        Material(
+                            color: Colors.transparent,
+                            child: ListTile(
+                              leading: const Icon(Icons.tune),
+                              title: const Text('采样与高级参数'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () =>
+                                  Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => const AdvancedParametersPage(),
+                              )),
+                            )),
                       ],
                     ),
                   ),
@@ -2563,9 +1926,12 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
     super.initState();
     _isExpanded = widget.initiallyExpanded;
     _controller = AnimationController(
-        duration: const Duration(milliseconds: 300), vsync: this);
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
     _iconTurns = Tween<double>(begin: 0.0, end: 0.5).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic));
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic),
+    );
     if (_isExpanded) _controller.value = 1.0;
   }
 
@@ -2592,8 +1958,10 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
       decoration: BoxDecoration(
         color: Theme.of(context).cardTheme.color,
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 0.5,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -2605,21 +1973,28 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
                 children: [
-                  Icon(widget.icon,
-                      size: 20, color: Theme.of(context).colorScheme.primary),
+                  Icon(
+                    widget.icon,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       widget.title,
-                      style:
-                          TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   RotationTransition(
                     turns: _iconTurns,
-                    child: Icon(CupertinoIcons.chevron_down,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    child: Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -2670,16 +2045,22 @@ class _PremiumSlider extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
             const Spacer(),
-            Text(value.toStringAsFixed(2),
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.bold)),
+            Text(
+              value.toStringAsFixed(2),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         SizedBox(height: 8),
@@ -2751,18 +2132,17 @@ class _CharacterReferenceSection extends StatelessWidget {
                   ),
                 ),
                 icon: const Icon(CupertinoIcons.add, size: 17),
-                label:
-                    Text(vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加氛围参考图'),
+                label: Text(
+                  vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加氛围参考图',
+                ),
               ),
               for (final entry in vm.vibeReferences.asMap().entries)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: _ReferenceImageCard(
                     image: entry.value,
-                    onReplace: () => _showVibeSourceMenu(
-                      context,
-                      replaceIndex: entry.key,
-                    ),
+                    onReplace: () =>
+                        _showVibeSourceMenu(context, replaceIndex: entry.key),
                     onUpdate: (reference) =>
                         vm.updateVibeReference(entry.key, reference),
                     onDelete: () => vm.removeVibeReference(entry.key),
@@ -2783,10 +2163,8 @@ class _CharacterReferenceSection extends StatelessWidget {
               onPressed: () => _addPreciseReference(),
               style: IconButton.styleFrom(
                 foregroundColor: colors.primary,
-                side: BorderSide(
-                  color: colors.primary.withValues(alpha: 0.45),
-                ),
-                visualDensity: VisualDensity.compact,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.45)),
+                visualDensity: VisualDensity.standard,
               ),
               icon: const Icon(CupertinoIcons.add, size: 19),
             ),
@@ -2969,15 +2347,21 @@ class _VibeEncodingMultiPickerState extends State<_VibeEncodingMultiPicker> {
               child: Row(
                 children: [
                   const Expanded(
-                    child: Text('选择 Vibe 编码',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w800)),
-                  ),
-                  Text('${_selectedIds.length}/${widget.maxSelection}',
+                    child: Text(
+                      '选择 Vibe 编码',
                       style: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.w700,
-                      )),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${_selectedIds.length}/${widget.maxSelection}',
+                    style: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -3042,9 +2426,10 @@ class _VibeEncodingMultiPickerState extends State<_VibeEncodingMultiPicker> {
                                   top: 6,
                                   right: 6,
                                   child: Icon(
-                                      CupertinoIcons.check_mark_circled_solid,
-                                      color: theme.colorScheme.primary,
-                                      size: 24),
+                                    CupertinoIcons.check_mark_circled_solid,
+                                    color: theme.colorScheme.primary,
+                                    size: 24,
+                                  ),
                                 ),
                             ],
                           ),
@@ -3062,9 +2447,11 @@ class _VibeEncodingMultiPickerState extends State<_VibeEncodingMultiPicker> {
                       : () => Navigator.pop(
                             context,
                             widget.encodings
-                                .where((encoding) =>
-                                    encoding.id != null &&
-                                    _selectedIds.contains(encoding.id))
+                                .where(
+                                  (encoding) =>
+                                      encoding.id != null &&
+                                      _selectedIds.contains(encoding.id),
+                                )
                                 .toList(),
                           ),
                   child: Text('添加 ${_selectedIds.length} 条编码'),
@@ -3143,23 +2530,13 @@ class _ReferenceModePanel extends StatelessWidget {
                     ),
                 ],
               ),
-              if (isActive) ...[
-                const SizedBox(height: 12),
-                child,
-              ],
+              if (isActive) ...[const SizedBox(height: 12), child],
             ],
           ),
         ),
       ),
     );
   }
-}
-
-String _characterLabel(int index, CharacterSpec character) {
-  final prompt = character.prompt.trim();
-  if (prompt.isEmpty) return '角色 ${index + 1}';
-  final summary = prompt.length > 18 ? '${prompt.substring(0, 18)}…' : prompt;
-  return '角色 ${index + 1} · $summary';
 }
 
 class _ReferenceImageCard extends StatelessWidget {
@@ -3185,8 +2562,9 @@ class _ReferenceImageCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.45,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
@@ -3198,10 +2576,8 @@ class _ReferenceImageCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: () => showFullscreenImagePreview(
-                  context,
-                  imagePath: previewPath,
-                ),
+                onTap: () =>
+                    showFullscreenImagePreview(context, imagePath: previewPath),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
@@ -3250,8 +2626,10 @@ class _ReferenceImageCard extends StatelessWidget {
                       children: [
                         TextButton.icon(
                           onPressed: onReplace,
-                          icon: const Icon(CupertinoIcons.arrow_2_circlepath,
-                              size: 15),
+                          icon: const Icon(
+                            CupertinoIcons.arrow_2_circlepath,
+                            size: 15,
+                          ),
                           label: const Text('替换'),
                         ),
                         IconButton(
@@ -3303,8 +2681,9 @@ class _PreciseReferenceCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.45,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
@@ -3327,8 +2706,10 @@ class _PreciseReferenceCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surface.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(12),
@@ -3353,14 +2734,8 @@ class _PreciseReferenceCard extends StatelessWidget {
                       value: 'character&style',
                       child: Text('角色与画风'),
                     ),
-                    DropdownMenuItem(
-                      value: 'character',
-                      child: Text('角色'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'style',
-                      child: Text('画风'),
-                    ),
+                    DropdownMenuItem(value: 'character', child: Text('角色')),
+                    DropdownMenuItem(value: 'style', child: Text('画风')),
                   ],
                   onChanged: (value) {
                     if (value != null) {
@@ -3376,10 +2751,8 @@ class _PreciseReferenceCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: () => showFullscreenImagePreview(
-                  context,
-                  imagePath: image.path,
-                ),
+                onTap: () =>
+                    showFullscreenImagePreview(context, imagePath: image.path),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
@@ -3405,8 +2778,10 @@ class _PreciseReferenceCard extends StatelessWidget {
                   alignment: Alignment.bottomRight,
                   child: TextButton.icon(
                     onPressed: onReplace,
-                    icon:
-                        const Icon(CupertinoIcons.arrow_2_circlepath, size: 15),
+                    icon: const Icon(
+                      CupertinoIcons.arrow_2_circlepath,
+                      size: 15,
+                    ),
                     label: const Text('替换图片'),
                   ),
                 ),
@@ -3440,8 +2815,10 @@ class _PreciseReferenceSlider extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('$label: ${value.toStringAsFixed(1)}',
-              style: const TextStyle(fontWeight: FontWeight.w700)),
+          Text(
+            '$label: ${value.toStringAsFixed(1)}',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
           Slider(
             value: value.clamp(0.0, 1.0),
             min: 0,
@@ -3504,20 +2881,25 @@ class _CharacterControlSection extends StatefulWidget {
 }
 
 class _CharacterControlSectionState extends State<_CharacterControlSection>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   bool _expanded = false;
   late AnimationController _controller;
   late Animation<double> _iconTurns;
   final Set<int> _expandedCards = {};
-  bool _autoPositionDefault = true;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
-        duration: const Duration(milliseconds: 300), vsync: this);
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
     _iconTurns = Tween<double>(begin: 0.0, end: 0.5).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic));
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic),
+    );
   }
 
   void _toggle() {
@@ -3539,6 +2921,7 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final characters = widget.vm.characters;
     final enabledCount = characters.where((c) => c.enabled).length;
     if (!widget.vm.supportsCharacterPrompts) return const SizedBox.shrink();
@@ -3559,19 +2942,28 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Row(
                 children: [
-                  Icon(CupertinoIcons.person_3,
-                      size: 20, color: Theme.of(context).colorScheme.primary),
+                  Icon(
+                    CupertinoIcons.person_3,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                   SizedBox(width: 12),
                   const Expanded(
-                    child: Text('角色控制',
-                        style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w600)),
+                    child: Text(
+                      '角色提示词',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                   if (enabledCount > 0)
                     Container(
                       margin: const EdgeInsets.only(right: 8),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Theme.of(context)
                             .colorScheme
@@ -3579,17 +2971,38 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                             .withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Text('$enabledCount',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Theme.of(context).colorScheme.primary,
-                              fontWeight: FontWeight.bold)),
+                      child: Text(
+                        '$enabledCount',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
+                  IconButton(
+                    tooltip: '添加角色',
+                    onPressed: characters.length >= 6
+                        ? null
+                        : () {
+                            widget.vm.addCharacter();
+                            final index = widget.vm.characters.length - 1;
+                            widget.vm.setCharacterPositionAuto(index);
+                            setState(() {
+                              _expandedCards.add(index);
+                              _expanded = true;
+                            });
+                            _controller.forward();
+                          },
+                    icon: const Icon(Icons.add),
+                  ),
                   RotationTransition(
                     turns: _iconTurns,
-                    child: Icon(CupertinoIcons.chevron_down,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    child: Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -3602,109 +3015,13 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    '精确定义图像中人物的外观、表情和姿势，最多支持 6 个角色。',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        height: 1.5),
-                  ),
-                  SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: characters.length >= 6
-                              ? null
-                              : () {
-                                  widget.vm.addCharacter();
-                                  final newIndex =
-                                      widget.vm.characters.length - 1;
-                                  if (_autoPositionDefault)
-                                    widget.vm
-                                        .setCharacterPositionAuto(newIndex);
-                                  setState(() => _expandedCards.add(newIndex));
-                                },
-                          icon: Icon(CupertinoIcons.add, size: 16),
-                          label: Text('添加角色'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor:
-                                Theme.of(context).colorScheme.primary,
-                            side: BorderSide(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withValues(alpha: 0.45)),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 12),
-                      GestureDetector(
-                        onTap: () => setState(
-                            () => _autoPositionDefault = !_autoPositionDefault),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _autoPositionDefault
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withValues(alpha: 0.2)
-                                : Theme.of(context).colorScheme.surface,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: _autoPositionDefault
-                                  ? Theme.of(context)
-                                      .colorScheme
-                                      .primary
-                                      .withValues(alpha: 0.5)
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.10),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                  _autoPositionDefault
-                                      ? CupertinoIcons.checkmark_square_fill
-                                      : CupertinoIcons.square,
-                                  size: 16,
-                                  color: _autoPositionDefault
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant),
-                              SizedBox(width: 6),
-                              Text('AI位置',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: _autoPositionDefault
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant,
-                                      fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 16),
                   if (characters.isNotEmpty)
                     for (final entry in characters.asMap().entries)
                       _CharacterCard(
                         key: ValueKey('character_${entry.key}'),
                         index: entry.key,
                         character: entry.value,
+                        freePosition: widget.vm.isV5Model,
                         expanded: _expandedCards.contains(entry.key),
                         onToggleExpanded: () {
                           setState(() {
@@ -3747,9 +3064,11 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                           referenceIndex,
                           reference,
                         ),
-                        onRemoveReference: (referenceIndex) => widget.vm
-                            .removeCharacterReference(
-                                entry.key, referenceIndex),
+                        onRemoveReference: (referenceIndex) =>
+                            widget.vm.removeCharacterReference(
+                          entry.key,
+                          referenceIndex,
+                        ),
                         onOpenExpandedEditor: ({
                           required title,
                           required initialValue,
@@ -3772,10 +3091,18 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                   maxHeight:
                                       MediaQuery.sizeOf(ctx).height * 0.88,
                                 ),
-                                margin:
-                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                padding:
-                                    const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                                margin: const EdgeInsets.fromLTRB(
+                                  12,
+                                  0,
+                                  12,
+                                  12,
+                                ),
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  12,
+                                  18,
+                                  18,
+                                ),
                                 decoration: BoxDecoration(
                                   color: theme.colorScheme.surface,
                                   borderRadius: BorderRadius.circular(28),
@@ -3817,7 +3144,8 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                             onPressed: () =>
                                                 Navigator.of(ctx).pop(),
                                             icon: const Icon(
-                                                CupertinoIcons.xmark),
+                                              CupertinoIcons.xmark,
+                                            ),
                                           ),
                                         ],
                                       ),
@@ -3846,7 +3174,9 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                                         width: double.infinity,
                                         child: FilledButton.icon(
                                           onPressed: () async {
-                                            await onSubmitted(controller.text);
+                                            await onSubmitted(
+                                              controller.text,
+                                            );
                                             if (!ctx.mounted) return;
                                             Navigator.of(ctx).pop();
                                           },
@@ -3882,6 +3212,7 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
 class _CharacterCard extends StatefulWidget {
   final int index;
   final CharacterSpec character;
+  final bool freePosition;
   final bool expanded;
   final VoidCallback onToggleExpanded;
   final VoidCallback? onMoveUp;
@@ -3909,6 +3240,7 @@ class _CharacterCard extends StatefulWidget {
     super.key,
     required this.index,
     required this.character,
+    required this.freePosition,
     required this.expanded,
     required this.onToggleExpanded,
     required this.onMoveUp,
@@ -3982,8 +3314,10 @@ class _CharacterCardState extends State<_CharacterCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final positionLabel =
-        _positionLabel(widget.character.centerX, widget.character.centerY);
+    final positionLabel = widget.freePosition &&
+            widget.character.centerX != null
+        ? '${(widget.character.centerX! * 100).round()}%, ${(widget.character.centerY! * 100).round()}%'
+        : _positionLabel(widget.character.centerX, widget.character.centerY);
     final bool isEnabled = widget.character.enabled;
 
     return Container(
@@ -4046,10 +3380,11 @@ class _CharacterCardState extends State<_CharacterCard> {
                                 ? 'AI决定位置'
                                 : '位置 $positionLabel',
                             style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                                fontSize: 11),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                              fontSize: 11,
+                            ),
                           ),
                         ],
                       ),
@@ -4057,10 +3392,11 @@ class _CharacterCardState extends State<_CharacterCard> {
                     IconButton(
                       onPressed: widget.onToggleEnabled,
                       icon: Icon(
-                          isEnabled
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                          size: 18),
+                        isEnabled
+                            ? CupertinoIcons.eye
+                            : CupertinoIcons.eye_slash,
+                        size: 18,
+                      ),
                       color: isEnabled
                           ? Theme.of(context).colorScheme.onSurfaceVariant
                           : Theme.of(context)
@@ -4068,8 +3404,10 @@ class _CharacterCardState extends State<_CharacterCard> {
                               .onSurfaceVariant
                               .withValues(alpha: 0.35),
                       padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
                     ),
                     IconButton(
                       onPressed: widget.onDelete,
@@ -4079,18 +3417,21 @@ class _CharacterCardState extends State<_CharacterCard> {
                           .onSurfaceVariant
                           .withValues(alpha: 0.35),
                       padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
                     ),
                     Icon(
-                        widget.expanded
-                            ? CupertinoIcons.chevron_up
-                            : CupertinoIcons.chevron_down,
-                        size: 16,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.35)),
+                      widget.expanded
+                          ? CupertinoIcons.chevron_up
+                          : CupertinoIcons.chevron_down,
+                      size: 16,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: 0.35),
+                    ),
                     SizedBox(width: 8),
                   ],
                 ),
@@ -4106,13 +3447,13 @@ class _CharacterCardState extends State<_CharacterCard> {
                   padding: const EdgeInsets.all(12),
                   child: Row(
                     children: [
-                      _buildTabButton(0, 'Prompt'),
+                      _buildTabButton(0, '正向'),
                       SizedBox(width: 8),
-                      _buildTabButton(1, 'UContent'),
+                      _buildTabButton(1, '负向'),
                       SizedBox(width: 8),
-                      _buildTabButton(2, 'Pos'),
+                      _buildTabButton(2, '位置'),
                       SizedBox(width: 8),
-                      _buildTabButton(3, 'Ref'),
+                      _buildTabButton(3, '参考'),
                     ],
                   ),
                 ),
@@ -4132,17 +3473,23 @@ class _CharacterCardState extends State<_CharacterCard> {
                             decoration: InputDecoration(
                               hintText: '描述该角色的外观...',
                               hintStyle: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.55)),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.55),
+                              ),
                               filled: true,
                               fillColor: Colors.black.withValues(alpha: 0.2),
-                              contentPadding:
-                                  const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                              contentPadding: const EdgeInsets.fromLTRB(
+                                12,
+                                12,
+                                36,
+                                12,
+                              ),
                             ),
                             onChanged: (value) => widget.onChanged(
-                                widget.character.copyWith(prompt: value)),
+                              widget.character.copyWith(prompt: value),
+                            ),
                           ),
                           Positioned(
                             top: 2,
@@ -4158,10 +3505,12 @@ class _CharacterCardState extends State<_CharacterCard> {
                                 },
                               ),
                               tooltip: '放大编辑',
-                              visualDensity: VisualDensity.compact,
+                              visualDensity: VisualDensity.standard,
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
-                                  minWidth: 28, minHeight: 28),
+                                minWidth: 28,
+                                minHeight: 28,
+                              ),
                               icon: Icon(
                                 CupertinoIcons.arrow_up_left_arrow_down_right,
                                 size: 15,
@@ -4185,20 +3534,26 @@ class _CharacterCardState extends State<_CharacterCard> {
                             decoration: InputDecoration(
                               hintText: '描述该角色不需要的特征...',
                               hintStyle: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.55)),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.55),
+                              ),
                               filled: true,
                               fillColor: Colors.black.withValues(alpha: 0.2),
-                              contentPadding:
-                                  const EdgeInsets.fromLTRB(12, 12, 36, 12),
+                              contentPadding: const EdgeInsets.fromLTRB(
+                                12,
+                                12,
+                                36,
+                                12,
+                              ),
                             ),
-                            onChanged: (value) =>
-                                widget.onChanged(widget.character.copyWith(
-                              uc: value.isEmpty ? null : value,
-                              clearUc: value.isEmpty,
-                            )),
+                            onChanged: (value) => widget.onChanged(
+                              widget.character.copyWith(
+                                uc: value.isEmpty ? null : value,
+                                clearUc: value.isEmpty,
+                              ),
+                            ),
                           ),
                           Positioned(
                             top: 2,
@@ -4208,17 +3563,21 @@ class _CharacterCardState extends State<_CharacterCard> {
                                 title: '编辑角色 ${widget.index + 1} UContent',
                                 initialValue: _ucController.text,
                                 onSubmitted: (value) async {
-                                  widget.onChanged(widget.character.copyWith(
-                                    uc: value.isEmpty ? null : value,
-                                    clearUc: value.isEmpty,
-                                  ));
+                                  widget.onChanged(
+                                    widget.character.copyWith(
+                                      uc: value.isEmpty ? null : value,
+                                      clearUc: value.isEmpty,
+                                    ),
+                                  );
                                 },
                               ),
                               tooltip: '放大编辑',
-                              visualDensity: VisualDensity.compact,
+                              visualDensity: VisualDensity.standard,
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
-                                  minWidth: 28, minHeight: 28),
+                                minWidth: 28,
+                                minHeight: 28,
+                              ),
                               icon: Icon(
                                 CupertinoIcons.arrow_up_left_arrow_down_right,
                                 size: 15,
@@ -4231,12 +3590,24 @@ class _CharacterCardState extends State<_CharacterCard> {
                           ),
                         ],
                       ),
-                      _CharacterPositionGrid(
-                        centerX: widget.character.centerX,
-                        centerY: widget.character.centerY,
-                        onAutoPosition: widget.onAutoPosition,
-                        onGridPosition: widget.onGridPosition,
-                      ),
+                      if (widget.freePosition)
+                        _FreeCharacterPosition(
+                          x: widget.character.centerX,
+                          y: widget.character.centerY,
+                          onAuto: widget.onAutoPosition,
+                          onChanged: (point) =>
+                              widget.onChanged(widget.character.copyWith(
+                            centerX: point.dx,
+                            centerY: point.dy,
+                          )),
+                        )
+                      else
+                        _CharacterPositionGrid(
+                          centerX: widget.character.centerX,
+                          centerY: widget.character.centerY,
+                          onAutoPosition: widget.onAutoPosition,
+                          onGridPosition: widget.onGridPosition,
+                        ),
                       _CharacterReferencePanel(
                         references: widget.character.referenceImages,
                         onAdd: _pickAndAddReference,
@@ -4249,16 +3620,19 @@ class _CharacterCardState extends State<_CharacterCard> {
                 ),
                 Container(
                   color: Colors.black.withValues(alpha: 0.1),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Row(
                     children: [
-                      Text('排序',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant)),
+                      Text(
+                        '排序',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                       const Spacer(),
                       IconButton(
                         onPressed: widget.onMoveUp,
@@ -4267,8 +3641,10 @@ class _CharacterCardState extends State<_CharacterCard> {
                             ? Colors.white12
                             : Theme.of(context).colorScheme.onSurfaceVariant,
                         padding: EdgeInsets.zero,
-                        constraints:
-                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
                       ),
                       IconButton(
                         onPressed: widget.onMoveDown,
@@ -4277,12 +3653,14 @@ class _CharacterCardState extends State<_CharacterCard> {
                             ? Colors.white12
                             : Theme.of(context).colorScheme.onSurfaceVariant,
                         padding: EdgeInsets.zero,
-                        constraints:
-                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
                       ),
                     ],
                   ),
-                )
+                ),
               ],
             ),
             crossFadeState: widget.expanded
@@ -4396,8 +3774,9 @@ class _CharacterReferenceCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.45,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
@@ -4409,10 +3788,8 @@ class _CharacterReferenceCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GestureDetector(
-                onTap: () => showFullscreenImagePreview(
-                  context,
-                  imagePath: image.path,
-                ),
+                onTap: () =>
+                    showFullscreenImagePreview(context, imagePath: image.path),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.file(
@@ -4481,6 +3858,85 @@ class _CharacterReferenceCard extends StatelessWidget {
   }
 }
 
+class _FreeCharacterPosition extends StatelessWidget {
+  final double? x;
+  final double? y;
+  final ValueChanged<Offset> onChanged;
+  final VoidCallback onAuto;
+
+  const _FreeCharacterPosition(
+      {this.x, this.y, required this.onChanged, required this.onAuto});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+              onPressed: onAuto, child: Text(x == null ? '位置：自动' : '恢复自动位置'))),
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        const height = 180.0;
+        void update(Offset point) => onChanged(Offset(
+            (point.dx / width).clamp(0.0, 1.0),
+            (point.dy / height).clamp(0.0, 1.0)));
+        return Semantics(
+            label: '角色位置，点击或拖动设置',
+            child: GestureDetector(
+              key: const ValueKey('free-character-position'),
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (details) => update(details.localPosition),
+              onPanStart: (details) => update(details.localPosition),
+              onPanUpdate: (details) => update(details.localPosition),
+              child: Container(
+                height: height,
+                clipBehavior: Clip.hardEdge,
+                decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(14),
+                    border:
+                        Border.all(color: theme.colorScheme.outlineVariant)),
+                child: Stack(children: [
+                  for (final fraction in [0.25, 0.5, 0.75]) ...[
+                    Positioned(
+                        left: width * fraction,
+                        top: 0,
+                        bottom: 0,
+                        child: Container(
+                            width: 1,
+                            color: theme.colorScheme.outlineVariant
+                                .withValues(alpha: .45))),
+                    Positioned(
+                        top: height * fraction,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                            height: 1,
+                            color: theme.colorScheme.outlineVariant
+                                .withValues(alpha: .45))),
+                  ],
+                  if (x != null && y != null)
+                    Positioned(
+                        left: (x! * width - 12).clamp(0.0, width - 24),
+                        top: (y! * height - 12).clamp(0.0, height - 24),
+                        child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: theme.colorScheme.primary,
+                                border: Border.all(
+                                    color: theme.colorScheme.onPrimary,
+                                    width: 2)))),
+                ]),
+              ),
+            ));
+      }),
+    ]);
+  }
+}
+
 class _CharacterPositionGrid extends StatelessWidget {
   final double? centerX;
   final double? centerY;
@@ -4512,19 +3968,22 @@ class _CharacterPositionGrid extends StatelessWidget {
                   : Colors.black.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                  color: selected == null
-                      ? theme.colorScheme.primary.withValues(alpha: 0.5)
-                      : Colors.transparent),
+                color: selected == null
+                    ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                    : Colors.transparent,
+              ),
             ),
             child: Center(
-              child: Text('AI决定位置',
-                  style: TextStyle(
-                    color: selected == null
-                        ? theme.colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  )),
+              child: Text(
+                'AI决定位置',
+                style: TextStyle(
+                  color: selected == null
+                      ? theme.colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
             ),
           ),
         ),
@@ -4542,13 +4001,17 @@ class _CharacterPositionGrid extends StatelessWidget {
                   SizedBox(width: 30),
                   for (final col in ['A', 'B', 'C', 'D', 'E'])
                     Expanded(
-                        child: Center(
-                            child: Text(col,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant)))),
+                      child: Center(
+                        child: Text(
+                          col,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
               SizedBox(height: 8),
@@ -4556,13 +4019,15 @@ class _CharacterPositionGrid extends StatelessWidget {
                 Row(
                   children: [
                     SizedBox(
-                        width: 30,
-                        child: Text('${row + 1}',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant))),
+                      width: 30,
+                      child: Text(
+                        '${row + 1}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                     for (var col = 0; col < 5; col++)
                       Expanded(
                         child: Padding(
