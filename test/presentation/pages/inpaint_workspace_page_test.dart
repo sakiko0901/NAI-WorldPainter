@@ -16,6 +16,8 @@ import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 import '../../support/frontend_generation_fake.dart';
@@ -143,11 +145,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('successful requests append an overlay without replacing base', (
+  testWidgets(
+      'square brush stays square during dragging and mask can be hidden',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 1600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      _host(MediaQuery(
+        data: const MediaQueryData(
+            size: Size(320, 1600), textScaler: TextScaler.linear(2)),
+        child: const SingleChildScrollView(child: InpaintWorkspaceCard()),
+      )),
+    );
+    await _loadWorkspaceImage(tester, vm);
+    await tester.ensureVisible(find.text('画笔'));
+    await tester.tap(find.text('画笔'));
+    await tester.pumpAndSettle();
+    final squareChip = find.widgetWithText(ChoiceChip, '方格');
+    await tester.ensureVisible(squareChip);
+    await tester.pumpAndSettle();
+    await tester.tap(squareChip);
+    await tester.pumpAndSettle();
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(stage);
+    final gesture = await tester.startGesture(tester.getRect(stage).center);
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+    InpaintCanvasPainter painter() => tester
+        .widget<CustomPaint>(find.byKey(const ValueKey('inpaint-live-mask')))
+        .painter! as InpaintCanvasPainter;
+    expect(painter().strokes.single.square, isTrue);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(painter().strokes.single.square, isTrue);
+    await tester.ensureVisible(find.byTooltip('隐藏蒙版'));
+    await tester.tap(find.byTooltip('隐藏蒙版'));
+    await tester.pumpAndSettle();
+    expect(painter().showMask, isFalse);
+    expect(
+      tester
+          .widgetList<Image>(find.byType(Image))
+          .where((image) => image.image is MemoryImage),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'candidates compare before selection and only the winner is applied', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(393, 1200);
+    tester.view.physicalSize = const Size(320, 1600);
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     cleanupOutputAfterUnmount = true;
@@ -169,7 +220,11 @@ void main() {
     _setDocumentsDirectory(tester, outputDirectory);
     await tester.pumpWidget(
       _host(
-        const SingleChildScrollView(child: InpaintWorkspaceCard()),
+        const MediaQuery(
+          data: MediaQueryData(
+              size: Size(320, 1600), textScaler: TextScaler.linear(2)),
+          child: SingleChildScrollView(child: InpaintWorkspaceCard()),
+        ),
       ),
     );
     await _loadWorkspaceImage(tester, vm);
@@ -187,22 +242,83 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
+    vm.batchCount = 3;
     final generate = vm.inpaintWorkspaceHandler;
     expect(generate, isNotNull);
     final firstHandled = await tester.runAsync(generate!);
     await tester.pumpAndSettle();
     expect(firstHandled, isTrue);
-    expect(find.text('结果图层 1'), findsOneWidget);
-    expect(generationRepository.submittedTasks, hasLength(1));
+    expect(find.text('结果图层 1'), findsNothing);
+    expect(find.byType(InpaintComparison), findsOneWidget);
+    expect(find.text('候选结果 3 / 3'), findsOneWidget);
+    expect(generationRepository.submittedTasks, hasLength(3));
     final immutableSource =
-        generationRepository.submittedTasks.single.sourceImagePath;
-    expect(immutableSource, isNot(generationRepository.generatedPaths.single));
+        generationRepository.submittedTasks.first.sourceImagePath;
+    expect(immutableSource, isNot(generationRepository.generatedPaths.first));
+
+    // A failed new request must not remove the previous candidates.
+    vm.batchCount = 1;
+    generationRepository.failNext = true;
+    await tester.runAsync(generate);
+    await tester.pumpAndSettle();
+    expect(find.text('候选结果 3 / 3'), findsOneWidget);
+    expect(find.byType(InpaintComparison), findsOneWidget);
+
+    // Discard an inferior candidate, then apply exactly one of the remaining two.
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-discard-candidate')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-discard-candidate')));
+    await tester.pumpAndSettle();
+    expect(find.text('候选结果 2 / 2'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('inpaint-candidate-0')));
+    await tester.pumpAndSettle();
+    final firstReview =
+        tester.widget<InpaintComparison>(find.byType(InpaintComparison));
+    final firstPreview =
+        img.decodePng(File(firstReview.afterPath).readAsBytesSync())!;
+    expect(firstPreview.getPixel(64, 64).r.toInt(), 247);
+    await tester.tap(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.pumpAndSettle();
+    expect(find.text('结果图层 1'), findsOneWidget);
+    expect(find.byType(InpaintComparison), findsNothing);
+
+    // Picking a better alternative replaces this batch's winner instead of stacking it.
+    await tester.tap(find.byKey(const ValueKey('inpaint-candidate-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.pumpAndSettle();
+    expect(find.text('结果图层 1'), findsOneWidget);
+    expect(find.text('结果图层 2'), findsNothing);
+
+    vm.batchCount = 1;
+    await tester.ensureVisible(find.byTooltip('清空蒙版'));
+    await tester.tap(find.byTooltip('清空蒙版'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('画笔'));
+    await tester.tap(find.text('画笔'));
+    await tester.pumpAndSettle();
+    final nextStage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(nextStage);
+    final nextStroke = await tester.startGesture(
+      tester.getRect(nextStage).center - const Offset(0, 12),
+    );
+    await nextStroke.up();
+    await tester.pumpAndSettle();
 
     final secondHandled = await tester.runAsync(generate);
     await tester.pumpAndSettle();
     expect(secondHandled, isTrue);
-    expect(find.text('结果图层 2'), findsOneWidget);
-    expect(generationRepository.submittedTasks, hasLength(2));
+    expect(find.text('结果图层 1'), findsOneWidget);
+    expect(generationRepository.submittedTasks, hasLength(5));
+    final secondReview =
+        tester.widget<InpaintComparison>(find.byType(InpaintComparison));
+    final secondBefore =
+        img.decodePng(File(secondReview.beforePath).readAsBytesSync())!;
+    final secondAfter =
+        img.decodePng(File(secondReview.afterPath).readAsBytesSync())!;
+    expect(secondBefore.getPixel(64, 80).g.toInt(), 87);
+    expect(secondAfter.getPixel(64, 80).g.toInt(), 87);
+    expect(secondAfter.getPixel(64, 12).g.toInt(), 111);
     expect(
       generationRepository.submittedTasks.last.sourceImagePath,
       isNot(generationRepository.generatedPaths.first),
@@ -212,6 +328,11 @@ void main() {
       generationRepository.submittedTasks.last.sourceImagePath!,
     ).readAsBytesSync();
     expect(secondBase, orderedEquals(firstBase));
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.pumpAndSettle();
+    expect(find.text('结果图层 2'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -272,30 +393,66 @@ void main() {
     await brush.moveBy(const Offset(42, 0));
     await brush.up();
     await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, '方格'));
+    await tester.pumpAndSettle();
+    final square =
+        await tester.startGesture(stage.center - const Offset(50, 60));
+    await square.moveBy(const Offset(36, 0));
+    await square.up();
+    await tester.pumpAndSettle();
+    for (var attempt = 0; attempt < 30; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+      if (tester
+          .widgetList<Image>(find.byType(Image))
+          .any((image) => image.image is MemoryImage)) break;
+    }
+    await _captureBoundary(tester, key, 'inpaint-mask-revision.png');
     await tester.runAsync(vm.inpaintWorkspaceHandler!);
-    await tester.runAsync(() async {
-      for (final path in generationRepository.generatedPaths) {
-        await precacheImage(
-          FileImage(File(path)),
-          tester.element(find.byType(InpaintWorkspaceCard)),
-        );
-      }
-    });
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 32));
-    expect(find.text('结果图层 1'), findsOneWidget);
+    await tester.pumpAndSettle();
+    await _settleFileImages(tester);
+    expect(find.text('候选结果 1 / 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final boundary =
-        key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-    await tester.runAsync(() async {
-      final image = await boundary.toImage(pixelRatio: 1.5);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      final file = File('build/frontend-preview/inpaint-workspace.png');
-      file.parent.createSync(recursive: true);
-      file.writeAsBytesSync(data!.buffer.asUint8List());
-      image.dispose();
-    });
+    await _captureBoundary(tester, key, 'inpaint-comparison-revision.png');
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-apply-candidate')));
+    await tester.pumpAndSettle();
+    await _settleFileImages(tester);
+    expect(find.text('结果图层 1'), findsOneWidget);
+    await _captureBoundary(tester, key, 'inpaint-applied-revision.png');
   });
+}
+
+Future<void> _captureBoundary(
+    WidgetTester tester, GlobalKey key, String name) async {
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 1.5);
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final file = File('build/frontend-preview/$name');
+    file.parent.createSync(recursive: true);
+    file.writeAsBytesSync(data!.buffer.asUint8List());
+    image.dispose();
+  });
+}
+
+Future<void> _settleFileImages(WidgetTester tester) async {
+  for (var attempt = 0; attempt < 40; attempt++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    final loaded = tester.widgetList<Image>(find.byType(Image)).every((image) {
+      final status = tester.binding.imageCache.statusForKey(image.image);
+      return !status.pending && (status.live || status.keepAlive);
+    });
+    if (loaded) return;
+  }
+  fail('Screenshot images did not finish decoding');
 }
 
 Widget _host(Widget child) => MaterialApp(
@@ -360,6 +517,7 @@ void _setDocumentsDirectory(WidgetTester tester, Directory directory) {
 }
 
 class _InpaintGenerationFake extends FrontendGenerationFake {
+  int _nextTaskId = 0;
   @override
   String? sourceImagePath;
   @override
@@ -391,7 +549,7 @@ class _InpaintGenerationFake extends FrontendGenerationFake {
   }) {
     final dimensions = selectedResolution.split('x');
     return GenerationTask(
-      taskId: taskId ?? 'inpaint-test-${DateTime.now().microsecondsSinceEpoch}',
+      taskId: taskId ?? 'inpaint-test-${++_nextTaskId}',
       model: 'nai-diffusion-4-5-full',
       prompt: prompt,
       negativePrompt: negativePrompt,
@@ -435,18 +593,25 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
   final Directory outputDirectory;
   final submittedTasks = <GenerationTask>[];
   final generatedPaths = <String>[];
+  bool failNext = false;
 
   _SuccessfulGenerationRepository(this.outputDirectory);
 
   @override
   Future<GenerationTask> submitGeneration(GenerationTask task) async {
     submittedTasks.add(task);
+    if (failNext) {
+      failNext = false;
+      return task.copyWith(status: 'failed', errorMessage: 'fixture failure');
+    }
     final generated = img.Image(
       width: task.width,
       height: task.height,
       numChannels: 4,
     );
-    img.fill(generated, color: img.ColorRgba8(247, 79, 126, 255));
+    img.fill(generated,
+        color: img.ColorRgba8(
+            247, 79 + (submittedTasks.length - 1) * 8, 126, 255));
     final file = File('${outputDirectory.path}/generated_${task.taskId}.png');
     await file.writeAsBytes(img.encodePng(generated), flush: true);
     generatedPaths.add(file.path);

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -16,6 +15,8 @@ import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
 
 /// 工作区顶部的选择模式。
 enum InpaintUiMode {
@@ -64,6 +65,7 @@ class _RasterizeInput {
   final int outputWidth;
   final int outputHeight;
   final int expandPixels;
+  final List<_CompositeLayerInput> comparisonLayers;
   const _RasterizeInput({
     required this.sourcePng,
     required this.strokes,
@@ -71,13 +73,15 @@ class _RasterizeInput {
     required this.outputWidth,
     required this.outputHeight,
     required this.expandPixels,
+    this.comparisonLayers = const [],
   });
 }
 
 class _RasterizeResult {
   final Uint8List basePng;
   final Uint8List maskPng;
-  const _RasterizeResult(this.basePng, this.maskPng);
+  final Uint8List comparisonBasePng;
+  const _RasterizeResult(this.basePng, this.maskPng, this.comparisonBasePng);
 }
 
 _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
@@ -96,28 +100,63 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
     strokes: input.strokes,
     expandPixels: input.expandPixels,
   );
+  final comparisonBase = img.Image.from(result.image);
+  for (final entry in input.comparisonLayers) {
+    final layer = img.decodePng(entry.imagePng);
+    if (layer == null) throw const FormatException('结果图层解码失败');
+    final placed = rasterizer.rasterize(
+      source: layer,
+      sourceBounds: entry.worldRect,
+      worldRect: input.worldRect,
+      outputWidth: input.outputWidth,
+      outputHeight: input.outputHeight,
+      strokes: const [],
+    );
+    img.compositeImage(comparisonBase, placed.image);
+  }
   return _RasterizeResult(
     Uint8List.fromList(img.encodePng(result.image)),
     rasterizer.encodeMask(result.mask),
+    Uint8List.fromList(img.encodePng(comparisonBase)),
   );
 }
 
 /// 候选转为带蒙版透明度的独立结果图层。
 class _MaskLayerInput {
+  final Uint8List basePng;
   final Uint8List maskPng;
   final Uint8List generatedPng;
   final int featherPixels;
   const _MaskLayerInput({
+    required this.basePng,
     required this.maskPng,
     required this.generatedPng,
     required this.featherPixels,
   });
 }
 
-Uint8List _maskLayerIsolate(_MaskLayerInput input) {
+class _CandidateImages {
+  final Uint8List layerPng;
+  final Uint8List comparisonPng;
+  const _CandidateImages(this.layerPng, this.comparisonPng);
+}
+
+class _ReviewCandidate {
+  final InpaintCandidate candidate;
+  final String layerPath;
+  final String comparisonPath;
+  final String beforePath;
+  final int width;
+  final int height;
+  const _ReviewCandidate(this.candidate, this.layerPath, this.comparisonPath,
+      this.beforePath, this.width, this.height);
+}
+
+_CandidateImages _maskLayerIsolate(_MaskLayerInput input) {
+  final base = img.decodePng(input.basePng);
   final mask = img.decodePng(input.maskPng);
   final generated = img.decodePng(input.generatedPng);
-  if (mask == null || generated == null) {
+  if (base == null || mask == null || generated == null) {
     throw const FormatException('候选图片解码失败');
   }
   const rasterizer = InpaintRasterizer();
@@ -126,7 +165,11 @@ Uint8List _maskLayerIsolate(_MaskLayerInput input) {
     mask: mask,
     outwardFeatherPixels: input.featherPixels,
   );
-  return Uint8List.fromList(img.encodePng(layer));
+  img.compositeImage(base, layer);
+  return _CandidateImages(
+    Uint8List.fromList(img.encodePng(layer)),
+    Uint8List.fromList(img.encodePng(base)),
+  );
 }
 
 class _CompositeLayerInput {
@@ -188,6 +231,7 @@ class _MaskPreviewInput {
   final int outputWidth;
   final int outputHeight;
   final int expandPixels;
+  final int borderPixels;
   const _MaskPreviewInput({
     required this.sourcePng,
     required this.strokes,
@@ -195,6 +239,7 @@ class _MaskPreviewInput {
     required this.outputWidth,
     required this.outputHeight,
     required this.expandPixels,
+    required this.borderPixels,
   });
 }
 
@@ -202,9 +247,11 @@ Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
   final source = img.decodePng(input.sourcePng);
   if (source == null) throw const FormatException('源图解码失败');
   const rasterizer = InpaintRasterizer();
+  final composed =
+      rasterizer.composeBase(source: source, strokes: input.strokes);
   final mask = rasterizer
       .rasterize(
-        source: source,
+        source: composed,
         worldRect: input.worldRect,
         outputWidth: input.outputWidth,
         outputHeight: input.outputHeight,
@@ -225,8 +272,27 @@ Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
   for (var y = 0; y < aligned.height; y++) {
     for (var x = 0; x < aligned.width; x++) {
       final selected = aligned.getPixel(x, y).r > 0;
-      // 蓝色遮罩预览（RGB 33,150,243）。
-      preview.setPixelRgba(x, y, 33, 150, 243, selected ? 150 : 0);
+      var edge = false;
+      if (selected) {
+        for (var distance = 1; distance <= input.borderPixels; distance++) {
+          if (x - distance < 0 ||
+              y - distance < 0 ||
+              x + distance >= aligned.width ||
+              y + distance >= aligned.height ||
+              aligned.getPixel(x - distance, y).r == 0 ||
+              aligned.getPixel(x + distance, y).r == 0 ||
+              aligned.getPixel(x, y - distance).r == 0 ||
+              aligned.getPixel(x, y + distance).r == 0) {
+            edge = true;
+            break;
+          }
+        }
+      }
+      if (edge) {
+        preview.setPixelRgba(x, y, 128, 216, 255, 255);
+      } else {
+        preview.setPixelRgba(x, y, 33, 150, 243, selected ? 128 : 0);
+      }
     }
   }
   return Uint8List.fromList(img.encodePng(preview));
@@ -276,6 +342,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   final List<List<InpaintStroke>> _maskUndo = [];
   final List<List<InpaintStroke>> _maskRedo = [];
   final List<InpaintResultLayer> _resultLayers = [];
+  final List<_ReviewCandidate> _candidates = [];
+  String? _selectedCandidateId;
+  bool _reviewOpen = false;
   InpaintPaintTarget _target = InpaintPaintTarget.mask;
   double _brushSize = 48;
   int _expandPixels = 8;
@@ -402,8 +471,17 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _redo.clear();
         _maskUndo.clear();
         _maskRedo.clear();
+        _maskPreviewDebounce?.cancel();
+        _maskPreviewSignature = null;
+        _maskPreviewKey = '';
+        _maskPreviewBytes = null;
+        _showMask = true;
+        _uiMode = InpaintUiMode.view;
         if (resetSession) {
           _resultLayers.clear();
+          _candidates.clear();
+          _selectedCandidateId = null;
+          _reviewOpen = false;
           _layerSequence = 0;
           _sessionSourcePath = null;
           _sessionMaskPath = null;
@@ -787,6 +865,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         size: draft.size,
         color: draft.color,
         opacity: draft.opacity,
+        square: draft.square,
         points: [...draft.points, InpaintPoint(world.dx, world.dy)],
       );
     });
@@ -927,7 +1006,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     setState(() {});
   }
 
-  // ---- 生成（真实 NovelAI 请求成功后，立刻追加结果图层）----
+  // ---- 生成候选，确认后才加入结果图层 ----
   // 触发入口是页面底部的悬浮生成按钮（通过 VM 的钩子调用本方法）。
 
   /// 页面底部生成按钮触发：在工作区内完成本轮局部重绘生成。
@@ -957,6 +1036,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final disabledOriginalImage = _disabledOriginalImage;
     final colorCorrect = _colorCorrect;
     final revision = 'workspace-${++_generationRevision}';
+    var receivedCandidate = false;
     // 选择框（屏幕坐标）→ 图像世界坐标。
     final worldRect = InpaintViewport(
       x: (box.x - _transform.offsetX) / _transform.scale,
@@ -969,6 +1049,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _batchCompleted = 0;
       _batchTotal = total;
       _activeRevision = revision;
+      _reviewOpen = false;
     });
     try {
       // 固定本轮模型、分辨率、提示词与采样选项，避免光栅化期间 UI/VM
@@ -996,6 +1077,13 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           outputWidth: resolution.$1,
           outputHeight: resolution.$2,
           expandPixels: expandPixels,
+          comparisonLayers: [
+            for (final layer in _resultLayers.where((layer) => layer.visible))
+              _CompositeLayerInput(
+                await File(layer.imagePath).readAsBytes(),
+                layer.worldRect,
+              ),
+          ],
         ),
       );
       final dir = await ImageUtils.getImageDirectory();
@@ -1004,8 +1092,12 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           'inpaint_${timestamp}_${revision}_base.png';
       final maskPath = '${dir.path}${Platform.pathSeparator}'
           'inpaint_${timestamp}_${revision}_mask.png';
+      final beforePath = '${dir.path}${Platform.pathSeparator}'
+          'inpaint_${timestamp}_${revision}_before.png';
       await File(basePath).writeAsBytes(raster.basePng, flush: true);
       await File(maskPath).writeAsBytes(raster.maskPng, flush: true);
+      await File(beforePath)
+          .writeAsBytes(raster.comparisonBasePng, flush: true);
       _sessionSourcePath = basePath;
       _sessionMaskPath = maskPath;
       for (var index = 0; index < total; index++) {
@@ -1020,10 +1112,12 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           final generatedPath = await _saveImage.saveTransient(completed);
           if (!mounted || revision != _activeRevision) return false;
           setState(() => _addingLayer = true);
-          final layerPng = await compute<_MaskLayerInput, Uint8List>(
+          final candidateImages =
+              await compute<_MaskLayerInput, _CandidateImages>(
             _maskLayerIsolate,
             _MaskLayerInput(
-              maskPng: await File(maskPath).readAsBytes(),
+              basePng: raster.comparisonBasePng,
+              maskPng: raster.maskPng,
               generatedPng: await File(generatedPath).readAsBytes(),
               featherPixels: featherPixels,
             ),
@@ -1032,18 +1126,35 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           final layerPath = '${dir.path}${Platform.pathSeparator}'
               'inpaint_layer_${DateTime.now().millisecondsSinceEpoch}_'
               '${index + 1}.png';
-          await File(layerPath).writeAsBytes(layerPng, flush: true);
+          final comparisonPath = '${dir.path}${Platform.pathSeparator}'
+              'inpaint_compare_${timestamp}_${revision}_${index + 1}.png';
+          await File(layerPath)
+              .writeAsBytes(candidateImages.layerPng, flush: true);
+          await File(comparisonPath)
+              .writeAsBytes(candidateImages.comparisonPng, flush: true);
           if (!mounted || revision != _activeRevision) return false;
           setState(() {
-            _layerSequence++;
-            _resultLayers.add(InpaintResultLayer(
-              id: completed.taskId,
-              name: '重绘 $_layerSequence',
-              imagePath: layerPath,
-              width: resolution.$1,
-              height: resolution.$2,
-              worldRect: worldRect,
+            if (!receivedCandidate) {
+              _candidates.clear();
+              receivedCandidate = true;
+            }
+            _candidates.add(_ReviewCandidate(
+              InpaintCandidate(
+                id: completed.taskId,
+                imagePath: generatedPath,
+                baseImagePath: basePath,
+                workspaceImagePath: _sourcePath!,
+                maskImagePath: maskPath,
+                worldRect: worldRect,
+                seed: completed.seed,
+              ),
+              layerPath,
+              comparisonPath,
+              beforePath,
+              resolution.$1,
+              resolution.$2,
             ));
+            _selectedCandidateId = completed.taskId;
             _batchCompleted++;
             _addingLayer = false;
           });
@@ -1061,9 +1172,61 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         setState(() {
           _busy = false;
           _addingLayer = false;
+          _reviewOpen = _candidates.isNotEmpty;
         });
       }
     }
+  }
+
+  _ReviewCandidate? get _selectedCandidate {
+    for (final entry in _candidates) {
+      if (entry.candidate.id == _selectedCandidateId) return entry;
+    }
+    return null;
+  }
+
+  bool _isApplied(_ReviewCandidate entry) =>
+      _resultLayers.any((layer) => layer.id == entry.candidate.id);
+
+  void _applySelectedCandidate() {
+    final entry = _selectedCandidate;
+    if (entry == null || _busy || _isApplied(entry)) return;
+    final ids = _candidates.map((item) => item.candidate.id).toSet();
+    final oldIndex =
+        _resultLayers.indexWhere((layer) => ids.contains(layer.id));
+    final name =
+        oldIndex < 0 ? '重绘 ${++_layerSequence}' : _resultLayers[oldIndex].name;
+    setState(() {
+      // 同一批的候选只能有一个应用层；重新选择时替换该层。
+      _resultLayers.removeWhere((layer) => ids.contains(layer.id));
+      _resultLayers.insert(
+        oldIndex < 0 ? _resultLayers.length : oldIndex,
+        InpaintResultLayer(
+          id: entry.candidate.id,
+          name: name,
+          imagePath: entry.layerPath,
+          width: entry.width,
+          height: entry.height,
+          worldRect: entry.candidate.worldRect,
+        ),
+      );
+      _reviewOpen = false;
+      _showMask = false;
+      _uiMode = InpaintUiMode.view;
+    });
+  }
+
+  void _discardSelectedCandidate() {
+    final entry = _selectedCandidate;
+    if (entry == null || _busy || _isApplied(entry)) return;
+    final index = _candidates.indexOf(entry);
+    setState(() {
+      _candidates.removeAt(index);
+      _selectedCandidateId = _candidates.isEmpty
+          ? null
+          : _candidates[index.clamp(0, _candidates.length - 1)].candidate.id;
+      if (_candidates.isEmpty) _reviewOpen = false;
+    });
   }
 
   Future<void> _saveCompositeToGallery() async {
@@ -1174,6 +1337,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       child: Column(children: [
         _buildHeader(colors),
         _buildStage(),
+        if (_candidates.isNotEmpty) _buildCandidatePanel(colors),
         _buildToolbar(colors),
         _buildPromptPanel(colors),
       ]),
@@ -1346,6 +1510,11 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final colors = Theme.of(context).colorScheme;
     final sourcePath = _sourcePath;
     final sourceWidth = _sourceWidth;
+    final review = _reviewOpen ? _selectedCandidate : null;
+    final previewCurrent = !_busy &&
+        _draft == null &&
+        _maskPreviewSignature == _maskPreviewCurrentSignature &&
+        _maskPreviewBytes != null;
     if (sourcePath == null || sourceWidth <= 0) {
       return AspectRatio(
         key: const ValueKey('inpaint-workspace-stage'),
@@ -1413,10 +1582,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
               onPanCancel: () {},
               child: Listener(
                 behavior: HitTestBehavior.opaque,
-                onPointerDown: _onPointerDown,
-                onPointerMove: _onPointerMove,
-                onPointerUp: _onPointerUp,
-                onPointerCancel: _onPointerCancel,
+                onPointerDown: review == null ? _onPointerDown : null,
+                onPointerMove: review == null ? _onPointerMove : null,
+                onPointerUp: review == null ? _onPointerUp : null,
+                onPointerCancel: review == null ? _onPointerCancel : null,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -1426,6 +1595,16 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                       width: _sourceWidth * _transform.scale,
                       height: _sourceHeight * _transform.scale,
                       child: Image.file(File(sourcePath), fit: BoxFit.fill),
+                    ),
+                    CustomPaint(
+                      painter: InpaintCanvasPainter(
+                        transform: _transform,
+                        strokes: _allStrokes
+                            .where((stroke) =>
+                                stroke.target == InpaintPaintTarget.image)
+                            .toList(),
+                        showMask: false,
+                      ),
                     ),
                     for (final layer
                         in _resultLayers.where((item) => item.visible))
@@ -1441,24 +1620,40 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                               fit: BoxFit.fill),
                         ),
                       ),
-                    if (_box != null) _buildBoxDimmer(),
+                    if (_displayBox != null) _buildBoxDimmer(),
                     CustomPaint(
-                      painter: _InpaintCanvasPainter(
+                      key: const ValueKey('inpaint-live-mask'),
+                      painter: InpaintCanvasPainter(
                         transform: _transform,
-                        strokes: _allStrokes,
+                        strokes: _allStrokes
+                            .where((stroke) =>
+                                stroke.target == InpaintPaintTarget.mask)
+                            .toList(),
+                        showMask:
+                            _showMask && review == null && !previewCurrent,
                       ),
                     ),
                     if (_showMask &&
                         _box != null &&
-                        !_busy &&
-                        _maskPreviewKey == _maskPreviewSignature &&
-                        _maskPreviewBytes != null)
+                        review == null &&
+                        previewCurrent)
                       _FinalMaskOverlay(
                         transform: _transform,
                         box: _box!,
                         bytes: _maskPreviewBytes!,
                       ),
-                    if (_box != null) _buildBoxFrame(),
+                    if (review != null)
+                      Positioned.fromRect(
+                        rect: _displayBox!.rect,
+                        child: InpaintComparison(
+                          key: ValueKey('inpaint-compare-$_activeRevision'),
+                          beforePath: review.beforePath,
+                          afterPath: review.comparisonPath,
+                          onGestureActive: (active) =>
+                              InpaintWorkspaceCard.gestureActive.value = active,
+                        ),
+                      ),
+                    if (_displayBox != null) _buildBoxFrame(),
                     if (_busy) _buildBusyOverlay(),
                     if (_officialUpscaling)
                       Positioned.fill(
@@ -1492,28 +1687,31 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     );
   }
 
+  InpaintBox? get _displayBox {
+    final review = _reviewOpen ? _selectedCandidate : null;
+    if (review == null) return _box;
+    final rect = review.candidate.worldRect;
+    return InpaintBox(
+      x: _transform.offsetX + rect.x * _transform.scale,
+      y: _transform.offsetY + rect.y * _transform.scale,
+      width: rect.width * _transform.scale,
+      height: rect.height * _transform.scale,
+    );
+  }
+
   /// 框外暗幕。
   Widget _buildBoxDimmer() {
-    return Positioned.fromRect(
-      rect: _box!.rect,
+    return Positioned.fill(
       child: IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                spreadRadius: 9999,
-              ),
-            ],
-          ),
-        ),
+        child: CustomPaint(painter: _FrameDimmerPainter(_displayBox!.rect)),
       ),
     );
   }
 
   /// 选择框边框与分辨率标签。
   Widget _buildBoxFrame() {
-    final box = _box!;
+    final box = _displayBox!;
+    final review = _reviewOpen ? _selectedCandidate : null;
     final colors = Theme.of(context).colorScheme;
     const borderColor = Color(0xffffd27b);
     return Positioned.fromRect(
@@ -1525,25 +1723,47 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
             borderRadius: BorderRadius.circular(4),
           ),
           child: Stack(children: [
-            Positioned(
-              left: 6,
-              top: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: colors.surface.withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  '${_resolution.$1} × ${_resolution.$2}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: colors.onSurface,
+            if (review == null)
+              Positioned(
+                left: 6,
+                top: 6,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colors.surface.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${_resolution.$1} × ${_resolution.$2}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface,
+                    ),
                   ),
                 ),
               ),
-            ),
+            if (review != null)
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.surface.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    child: Text(
+                      '${review.width} × ${review.height}'
+                      '${review.candidate.seed == null ? '' : ' · Seed ${review.candidate.seed}'}',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  ),
+                ),
+              ),
           ]),
         ),
       ),
@@ -1568,7 +1788,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                 const SizedBox(height: 10),
                 Text(
                     _addingLayer
-                        ? '添加结果图层…'
+                        ? '准备候选…'
                         : '生成中 $_batchCompleted/$_batchTotal',
                     style: const TextStyle(fontSize: 13)),
               ],
@@ -1581,6 +1801,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
 
   /// 工作区下边工具栏：五种操作模式、笔刷参数、历史与图层管理。
   Widget _buildToolbar(ColorScheme colors) {
+    if (_reviewOpen) {
+      return _resultLayers.isEmpty
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: _buildResultLayers(colors),
+            );
+    }
     final isDrawing =
         _uiMode == InpaintUiMode.brush || _uiMode == InpaintUiMode.erase;
     return Padding(
@@ -1732,7 +1960,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
             Expanded(
               child: InkWell(
                 borderRadius: BorderRadius.circular(9),
-                onTap: _busy ? null : () => setState(() => _uiMode = mode.$1),
+                onTap: _busy
+                    ? null
+                    : () => setState(() {
+                          _uiMode = mode.$1;
+                          if (mode.$1 == InpaintUiMode.brush ||
+                              mode.$1 == InpaintUiMode.erase) {
+                            _showMask = true;
+                          }
+                        }),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   padding:
@@ -1783,6 +2019,120 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     );
   }
 
+  Widget _buildCandidatePanel(ColorScheme colors) {
+    final selected = _selectedCandidate;
+    if (selected == null) return const SizedBox.shrink();
+    final applied = _isApplied(selected);
+    return Padding(
+      key: const ValueKey('inpaint-candidate-panel'),
+      padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '候选结果 ${_candidates.indexOf(selected) + 1} / ${_candidates.length}',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _reviewOpen = !_reviewOpen),
+                icon: Icon(
+                  _reviewOpen ? Icons.edit_outlined : Icons.compare,
+                  size: 16,
+                ),
+                label: Text(_reviewOpen ? '回到编辑' : '滑动对比'),
+              ),
+            ],
+          ),
+          SizedBox(
+            height: 64,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _candidates.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final entry = _candidates[index];
+                final active = entry.candidate.id == _selectedCandidateId;
+                return Semantics(
+                  button: true,
+                  selected: active,
+                  label: '候选 ${index + 1}${_isApplied(entry) ? '，已应用' : ''}',
+                  child: InkWell(
+                    key: ValueKey('inpaint-candidate-$index'),
+                    onTap: _busy
+                        ? null
+                        : () => setState(() {
+                              _selectedCandidateId = entry.candidate.id;
+                              _reviewOpen = true;
+                            }),
+                    borderRadius: BorderRadius.circular(9),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 60,
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(
+                          color:
+                              active ? colors.primary : colors.outlineVariant,
+                          width: 2,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.file(File(entry.comparisonPath),
+                                fit: BoxFit.cover),
+                            if (_isApplied(entry))
+                              Align(
+                                alignment: Alignment.bottomRight,
+                                child: ColoredBox(
+                                  color: colors.primary,
+                                  child: Icon(Icons.check,
+                                      size: 16, color: colors.onPrimary),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              OutlinedButton(
+                key: const ValueKey('inpaint-discard-candidate'),
+                onPressed: _busy || applied ? null : _discardSelectedCandidate,
+                child: const Text('丢弃'),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  key: const ValueKey('inpaint-apply-candidate'),
+                  onPressed: _busy || applied ? null : _applySelectedCandidate,
+                  icon: const Icon(Icons.check, size: 17),
+                  label: Text(applied ? '已应用此结果' : '应用此结果'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBrushControls(ColorScheme colors) {
     final isErase = _uiMode == InpaintUiMode.erase;
     return Container(
@@ -1794,7 +2144,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       ),
       child: Column(
         children: [
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            runSpacing: 4,
             children: [
               Text(
                 '绘制',
@@ -1818,7 +2171,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                     ? null
                     : (_) => setState(() => _target = InpaintPaintTarget.image),
               ),
-              const Spacer(),
               ChoiceChip(
                 avatar: const Icon(Icons.circle, size: 13),
                 label: const Text('圆形'),
@@ -1892,11 +2244,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                 '结果图层 ' + _resultLayers.length.toString(),
                 style:
                     const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-              const Spacer(),
-              Text(
-                '原图底层已锁定',
-                style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
               ),
             ],
           ),
@@ -2143,12 +2490,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final sourcePng = _sourcePngBytes;
     if (box == null || sourcePng == null) return '';
     return [
-      box.x.toStringAsFixed(1),
-      box.y.toStringAsFixed(1),
-      box.width.toStringAsFixed(1),
-      _transform.offsetX.toStringAsFixed(1),
-      _transform.offsetY.toStringAsFixed(1),
-      _transform.scale.toStringAsFixed(3),
+      _sourceLoadRevision,
+      box.x,
+      box.y,
+      box.width,
+      box.height,
+      _transform.offsetX,
+      _transform.offsetY,
+      _transform.scale,
       _expandPixels,
       Object.hashAll(_allStrokes),
       _generation.selectedResolution,
@@ -2156,14 +2505,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   }
 
   void _scheduleMaskPreview() {
-    if (!_showMask) return;
-    final signature = _maskPreviewCurrentSignature;
-    if (signature.isEmpty || signature == _maskPreviewKey) return;
+    if (!_showMask || _reviewOpen) return;
+    final pendingSignature = _maskPreviewCurrentSignature;
+    if (pendingSignature.isEmpty || pendingSignature == _maskPreviewKey) return;
     _maskPreviewDebounce?.cancel();
     _maskPreviewDebounce = Timer(const Duration(milliseconds: 250), () async {
       final sourcePng = _sourcePngBytes;
       final box = _box;
       if (sourcePng == null || box == null || !mounted) return;
+      final signature = _maskPreviewCurrentSignature;
       final worldRect = InpaintViewport(
         x: (box.x - _transform.offsetX) / _transform.scale,
         y: (box.y - _transform.offsetY) / _transform.scale,
@@ -2181,9 +2531,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
             outputWidth: _resolution.$1,
             outputHeight: _resolution.$2,
             expandPixels: _expandPixels,
+            borderPixels: (2 * _resolution.$1 / box.width).ceil().clamp(1, 8),
           ),
         );
-        if (!mounted) return;
+        if (!mounted ||
+            _maskPreviewKey != signature ||
+            _maskPreviewCurrentSignature != signature) {
+          return;
+        }
         setState(() {
           _maskPreviewSignature = signature;
           _maskPreviewBytes = bytes;
@@ -2195,7 +2550,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   }
 }
 
-/// 候选对比层：框内左侧显示生成结果，右侧显示原图，分割线可拖动。
+/// 与请求一致的最终遮罩预览。
 class _FinalMaskOverlay extends StatelessWidget {
   final InpaintTransform transform;
   final InpaintBox box;
@@ -2219,99 +2574,21 @@ class _FinalMaskOverlay extends StatelessWidget {
   }
 }
 
-class _InpaintCanvasPainter extends CustomPainter {
-  final InpaintTransform transform;
-  final List<InpaintStroke> strokes;
-
-  const _InpaintCanvasPainter({
-    required this.transform,
-    required this.strokes,
-  });
+class _FrameDimmerPainter extends CustomPainter {
+  final Rect frame;
+  const _FrameDimmerPainter(this.frame);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bounds = Offset.zero & size;
-    for (final target in InpaintPaintTarget.values) {
-      canvas.saveLayer(bounds, Paint());
-      for (final stroke in strokes.where((stroke) => stroke.target == target)) {
-        final erase = stroke.mode == InpaintStrokeMode.erase;
-        final color = target == InpaintPaintTarget.mask
-            ? const Color(0x802196F3)
-            : Color(stroke.color).withValues(alpha: stroke.opacity);
-        final paint = Paint()
-          ..color = color
-          ..blendMode = erase ? BlendMode.clear : BlendMode.srcOver
-          ..isAntiAlias = true;
-
-        if (stroke.type == InpaintStrokeType.rectangle &&
-            stroke.rectangle != null) {
-          final rect = stroke.rectangle!;
-          canvas.drawRect(
-            Rect.fromLTRB(
-              rect.left * transform.scale + transform.offsetX,
-              rect.top * transform.scale + transform.offsetY,
-              rect.right * transform.scale + transform.offsetX,
-              rect.bottom * transform.scale + transform.offsetY,
-            ),
-            paint,
-          );
-          continue;
-        }
-        if (stroke.points.isEmpty) continue;
-        if (stroke.square) {
-          for (final cell in inpaintSquareBrushCells(stroke)) {
-            canvas.drawRect(
-              Rect.fromLTWH(
-                cell.$1 * inpaintBrushGridCellSize * transform.scale +
-                    transform.offsetX,
-                cell.$2 * inpaintBrushGridCellSize * transform.scale +
-                    transform.offsetY,
-                inpaintBrushGridCellSize * transform.scale,
-                inpaintBrushGridCellSize * transform.scale,
-              ),
-              paint,
-            );
-          }
-          continue;
-        }
-
-        final path = Path();
-        for (var index = 0; index < stroke.points.length; index++) {
-          final point = stroke.points[index];
-          final screen = Offset(
-            point.x * transform.scale + transform.offsetX,
-            point.y * transform.scale + transform.offsetY,
-          );
-          if (index == 0) {
-            path.moveTo(screen.dx, screen.dy);
-          } else {
-            path.lineTo(screen.dx, screen.dy);
-          }
-        }
-        if (stroke.points.length == 1) {
-          final point = stroke.points.single;
-          canvas.drawCircle(
-            Offset(
-              point.x * transform.scale + transform.offsetX,
-              point.y * transform.scale + transform.offsetY,
-            ),
-            math.max(0.5, stroke.size * transform.scale / 2),
-            paint,
-          );
-        } else {
-          paint
-            ..style = PaintingStyle.stroke
-            ..strokeCap = StrokeCap.round
-            ..strokeJoin = StrokeJoin.round
-            ..strokeWidth = stroke.size * transform.scale;
-          canvas.drawPath(path, paint);
-        }
-      }
-      canvas.restore();
-    }
+    final outside = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Offset.zero & size);
+    final inside = frame.intersect(Offset.zero & size);
+    if (!inside.isEmpty) outside.addRect(inside);
+    canvas.drawPath(outside, Paint()..color = const Color(0x73000000));
   }
 
   @override
-  bool shouldRepaint(covariant _InpaintCanvasPainter oldDelegate) =>
-      oldDelegate.transform != transform || oldDelegate.strokes != strokes;
+  bool shouldRepaint(_FrameDimmerPainter oldDelegate) =>
+      oldDelegate.frame != frame;
 }

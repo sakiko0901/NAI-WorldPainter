@@ -27,6 +27,82 @@ void main() {
     expect(result.mask.getPixel(12, 12).a, 0);
   });
 
+  test('分数坐标贴近源图边缘时按像素中心采样，只遮罩真正越界部分', () {
+    final result = rasterizer.rasterize(
+      source: source(),
+      worldRect: const InpaintViewport(x: 15.6, y: 0, width: 1, height: 1),
+      outputWidth: 2,
+      outputHeight: 2,
+      strokes: const [],
+    );
+
+    expect(result.image.getPixel(0, 0).r, 20);
+    expect(result.mask.getPixel(0, 0).r, 0);
+    expect(result.mask.getPixel(1, 0).r, 255);
+    expect(result.mask.getPixel(0, 1).r, 0);
+    expect(result.mask.getPixel(1, 1).r, 255);
+  });
+
+  test('sourceBounds 原点和分数坐标在缩放采样时保持对齐', () {
+    final coloredSource = img.Image(width: 4, height: 1, numChannels: 4);
+    for (var x = 0; x < 4; x++) {
+      coloredSource.setPixelRgba(x, 0, 20 + x * 40, 0, 0, 255);
+    }
+
+    final result = rasterizer.rasterize(
+      source: coloredSource,
+      sourceBounds: const InpaintViewport(
+        x: 100,
+        y: -2,
+        width: 4,
+        height: 1,
+      ),
+      worldRect: const InpaintViewport(
+        x: 100.6,
+        y: -2,
+        width: 2,
+        height: 1,
+      ),
+      outputWidth: 4,
+      outputHeight: 1,
+      strokes: const [],
+    );
+
+    expect(
+      [for (var x = 0; x < 4; x++) result.image.getPixel(x, 0).r],
+      [20, 60, 60, 100],
+    );
+    for (var x = 0; x < 4; x++) {
+      expect(result.mask.getPixel(x, 0).r, 0);
+    }
+  });
+
+  test('栅格化不会改写不可变源图', () {
+    final base = source();
+    final stroke = InpaintStroke(
+      target: InpaintPaintTarget.mask,
+      mode: InpaintStrokeMode.paint,
+      type: InpaintStrokeType.path,
+      size: 8,
+      points: const [InpaintPoint(8, 8)],
+    );
+
+    rasterizer.rasterize(
+      source: base,
+      worldRect: world,
+      outputWidth: 16,
+      outputHeight: 16,
+      strokes: [stroke],
+    );
+
+    for (var y = 0; y < base.height; y++) {
+      for (var x = 0; x < base.width; x++) {
+        final pixel = base.getPixel(x, y);
+        expect([pixel.r, pixel.g, pixel.b, pixel.a], [20, 40, 60, 255]);
+      }
+    }
+  });
+
   test('遮罩画笔与橡皮擦按顺序覆盖', () {
     final paint = InpaintStroke(
       target: InpaintPaintTarget.mask,
@@ -125,6 +201,51 @@ void main() {
     for (var x = 0; x < 5; x++) {
       expect(cells, contains((x, 0)));
       expect(cells, contains((x, 1)));
+    }
+  });
+
+  test('圆形与方格遮罩笔刷重复覆盖后仍保持二值且不累积变色', () {
+    for (final square in [false, true]) {
+      final stroke = InpaintStroke(
+        target: InpaintPaintTarget.mask,
+        mode: InpaintStrokeMode.paint,
+        type: InpaintStrokeType.path,
+        size: 8,
+        square: square,
+        points: const [
+          InpaintPoint(8, 8),
+          InpaintPoint(12, 8),
+          InpaintPoint(8, 8),
+        ],
+      );
+      final once = rasterizer.rasterize(
+        source: source(),
+        worldRect: world,
+        outputWidth: 16,
+        outputHeight: 16,
+        strokes: [stroke],
+      ).mask;
+      final repeated = rasterizer.rasterize(
+        source: source(),
+        worldRect: world,
+        outputWidth: 16,
+        outputHeight: 16,
+        strokes: [stroke, stroke, stroke],
+      ).mask;
+
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 16; x++) {
+          final pixel = repeated.getPixel(x, y);
+          final oncePixel = once.getPixel(x, y);
+          expect(pixel.r, anyOf(0, 255), reason: 'square=$square at $x,$y');
+          expect(pixel.a, anyOf(0, 255), reason: 'square=$square at $x,$y');
+          expect(pixel.g, pixel.r, reason: 'square=$square at $x,$y');
+          expect(pixel.b, pixel.r, reason: 'square=$square at $x,$y');
+          expect(pixel.a, pixel.r, reason: 'square=$square at $x,$y');
+          expect(pixel.r, oncePixel.r, reason: 'square=$square at $x,$y');
+          expect(pixel.a, oncePixel.a, reason: 'square=$square at $x,$y');
+        }
+      }
     }
   });
 

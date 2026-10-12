@@ -28,7 +28,7 @@ Set-Location 'E:\NAI-WorldPainter\.tools\mobile-workspace'
 $env:PUB_CACHE = 'E:\NAI-WorldPainter\.tools\pub-cache'
 $env:JAVA_HOME = 'E:\NAI-WorldPainter\.tools\jdk-21.0.12.1+1'
 $env:ANDROID_HOME = 'E:\NAI-WorldPainter\.tools\android-sdk'
-& 'E:\NAI-WorldPainter\.tools\flutter\bin\flutter.bat' build apk --release --target-platform android-arm64 --no-pub --build-name=1.2.3-mobile-preview.1 --build-number=212015 --android-project-arg=mobilePreview=true
+& 'E:\NAI-WorldPainter\.tools\flutter\bin\flutter.bat' build apk --release --target-platform android-arm64 --no-pub --build-name=1.2.3-mobile-preview.2 --build-number=212016 --android-project-arg=mobilePreview=true
 ```
 
 新环境首次运行需先 `flutter pub get`。输出为 `build/app/outputs/flutter-apk/app-release.apk`。包名开关只在上述命令内生效；常规构建不传入该参数即可保持原应用身份。应直接传递 `--android-project-arg`，本机通过 Flutter 间接传递 `ORG_GRADLE_PROJECT_mobilePreview` 环境变量时，实际产物仍使用原包名，不能据环境变量设置成功判断测试身份已生效。
@@ -37,7 +37,7 @@ $env:ANDROID_HOME = 'E:\NAI-WorldPainter\.tools\android-sdk'
 
 验证应包括 `apksigner verify`、`zipalign -c -P 16 4`、AAPT 包名/版本/最低系统/启动 Activity 信息、ZIP 完整性与 SHA-256。没有连接 Android 设备时，构建与静态校验不代表真机启动和功能测试通过。
 
-## 2026-10-12 产物
+## 2026-10-12 首版产物 preview.1
 
 - 文件：`NAI-WorldPainter-mobile-preview-v5-arm64.apk`，52,207,579 字节（49.8 MiB）。
 - 版本：`1.2.3-mobile-preview.1` / `212015`；最低 Android 7.0（API 24），目标 API 36，ARM64。
@@ -48,6 +48,15 @@ $env:ANDROID_HOME = 'E:\NAI-WorldPainter\.tools\android-sdk'
 - `flutter doctor -v` 的 Android toolchain 检查通过；`adb devices -l` 无 Android 设备，未执行安装或真机测试。
 
 本机交付目录为仓库外的 `E:\NAI-WorldPainter\安装包\2026-10-12`，同时保存校验脚本、校验结果和各轮构建日志。仓库原有 `release/app-release.apk` 未覆盖。开发工作保留在 `feat/mobile-preview-v5`，不合并主分支。
+
+## 局部重绘修订产物 preview.2
+
+- 文件：`NAI-WorldPainter-mobile-preview.2-arm64.apk`，52,224,075 字节（49.8 MiB）。
+- 版本：`1.2.3-mobile-preview.2` / `212016`；ARM64、最低 API 24、目标 API 36。
+- SHA-256：`c352c4a819f5962bd56c437d4823e6d6a71824d06be83d44cb783faca7213b0e`。
+- 包名与签名证书均和 preview.1 一致，可直接更新安装测试版；原有测试版数据保留。
+- 签名、AAPT 安装信息、Provider/前台服务声明、ZIP CRC、16 KB ZIP 对齐与全部原生 ELF 对齐验证通过。
+- 交付目录：`E:\NAI-WorldPainter\安装包\2026-10-12\inpaint-preview.2`。本地截图、测试日志和校验结果一并保留；无真机测试。
 
 ## 前台生成服务
 

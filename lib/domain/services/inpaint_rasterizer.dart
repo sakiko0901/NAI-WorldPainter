@@ -30,6 +30,10 @@ class InpaintRasterLayer {
 class InpaintRasterizer {
   const InpaintRasterizer();
 
+  /// Rasterizes [worldRect] into an output image and mask.
+  ///
+  /// [sourceBounds] is the world-space extent represented by [source]; it
+  /// defaults to the source image's zero-origin bounds.
   InpaintRasterResult rasterize({
     required img.Image source,
     InpaintViewport? sourceBounds,
@@ -48,21 +52,23 @@ class InpaintRasterizer {
 
     final scaleX = outputWidth / worldRect.width;
     final scaleY = outputHeight / worldRect.height;
-    final sourceLeft = worldRect.x.round();
-    final sourceTop = worldRect.y.round();
-    final sourceRight = (worldRect.x + worldRect.width).round();
-    final sourceBottom = (worldRect.y + worldRect.height).round();
+    final boundsX = sourceBounds?.x ?? 0.0;
+    final boundsY = sourceBounds?.y ?? 0.0;
+    final boundsWidth = sourceBounds?.width ?? source.width.toDouble();
+    final boundsHeight = sourceBounds?.height ?? source.height.toDouble();
+    final boundsRight = boundsX + boundsWidth;
+    final boundsBottom = boundsY + boundsHeight;
+    final sourceScaleX = source.width / boundsWidth;
+    final sourceScaleY = source.height / boundsHeight;
 
     for (var y = 0; y < outputHeight; y++) {
-      final sy = sourceTop + (y / scaleY).floor();
+      final worldY = worldRect.y + (y + 0.5) / scaleY;
+      final hasSourceY = worldY >= boundsY && worldY < boundsBottom;
+      final sy = hasSourceY ? ((worldY - boundsY) * sourceScaleY).floor() : -1;
       for (var x = 0; x < outputWidth; x++) {
-        final sx = sourceLeft + (x / scaleX).floor();
-        if (sx >= 0 &&
-            sy >= 0 &&
-            sx < source.width &&
-            sy < source.height &&
-            sx < sourceRight &&
-            sy < sourceBottom) {
+        final worldX = worldRect.x + (x + 0.5) / scaleX;
+        if (hasSourceY && worldX >= boundsX && worldX < boundsRight) {
+          final sx = ((worldX - boundsX) * sourceScaleX).floor();
           final pixel = source.getPixel(sx, sy);
           image.setPixel(x, y, pixel);
           if (pixel.a == 0) mask.setPixelRgba(x, y, 255, 255, 255, 255);
