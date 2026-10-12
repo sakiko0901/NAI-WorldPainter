@@ -31,6 +31,8 @@ flutter analyze --no-pub
 
 ## 验证边界
 
-本机未配置 Android SDK，`flutter build bundle --no-pub --debug` 在 Android SDK 检查阶段失败，因此本次没有生成 APK，也未进行真机验证。未使用真实付费 API 验证额度扣费、生成或相册平台权限；这些仍需 Android 环境联调。
+2026-10-11 前端验证时未配置 Android SDK，未生成 APK。2026-10-12 已配置 SDK/JDK 并成功生成 Android ARM64 release 模式的独立测试包 `1.2.3-mobile-preview.1+212015`，具体环境、重建命令及路径问题见 [Android 安装测试包](android_apk_testing.md)。签名、安装身份、ZIP 完整性及所有原生库 16 KB 对齐检查通过。
+
+尚未连接 Android 真机，未验证实际安装启动、真实付费 API 的额度扣费与生成、通知保活或相册平台权限；这些仍需安装测试。
 
 仓库现有静态检查告警尚未全量清理。没有通过禁用有效测试或降低静态检查规则规避问题。

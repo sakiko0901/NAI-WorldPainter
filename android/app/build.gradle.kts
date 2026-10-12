@@ -5,6 +5,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val mobilePreview = providers.gradleProperty("mobilePreview").orNull == "true"
+
 android {
     namespace = "com.naihuishi.nai_huishi"
     compileSdk = 36
@@ -21,7 +23,13 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.naihuishi.nai_huishi"
+        applicationId = if (mobilePreview) {
+            "com.naihuishi.nai_huishi.preview"
+        } else {
+            "com.naihuishi.nai_huishi"
+        }
+        manifestPlaceholders["appLabel"] =
+            if (mobilePreview) "NAI 绘世测试版" else "NAI 绘世"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

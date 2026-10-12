@@ -8,11 +8,16 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
-        android:label="NAI 绘世"
+        android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true"
         android:usesCleartextTraffic="true">
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            android:stopWithTask="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
