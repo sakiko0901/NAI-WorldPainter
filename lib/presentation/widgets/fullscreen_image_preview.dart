@@ -11,6 +11,12 @@ Future<void> showFullscreenImagePreview(
     PageRouteBuilder<void>(
       opaque: true,
       barrierColor: Colors.black,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
+      reverseTransitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
       pageBuilder: (context, animation, secondaryAnimation) {
         return _FullscreenImagePreview(
             imagePath: imagePath, imageUrl: imageUrl);
@@ -46,7 +52,7 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
     _controller = TransformationController();
     _zoomAnimationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 360),
+      duration: const Duration(milliseconds: 240),
     )..addListener(() {
         final value = _zoomAnimation?.value;
         if (value != null) _controller.value = value;
@@ -62,6 +68,10 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
 
   void _animateTo(Matrix4 target) {
     _zoomAnimationController.stop();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = target;
+      return;
+    }
     _zoomAnimation = Matrix4Tween(
       begin: _controller.value,
       end: target,
@@ -74,16 +84,26 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
 
   void _toggleZoom(TapDownDetails details) {
     if (_zoomed) {
-      _animateTo(Matrix4.identity());
-      _zoomed = false;
+      _resetZoom();
     } else {
       final position = details.localPosition;
       final target = Matrix4.identity()
-        ..translate(-position.dx * 1.15, -position.dy * 1.15)
-        ..scale(2.15);
+        ..translateByDouble(-position.dx * 1.15, -position.dy * 1.15, 0, 1)
+        ..scaleByDouble(2.15, 2.15, 1, 1);
       _animateTo(target);
-      _zoomed = true;
+      setState(() => _zoomed = true);
     }
+  }
+
+  void _resetZoom() {
+    _animateTo(Matrix4.identity());
+    if (_zoomed) setState(() => _zoomed = false);
+  }
+
+  void _onInteractionUpdate(ScaleUpdateDetails details) {
+    final nextZoomed = _controller.value.getMaxScaleOnAxis() > 1.02;
+    if (nextZoomed == _zoomed) return;
+    setState(() => _zoomed = nextZoomed);
   }
 
   @override
@@ -108,10 +128,12 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
             onTap: () => Navigator.of(context).pop(),
             onDoubleTapDown: _toggleZoom,
             child: InteractiveViewer(
+              key: const ValueKey('fullscreen-image-viewer'),
               transformationController: _controller,
-              minScale: 0.8,
+              minScale: 1,
               maxScale: 5,
               onInteractionStart: (_) => _zoomAnimationController.stop(),
+              onInteractionUpdate: _onInteractionUpdate,
               child: SizedBox.expand(
                 child: Center(child: child),
               ),
@@ -122,14 +144,39 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
             right: 0,
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(
-                    CupertinoIcons.xmark_circle_fill,
-                    color: Colors.white,
-                    size: 32,
-                  ),
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: _zoomed ? '重置缩放' : '适应窗口',
+                      onPressed: _resetZoom,
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(40, 40),
+                        maximumSize: const Size(40, 40),
+                        padding: EdgeInsets.zero,
+                        foregroundColor: Colors.white,
+                        backgroundColor: Colors.black.withValues(alpha: 0.28),
+                      ),
+                      icon: const Icon(Icons.fit_screen_outlined, size: 20),
+                    ),
+                    const SizedBox(width: 5),
+                    IconButton(
+                      tooltip: '关闭预览',
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(40, 40),
+                        maximumSize: const Size(40, 40),
+                        padding: EdgeInsets.zero,
+                        foregroundColor: Colors.white,
+                        backgroundColor: Colors.black.withValues(alpha: 0.28),
+                      ),
+                      icon: const Icon(
+                        CupertinoIcons.xmark,
+                        size: 19,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

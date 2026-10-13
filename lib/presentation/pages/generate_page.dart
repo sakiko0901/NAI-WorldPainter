@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,11 @@ import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
 import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_background.dart';
+import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
+import 'package:nai_huishi/presentation/widgets/character_position_editor.dart';
 
 class GeneratePage extends StatefulWidget {
   final ValueChanged<int>? onNavigate;
@@ -39,6 +45,7 @@ class _GeneratePageState extends State<GeneratePage> {
   late final ImagePicker _imagePicker;
   late final ScrollController _scrollController;
   bool _isPreparingImg2Img = false;
+  bool _isImportingWorkspaceImage = false;
   bool _hasOpenedInpaint = false;
   String? _img2ImgOriginalPath;
 
@@ -48,6 +55,8 @@ class _GeneratePageState extends State<GeneratePage> {
     _imagePicker = ImagePicker();
     _scrollController = ScrollController();
     _vm = sl<GenerationViewModel>();
+    _knownResultCount = _vm.sessionResults.length;
+    _wasGenerating = _vm.isGenerating;
     _hasOpenedInpaint = _vm.generationMode == GenerationMode.inpainting;
 
     // 我们不再直接使用 TextEditingController 以避免频繁重绘导致光标丢失。我们只传 initialValue 并在 onChanged 派发事件。
@@ -77,6 +86,7 @@ class _GeneratePageState extends State<GeneratePage> {
 
   /// 局部重绘工作区手势激活（绘制遮罩/拖框/移动图片）时锁定页面滚动。
   bool _inpaintWorkspaceLocked = false;
+  bool _characterPositionLocked = false;
   int _knownResultCount = 0;
   String? _shownGenerationError;
   bool _wasGenerating = false;
@@ -145,7 +155,9 @@ class _GeneratePageState extends State<GeneratePage> {
     if (resultContext == null) return;
     await Scrollable.ensureVisible(
       resultContext,
-      duration: const Duration(milliseconds: 450),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
       alignment: 0.08,
     );
@@ -187,9 +199,12 @@ class _GeneratePageState extends State<GeneratePage> {
   @override
   Widget build(BuildContext context) {
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final imagePath = (_vm.selectedResult ?? _vm.lastCompletedTask)?.imagePath;
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
+        flexibleSpace:
+            const FrostedSurface(radius: 0, child: SizedBox.expand()),
         leadingWidth: 100,
         leading: widget.onNavigate == null
             ? null
@@ -210,68 +225,96 @@ class _GeneratePageState extends State<GeneratePage> {
       ),
       bottomNavigationBar:
           _isChatDrawerOpen || keyboardOpen ? null : _buildFloatingBottomBar(),
-      body: Stack(
-        children: [
-          NotificationListener<ScrollNotification>(
-            onNotification: (notification) {
-              if (_vm.isGenerating &&
-                  notification is UserScrollNotification &&
-                  notification.direction != ScrollDirection.idle) {
-                _userScrolledDuringGeneration = true;
-              }
-              return false;
-            },
-            child: ListView(
-              key: const PageStorageKey('creation-scroll'),
-              controller: _scrollController,
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              physics: _vm.generationMode == GenerationMode.inpainting &&
-                      (_inpaintWorkspaceLocked ||
-                          InpaintWorkspaceCard.gestureActive.value)
-                  ? const NeverScrollableScrollPhysics()
-                  : null,
-              padding: EdgeInsets.symmetric(
-                horizontal: MediaQuery.sizeOf(context).width < 360 ? 12 : 16,
-                vertical: 16,
+      body: LayoutBuilder(builder: (context, constraints) {
+        final textExtra =
+            ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
+                .clamp(0.0, 72.0);
+        final thumbnails = _vm.sessionResults.length > 1 ? 48.0 : 0.0;
+        final workspaceHeight =
+            (constraints.maxHeight - 210 - textExtra - thumbnails)
+                .clamp(220.0, 536.0)
+                .toDouble();
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: StudioBackground(
+                image: imagePath != null && File(imagePath).existsSync()
+                    ? ResizeImage(FileImage(File(imagePath)), width: 600)
+                    : null,
               ),
-              children: [
-                _buildModeSection(),
-                const SizedBox(height: 16),
-                if (_vm.generationMode != GenerationMode.inpainting) ...[
-                  _buildResultSection(),
-                  const SizedBox(height: 16),
-                  _buildPromptSection(),
-                  const SizedBox(height: 12),
-                  if (!_vm.isNonNovelAiProvider &&
-                      _vm.supportsCharacterPrompts) ...[
-                    _CharacterControlSection(vm: _vm),
-                    const SizedBox(height: 12),
-                  ],
-                  if (!_vm.isNonNovelAiProvider &&
-                      (_vm.supportsVibeReferences ||
-                          _vm.supportsPreciseReferences))
-                    _CharacterReferenceSection(
-                        vm: _vm,
-                        imagePicker: _imagePicker,
-                        onShowMessage: _showToast),
-                  if (_vm.isNonNovelAiProvider)
-                    _buildGptReferenceImageSection(),
-                  const SizedBox(height: 12),
-                  _buildGenerationSettingsButton(),
-                ],
-                if (_hasOpenedInpaint)
-                  Offstage(
-                    key: const ValueKey('retained-inpaint-workspace'),
-                    offstage: _vm.generationMode != GenerationMode.inpainting,
-                    child: _buildInpaintingSection(),
-                  ),
-                const SizedBox(height: 16),
-              ],
             ),
-          ),
-          if (_isChatDrawerOpen) ChatDrawer(onClose: _closeChatDrawer),
-        ],
-      ),
+            BackdropGroup(
+                child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (_vm.isGenerating &&
+                    notification is UserScrollNotification &&
+                    notification.direction != ScrollDirection.idle) {
+                  _userScrolledDuringGeneration = true;
+                }
+                return false;
+              },
+              child: ListView(
+                key: const PageStorageKey('creation-scroll'),
+                controller: _scrollController,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                physics: _characterPositionLocked ||
+                        (_vm.generationMode == GenerationMode.inpainting &&
+                            (_inpaintWorkspaceLocked ||
+                                InpaintWorkspaceCard.gestureActive.value))
+                    ? const NeverScrollableScrollPhysics()
+                    : null,
+                padding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                children: [
+                  _buildModeSection(),
+                  const SizedBox(height: 12),
+                  if (_vm.generationMode != GenerationMode.inpainting) ...[
+                    _buildResultSection(workspaceHeight: workspaceHeight),
+                    const SizedBox(height: 12),
+                    _buildPromptSection(),
+                    const SizedBox(height: 12),
+                    if (!_vm.isNonNovelAiProvider &&
+                        _vm.supportsCharacterPrompts) ...[
+                      _CharacterControlSection(
+                        vm: _vm,
+                        imageAspectRatio: _outputAspectRatio,
+                        onPositionGestureChanged: (active) {
+                          if (mounted && active != _characterPositionLocked) {
+                            setState(() => _characterPositionLocked = active);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (!_vm.isNonNovelAiProvider &&
+                        (_vm.supportsVibeReferences ||
+                            _vm.supportsPreciseReferences))
+                      _CharacterReferenceSection(
+                          vm: _vm,
+                          imagePicker: _imagePicker,
+                          onShowMessage: _showToast),
+                    if (_vm.isNonNovelAiProvider)
+                      _buildGptReferenceImageSection(),
+                  ],
+                  if (_hasOpenedInpaint)
+                    Offstage(
+                      key: const ValueKey('retained-inpaint-workspace'),
+                      offstage: _vm.generationMode != GenerationMode.inpainting,
+                      child: _buildInpaintingSection(),
+                    ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            )),
+            if (_isChatDrawerOpen)
+              ChatDrawer(
+                  onClose: _closeChatDrawer, parentResizesForKeyboard: true),
+          ],
+        );
+      }),
     );
   }
 
@@ -279,28 +322,19 @@ class _GeneratePageState extends State<GeneratePage> {
     // 统一重绘工作区目前只支持 NovelAI。
     final allowInpainting = !_vm.isNonNovelAiProvider;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.08),
-          width: 0.5,
-        ),
-      ),
+    final glass = FrostedTheme.of(context);
+    return FrostedSurface(
+      radius: 12,
       padding: const EdgeInsets.all(4),
       child: allowInpainting
           ? CupertinoSlidingSegmentedControl<GenerationMode>(
               groupValue: _vm.generationMode,
-              backgroundColor: Theme.of(context).colorScheme.surface,
-              thumbColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.8),
+              backgroundColor: Colors.transparent,
+              thumbColor: glass.selection,
               children: {
                 GenerationMode.textToImage: Padding(
                   padding: const EdgeInsets.symmetric(
-                    vertical: 8,
+                    vertical: 5,
                     horizontal: 12,
                   ),
                   child: Text(
@@ -309,14 +343,14 @@ class _GeneratePageState extends State<GeneratePage> {
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
                       color: _vm.generationMode == GenerationMode.textToImage
-                          ? Theme.of(context).colorScheme.onSurface
+                          ? glass.onSelection
                           : Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
                 GenerationMode.inpainting: Padding(
                   padding: const EdgeInsets.symmetric(
-                    vertical: 8,
+                    vertical: 5,
                     horizontal: 12,
                   ),
                   child: Text(
@@ -325,7 +359,7 @@ class _GeneratePageState extends State<GeneratePage> {
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
                       color: _vm.generationMode == GenerationMode.inpainting
-                          ? Theme.of(context).colorScheme.onSurface
+                          ? glass.onSelection
                           : Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -334,6 +368,7 @@ class _GeneratePageState extends State<GeneratePage> {
               onValueChanged: (value) {
                 if (value != null && !_vm.isGenerating) {
                   FocusManager.instance.primaryFocus?.unfocus();
+                  _characterPositionLocked = false;
                   _vm.setGenerationMode(value);
                 }
               },
@@ -341,10 +376,7 @@ class _GeneratePageState extends State<GeneratePage> {
           : Container(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
               decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.8),
+                color: glass.selection,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -352,7 +384,7 @@ class _GeneratePageState extends State<GeneratePage> {
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  color: glass.onSelection,
                 ),
               ),
             ),
@@ -773,13 +805,8 @@ class _GeneratePageState extends State<GeneratePage> {
             ),
           ]),
         );
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
-      ),
+    return FrostedSurface(
+      radius: 18,
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         editor(negative: false),
         if (!_vm.isNonNovelAiProvider) ...[
@@ -1645,16 +1672,20 @@ class _GeneratePageState extends State<GeneratePage> {
     }
   }
 
-  Widget _buildResultSection() {
+  Widget _buildResultSection({required double workspaceHeight}) {
     final task = _vm.selectedResult ?? _vm.lastCompletedTask;
     final hasLocalImage =
         task?.imagePath != null && File(task!.imagePath!).existsSync();
     return GenerationResultCard(
       key: _resultSectionKey,
+      workspaceHeight: workspaceHeight,
       task: task,
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
       error: _vm.errorMessage,
+      onImport: _vm.isGenerating || _isImportingWorkspaceImage
+          ? null
+          : _importWorkspaceImage,
       onSelect: (result) => _vm.selectResult(result.taskId),
       onPreview: task == null
           ? null
@@ -1690,6 +1721,34 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
+  double get _outputAspectRatio {
+    final parts = _vm.selectedResolution.split(RegExp(r'[xX×]'));
+    if (parts.length != 2) return 1;
+    final width = double.tryParse(parts[0].trim());
+    final height = double.tryParse(parts[1].trim());
+    return width != null && height != null && width > 0 && height > 0
+        ? width / height
+        : 1;
+  }
+
+  Future<void> _importWorkspaceImage() async {
+    if (_vm.isGenerating || _isImportingWorkspaceImage) return;
+    setState(() => _isImportingWorkspaceImage = true);
+    try {
+      final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+      final image = await compute(WorkspaceImageImporter.read, picked.path);
+      if (!mounted) return;
+      if (!_vm.displayImportedImage(image)) {
+        _showToast('当前正在生成，请稍后导入图片');
+      }
+    } catch (_) {
+      if (mounted) _showToast('图片导入失败，请选择有效图片');
+    } finally {
+      if (mounted) setState(() => _isImportingWorkspaceImage = false);
+    }
+  }
+
   void _openImagePreview(
     BuildContext context, {
     String? imagePath,
@@ -1711,36 +1770,27 @@ class _GeneratePageState extends State<GeneratePage> {
         : '${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}';
     final model = _vm.currentModelOption?.displayName ?? '选择模型';
     final cost = _vm.officialCostPerImage;
-    return Material(
-      color: theme.colorScheme.surface,
+    return FrostedSurface(
+      radius: 0,
       child: SafeArea(
         top: false,
+        bottom: widget.onNavigate == null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 3),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
-                '${cost == null ? '' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 8),
               FilledButton.icon(
+                key: const ValueKey('generate-primary-button'),
                 style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
+                  minimumSize: const Size.fromHeight(48),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 12,
                   ),
                 ),
-                onPressed: cancelling
+                onPressed: cancelling || _isImportingWorkspaceImage
                     ? null
                     : () {
                         FocusManager.instance.primaryFocus?.unfocus();
@@ -1758,12 +1808,26 @@ class _GeneratePageState extends State<GeneratePage> {
                       : Icons.auto_awesome,
                 ),
                 label: Text(
-                  _vm.isGenerating
-                      ? (cancelling ? '正在停止后续任务…' : '停止后续生成 · $progress')
-                      : (_vm.batchCount > 1
-                          ? '生成 ${_vm.batchCount} 张图片'
-                          : '生成图片'),
+                  _isImportingWorkspaceImage
+                      ? '正在导入图片…'
+                      : _vm.isGenerating
+                          ? (cancelling ? '正在停止后续任务…' : '停止后续生成 · $progress')
+                          : (_vm.batchCount > 1
+                              ? '生成 ${_vm.batchCount} 张图片'
+                              : '生成图片'),
                   textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
+                '${cost == null ? ' · 预计 —' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
+                key: const ValueKey('generation-summary'),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -1773,29 +1837,17 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  Widget _buildGenerationSettingsButton() {
-    final referenceCount = _vm.isNonNovelAiProvider
-        ? _vm.gptImagePaths.length
-        : _vm.vibeReferences.length + _vm.preciseReferences.length;
-    return Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Icon(Icons.tune, color: Theme.of(context).colorScheme.primary),
-        title: const Text('生成参数'),
-        subtitle: Text(
-          '模型与画幅 · ${_vm.characters.length} 个角色 · $referenceCount 张参考图',
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: _vm.isGenerating ? null : _openGenerationSettings,
-      ),
-    );
-  }
-
   void _openGenerationSettings() {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : const AnimationStyle(
+              duration: Duration(milliseconds: 280),
+              reverseDuration: Duration(milliseconds: 220),
+            ),
       builder: (sheetContext) => _GenerationSettingsSheet(
         vm: _vm,
         buildModelSection: () => _buildModelSection(initiallyExpanded: false),
@@ -1819,7 +1871,9 @@ class _GenerationSettingsSheet extends StatelessWidget {
     final maxHeight = (media.size.height - media.viewInsets.bottom) * 0.9;
     final theme = Theme.of(context);
     return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
+      duration: media.disableAnimations
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
       curve: Curves.easeOut,
       padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
       child: AnimatedBuilder(
@@ -1828,67 +1882,65 @@ class _GenerationSettingsSheet extends StatelessWidget {
           return Align(
             alignment: Alignment.bottomCenter,
             child: AnimatedSize(
-              duration: const Duration(milliseconds: 240),
+              duration: media.disableAnimations
+                  ? Duration.zero
+                  : const Duration(milliseconds: 240),
               curve: Curves.easeInOutCubic,
               child: Container(
                 constraints: BoxConstraints(maxHeight: maxHeight),
                 margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                  ),
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Center(
-                          child: Container(
-                            width: 42,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.35),
-                              borderRadius: BorderRadius.circular(99),
+                child: FrostedSurface(
+                    radius: 28,
+                    child: SafeArea(
+                      top: false,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Container(
+                                width: 42,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(99),
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 12),
+                            Text(
+                              '生成参数',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            KeyedSubtree(
+                              key: const ValueKey('generation_settings_model'),
+                              child: buildModelSection(),
+                            ),
+                            const SizedBox(height: 12),
+                            Material(
+                                color: Colors.transparent,
+                                child: ListTile(
+                                  leading: const Icon(Icons.tune),
+                                  title: const Text('采样与高级参数'),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () => Navigator.of(context)
+                                      .push(MaterialPageRoute(
+                                    builder: (_) =>
+                                        const AdvancedParametersPage(),
+                                  )),
+                                )),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        Text(
-                          '生成参数',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        KeyedSubtree(
-                          key: const ValueKey('generation_settings_model'),
-                          child: buildModelSection(),
-                        ),
-                        const SizedBox(height: 12),
-                        Material(
-                            color: Colors.transparent,
-                            child: ListTile(
-                              leading: const Icon(Icons.tune),
-                              title: const Text('采样与高级参数'),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () =>
-                                  Navigator.of(context).push(MaterialPageRoute(
-                                builder: (_) => const AdvancedParametersPage(),
-                              )),
-                            )),
-                      ],
-                    ),
-                  ),
-                ),
+                      ),
+                    )),
               ),
             ),
           );
@@ -1926,7 +1978,7 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
     super.initState();
     _isExpanded = widget.initiallyExpanded;
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 240),
       vsync: this,
     );
     _iconTurns = Tween<double>(begin: 0.0, end: 0.5).animate(
@@ -1936,6 +1988,9 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
   }
 
   void _toggle() {
+    _controller.duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
     setState(() {
       _isExpanded = !_isExpanded;
       if (_isExpanded) {
@@ -1954,16 +2009,9 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.08),
-          width: 0.5,
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return FrostedSurface(
+      blur: 0,
+      radius: 16,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2012,7 +2060,9 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
             crossFadeState: _isExpanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 300),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
             sizeCurve: Curves.easeInOutCubic,
           ),
         ],
@@ -2872,8 +2922,13 @@ class _ReferenceSlider extends StatelessWidget {
 
 class _CharacterControlSection extends StatefulWidget {
   final GenerationViewModel vm;
+  final double imageAspectRatio;
+  final ValueChanged<bool> onPositionGestureChanged;
 
-  const _CharacterControlSection({required this.vm});
+  const _CharacterControlSection(
+      {required this.vm,
+      required this.imageAspectRatio,
+      required this.onPositionGestureChanged});
 
   @override
   State<_CharacterControlSection> createState() =>
@@ -2894,7 +2949,7 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 240),
       vsync: this,
     );
     _iconTurns = Tween<double>(begin: 0.0, end: 0.5).animate(
@@ -2903,6 +2958,9 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
   }
 
   void _toggle() {
+    _controller.duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
     setState(() {
       _expanded = !_expanded;
       if (_expanded) {
@@ -2926,13 +2984,8 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
     final enabledCount = characters.where((c) => c.enabled).length;
     if (!widget.vm.supportsCharacterPrompts) return const SizedBox.shrink();
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return FrostedSurface(
+      radius: 18,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2992,6 +3045,10 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                               _expandedCards.add(index);
                               _expanded = true;
                             });
+                            _controller.duration =
+                                MediaQuery.disableAnimationsOf(context)
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 240);
                             _controller.forward();
                           },
                     icon: const Icon(Icons.add),
@@ -3022,6 +3079,9 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                         index: entry.key,
                         character: entry.value,
                         freePosition: widget.vm.isV5Model,
+                        imageAspectRatio: widget.imageAspectRatio,
+                        onPositionGestureChanged:
+                            widget.onPositionGestureChanged,
                         expanded: _expandedCards.contains(entry.key),
                         onToggleExpanded: () {
                           setState(() {
@@ -3200,7 +3260,9 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
             crossFadeState: _expanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 300),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
             sizeCurve: Curves.easeInOutCubic,
           ),
         ],
@@ -3213,6 +3275,8 @@ class _CharacterCard extends StatefulWidget {
   final int index;
   final CharacterSpec character;
   final bool freePosition;
+  final double imageAspectRatio;
+  final ValueChanged<bool> onPositionGestureChanged;
   final bool expanded;
   final VoidCallback onToggleExpanded;
   final VoidCallback? onMoveUp;
@@ -3241,6 +3305,8 @@ class _CharacterCard extends StatefulWidget {
     required this.index,
     required this.character,
     required this.freePosition,
+    required this.imageAspectRatio,
+    required this.onPositionGestureChanged,
     required this.expanded,
     required this.onToggleExpanded,
     required this.onMoveUp,
@@ -3363,7 +3429,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '未命名角色',
+                            '角色${widget.index + 1}',
                             style: TextStyle(
                               color: isEnabled
                                   ? theme.colorScheme.onSurface
@@ -3459,7 +3525,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                  child: IndexedStack(
+                  child: _CharacterTabContent(
                     index: _tabIndex,
                     children: [
                       Stack(
@@ -3467,8 +3533,8 @@ class _CharacterCardState extends State<_CharacterCard> {
                           TextField(
                             controller: _promptController,
                             focusNode: _promptFocusNode,
-                            minLines: 6,
-                            maxLines: 8,
+                            minLines: 10,
+                            maxLines: 18,
                             style: TextStyle(fontSize: 13, height: 1.5),
                             decoration: InputDecoration(
                               hintText: '描述该角色的外观...',
@@ -3479,7 +3545,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                                     .withValues(alpha: 0.55),
                               ),
                               filled: true,
-                              fillColor: Colors.black.withValues(alpha: 0.2),
+                              fillColor: FrostedTheme.of(context).field,
                               contentPadding: const EdgeInsets.fromLTRB(
                                 12,
                                 12,
@@ -3528,8 +3594,8 @@ class _CharacterCardState extends State<_CharacterCard> {
                           TextField(
                             controller: _ucController,
                             focusNode: _ucFocusNode,
-                            minLines: 6,
-                            maxLines: 8,
+                            minLines: 10,
+                            maxLines: 18,
                             style: TextStyle(fontSize: 13, height: 1.5),
                             decoration: InputDecoration(
                               hintText: '描述该角色不需要的特征...',
@@ -3540,7 +3606,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                                     .withValues(alpha: 0.55),
                               ),
                               filled: true,
-                              fillColor: Colors.black.withValues(alpha: 0.2),
+                              fillColor: FrostedTheme.of(context).field,
                               contentPadding: const EdgeInsets.fromLTRB(
                                 12,
                                 12,
@@ -3590,24 +3656,25 @@ class _CharacterCardState extends State<_CharacterCard> {
                           ),
                         ],
                       ),
-                      if (widget.freePosition)
-                        _FreeCharacterPosition(
-                          x: widget.character.centerX,
-                          y: widget.character.centerY,
-                          onAuto: widget.onAutoPosition,
-                          onChanged: (point) =>
-                              widget.onChanged(widget.character.copyWith(
-                            centerX: point.dx,
-                            centerY: point.dy,
-                          )),
-                        )
-                      else
-                        _CharacterPositionGrid(
-                          centerX: widget.character.centerX,
-                          centerY: widget.character.centerY,
-                          onAutoPosition: widget.onAutoPosition,
-                          onGridPosition: widget.onGridPosition,
-                        ),
+                      CharacterPositionEditor(
+                        continuous: widget.freePosition,
+                        roleNumber: widget.index + 1,
+                        aspectRatio: widget.imageAspectRatio,
+                        x: widget.character.centerX,
+                        y: widget.character.centerY,
+                        onAuto: widget.onAutoPosition,
+                        onGestureActive: widget.onPositionGestureChanged,
+                        onChanged: (point) {
+                          if (widget.freePosition) {
+                            widget.onChanged(widget.character.copyWith(
+                                centerX: point.dx, centerY: point.dy));
+                          } else {
+                            widget.onGridPosition(
+                                ((point.dy - .1) / .2).round().clamp(0, 4),
+                                ((point.dx - .1) / .2).round().clamp(0, 4));
+                          }
+                        },
+                      ),
                       _CharacterReferencePanel(
                         references: widget.character.referenceImages,
                         onAdd: _pickAndAddReference,
@@ -3666,7 +3733,9 @@ class _CharacterCardState extends State<_CharacterCard> {
             crossFadeState: widget.expanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 300),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
             sizeCurve: Curves.easeInOutCubic,
           ),
         ],
@@ -3677,33 +3746,66 @@ class _CharacterCardState extends State<_CharacterCard> {
   Widget _buildTabButton(int index, String label) {
     final isSelected = _tabIndex == index;
     return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _tabIndex = index),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).colorScheme.primaryContainer
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      child: Semantics(
+          button: true,
+          selected: isSelected,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              setState(() => _tabIndex = index);
+            },
+            child: AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
                 color: isSelected
-                    ? Theme.of(context).colorScheme.onPrimaryContainer
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                    ? FrostedTheme.of(context).selection
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
+                    color: isSelected
+                        ? FrostedTheme.of(context).onSelection
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ),
+          )),
     );
   }
+}
+
+class _CharacterTabContent extends StatelessWidget {
+  final int index;
+  final List<Widget> children;
+  const _CharacterTabContent({required this.index, required this.children});
+
+  @override
+  Widget build(BuildContext context) => AnimatedSize(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (var i = 0; i < children.length; i++)
+            Offstage(
+              offstage: i != index,
+              child: TickerMode(enabled: i == index, child: children[i]),
+            ),
+        ]),
+      );
 }
 
 class _CharacterReferencePanel extends StatelessWidget {
@@ -3854,225 +3956,6 @@ class _CharacterReferenceCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _FreeCharacterPosition extends StatelessWidget {
-  final double? x;
-  final double? y;
-  final ValueChanged<Offset> onChanged;
-  final VoidCallback onAuto;
-
-  const _FreeCharacterPosition(
-      {this.x, this.y, required this.onChanged, required this.onAuto});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-              onPressed: onAuto, child: Text(x == null ? '位置：自动' : '恢复自动位置'))),
-      LayoutBuilder(builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        const height = 180.0;
-        void update(Offset point) => onChanged(Offset(
-            (point.dx / width).clamp(0.0, 1.0),
-            (point.dy / height).clamp(0.0, 1.0)));
-        return Semantics(
-            label: '角色位置，点击或拖动设置',
-            child: GestureDetector(
-              key: const ValueKey('free-character-position'),
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (details) => update(details.localPosition),
-              onPanStart: (details) => update(details.localPosition),
-              onPanUpdate: (details) => update(details.localPosition),
-              child: Container(
-                height: height,
-                clipBehavior: Clip.hardEdge,
-                decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(14),
-                    border:
-                        Border.all(color: theme.colorScheme.outlineVariant)),
-                child: Stack(children: [
-                  for (final fraction in [0.25, 0.5, 0.75]) ...[
-                    Positioned(
-                        left: width * fraction,
-                        top: 0,
-                        bottom: 0,
-                        child: Container(
-                            width: 1,
-                            color: theme.colorScheme.outlineVariant
-                                .withValues(alpha: .45))),
-                    Positioned(
-                        top: height * fraction,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                            height: 1,
-                            color: theme.colorScheme.outlineVariant
-                                .withValues(alpha: .45))),
-                  ],
-                  if (x != null && y != null)
-                    Positioned(
-                        left: (x! * width - 12).clamp(0.0, width - 24),
-                        top: (y! * height - 12).clamp(0.0, height - 24),
-                        child: Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: theme.colorScheme.primary,
-                                border: Border.all(
-                                    color: theme.colorScheme.onPrimary,
-                                    width: 2)))),
-                ]),
-              ),
-            ));
-      }),
-    ]);
-  }
-}
-
-class _CharacterPositionGrid extends StatelessWidget {
-  final double? centerX;
-  final double? centerY;
-  final VoidCallback onAutoPosition;
-  final void Function(int row, int col) onGridPosition;
-
-  const _CharacterPositionGrid({
-    required this.centerX,
-    required this.centerY,
-    required this.onAutoPosition,
-    required this.onGridPosition,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final selected = _positionIndex(centerX, centerY);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        GestureDetector(
-          onTap: onAutoPosition,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: selected == null
-                  ? theme.colorScheme.primary.withValues(alpha: 0.2)
-                  : Colors.black.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: selected == null
-                    ? theme.colorScheme.primary.withValues(alpha: 0.5)
-                    : Colors.transparent,
-              ),
-            ),
-            child: Center(
-              child: Text(
-                'AI决定位置',
-                style: TextStyle(
-                  color: selected == null
-                      ? theme.colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-        ),
-        SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  SizedBox(width: 30),
-                  for (final col in ['A', 'B', 'C', 'D', 'E'])
-                    Expanded(
-                      child: Center(
-                        child: Text(
-                          col,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              SizedBox(height: 8),
-              for (var row = 0; row < 5; row++) ...[
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 30,
-                      child: Text(
-                        '${row + 1}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    for (var col = 0; col < 5; col++)
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(2),
-                          child: GestureDetector(
-                            onTap: () => onGridPosition(row, col),
-                            child: AspectRatio(
-                              aspectRatio: 1,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                decoration: BoxDecoration(
-                                  color: selected?.$1 == row &&
-                                          selected?.$2 == col
-                                      ? theme.colorScheme.primary
-                                      : Colors.white.withValues(alpha: 0.05),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    _gridLabel(row, col),
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: selected?.$1 == row &&
-                                              selected?.$2 == col
-                                          ? Colors.black
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant
-                                              .withValues(alpha: 0.35),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

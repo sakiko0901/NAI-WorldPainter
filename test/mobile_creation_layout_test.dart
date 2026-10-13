@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
@@ -55,14 +56,17 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         expect(find.text('生成图片'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('生成参数'),
-          180,
-          scrollable: find.byType(Scrollable).first,
+        expect(find.text('生成参数'), findsNothing);
+        expect(find.byTooltip('生成参数'), findsOneWidget);
+        final buttonRect = tester.getRect(
+          find.byKey(const ValueKey('generate-primary-button')),
         );
-        await tester.pumpAndSettle();
+        final summaryRect = tester.getRect(
+          find.byKey(const ValueKey('generation-summary')),
+        );
+        expect(summaryRect.top, greaterThanOrEqualTo(buttonRect.bottom));
         expect(tester.takeException(), isNull);
-        await tester.tap(find.text('生成参数'));
+        await tester.tap(find.byTooltip('生成参数'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('模型与基础参数'));
@@ -120,6 +124,7 @@ void main() {
       await tester.pumpAndSettle();
       final editor = find.byType(TextField).first;
       await tester.ensureVisible(editor);
+      await tester.pumpAndSettle();
       await tester.tap(editor);
       await tester.enterText(editor, 'my unsaved draft');
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -156,6 +161,7 @@ void main() {
     expect(vm.characters, hasLength(1));
     expect(vm.characters.single.centerX, isNull);
     await tester.ensureVisible(find.text('位置'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('位置'));
     await tester.pumpAndSettle();
     final grid = find.byKey(const ValueKey('free-character-position'));
@@ -169,6 +175,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(vm.characters.single.centerX, closeTo(.37, .005));
     expect(vm.characters.single.centerY, closeTo(.63, .005));
+    expect(rect.width / rect.height, closeTo(832 / 1216, .0001));
+    expect(find.text('角色1'), findsOneWidget);
+    expect(find.text('未命名角色'), findsNothing);
+    final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final scrollOffset = scroll.position.pixels;
+    final gesture = await tester.startGesture(rect.center);
+    await tester.pump();
+    await gesture
+        .moveTo(rect.topLeft + Offset(rect.width * .7, rect.height * .7));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(scroll.position.pixels, scrollOffset);
+    expect(vm.characters.single.centerX, closeTo(.7, .005));
+    expect(vm.characters.single.centerY, closeTo(.7, .005));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('compact home navigation fits at doubled text size',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 852);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(host(
+        HomePage(
+            appearanceMode: AppearanceMode.dark, onAppearanceChanged: (_) {}),
+        scale: 2));
+    await tester.pumpAndSettle();
+    final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(nav.height, lessThan(80));
+    expect(find.text('AI 助手'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('workspace save is visible with Android system insets',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.padding = const FakeViewPadding(top: 24, bottom: 24);
+    tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    vm.receive(frontendResult(seed: 42));
+    await tester.pumpWidget(host(HomePage(
+        appearanceMode: AppearanceMode.dark, onAppearanceChanged: (_) {})));
+    await tester.pumpAndSettle();
+    expect(
+        tester.getRect(find.byKey(const ValueKey('result-save-button'))).bottom,
+        lessThanOrEqualTo(tester
+            .getRect(find.byKey(const ValueKey('generate-primary-button')))
+            .top));
     expect(tester.takeException(), isNull);
   });
 
@@ -207,6 +267,17 @@ void main() {
             tester.element(find.byKey(const ValueKey('capture-preload'))));
       });
       vm.sessionResults = [];
+      vm.characters = [];
+      vm.selectedModel = 'nai-diffusion-5';
+      vm.imageModelOptions = const [
+        ImageModelOption(
+            modelId: 'nai-diffusion-5',
+            displayName: 'NovelAI V5',
+            provider: ImageProviderType.novelAi,
+            actualModel: 'nai-diffusion-5')
+      ];
+      vm.batchCount = 4;
+      vm.selectedResolution = '832x1216';
       vm.prompt = 'silver hair, warm afternoon light, by the window';
       vm.negativePrompt = 'low quality, blurry, extra fingers';
       vm.receive(
@@ -249,6 +320,33 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await capture('prompts');
+      await tester.scrollUntilVisible(find.byTooltip('添加角色'), 180,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.byTooltip('添加角色'));
+      await tester.pumpAndSettle();
+      await Scrollable.ensureVisible(tester.element(find.text('角色1')),
+          alignment: .08);
+      await tester.pumpAndSettle();
+      await capture('characters');
+      await tester.ensureVisible(find.text('位置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('位置'));
+      await tester.pumpAndSettle();
+      final board = find.byKey(const ValueKey('free-character-position'));
+      await tester.ensureVisible(board);
+      await tester.pumpAndSettle();
+      final boardRect = tester.getRect(board);
+      await tester.tapAt(boardRect.topLeft +
+          Offset(boardRect.width * .3, boardRect.height * .5));
+      await tester.pumpAndSettle();
+      await capture('position-portrait');
+      vm.selectedResolution = '1216x832';
+      vm.updateCharacter(0, vm.characters.first);
+      await tester.pumpAndSettle();
+      await Scrollable.ensureVisible(tester.element(find.text('角色1')),
+          alignment: .08);
+      await tester.pumpAndSettle();
+      await capture('position-landscape');
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });

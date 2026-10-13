@@ -19,7 +19,11 @@ class NaiMetadataParser {
   /// 返回 null 表示该图片不是 NAI 生成的或元数据已丢失。
   static Future<ImageTagResult?> parse(String imagePath) async {
     final bytes = await File(imagePath).readAsBytes();
+    return parseBytes(bytes);
+  }
 
+  static ImageTagResult? parseBytes(Uint8List bytes,
+      {bool allowStealth = true}) {
     // 先尝试 PNG text chunks（最常见）
     try {
       final textData = _readPngTextChunks(bytes);
@@ -31,6 +35,7 @@ class NaiMetadataParser {
       }
     } catch (_) {}
 
+    if (!allowStealth) return null;
     // 后备：stealth alpha LSB
     try {
       final img = decodeImage(bytes);

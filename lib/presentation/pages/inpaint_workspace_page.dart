@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
@@ -1326,14 +1327,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final colors = Theme.of(context).colorScheme;
     // 遮罩预览开启时调度后台生成（签名防抖）。
     if (_showMask) _scheduleMaskPreview();
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return FrostedSurface(
+      radius: 18,
       child: Column(children: [
         _buildHeader(colors),
         _buildStage(),

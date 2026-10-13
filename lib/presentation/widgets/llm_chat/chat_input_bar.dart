@@ -6,18 +6,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 class ChatInputBar extends StatefulWidget {
   final bool isSending;
   final void Function(String text,
       {String? imageBase64, String? textAttachment}) onSend;
   final TextEditingController? controller;
+  final bool includeKeyboardInset;
 
   const ChatInputBar({
     super.key,
     required this.isSending,
     required this.onSend,
     this.controller,
+    this.includeKeyboardInset = true,
   });
 
   @override
@@ -142,27 +146,24 @@ class _ChatInputBarState extends State<ChatInputBar> {
             _pendingTextAttachment != null) &&
         !widget.isSending;
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final glass = FrostedTheme.of(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         12,
         8,
         12,
-        12 + MediaQuery.viewInsetsOf(context).bottom,
+        12 +
+            (widget.includeKeyboardInset
+                ? MediaQuery.viewInsetsOf(context).bottom
+                : 0),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_pendingImagePath != null) _buildImagePreview(),
           if (_pendingTextAttachment != null) _buildTextFilePreview(),
-          Container(
-            decoration: BoxDecoration(
-              color:
-                  isDark ? Colors.black.withValues(alpha: 0.35) : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.08)),
-            ),
+          FrostedSurface(
+            radius: 18,
             padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -223,14 +224,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 ),
                 SizedBox(width: 4),
                 AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 200),
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: canSend
-                        ? const LinearGradient(
-                            colors: [Color(0xFFF5D57A), Color(0xFFD4A373)],
+                        ? LinearGradient(
+                            colors: [glass.selection, glass.selection],
                           )
                         : LinearGradient(
                             colors: [
@@ -243,9 +246,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     boxShadow: canSend
                         ? [
                             BoxShadow(
-                              color: const Color(0xFFF5D57A)
-                                  .withValues(alpha: 0.3),
-                              blurRadius: 14,
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.12),
+                              blurRadius: 10,
                               offset: const Offset(0, 4),
                             ),
                           ]
@@ -272,7 +275,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                                 CupertinoIcons.arrow_up,
                                 size: 20,
                                 color: canSend
-                                    ? theme.colorScheme.onPrimary
+                                    ? glass.onSelection
                                     : theme.colorScheme.onSurfaceVariant,
                               ),
                       ),

@@ -8,6 +8,7 @@ import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
+import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -22,6 +23,50 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('imported image displays without submitting a task or replacing drafts',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.prompt = 'unsaved draft';
+    vm.seed = 100;
+    final image = GenerationTask(
+      taskId: 'imported',
+      model: 'imported-image',
+      prompt: '',
+      width: 31,
+      height: 17,
+      scale: 0,
+      cfgRescale: 0,
+      sampler: '',
+      noiseSchedule: '',
+      status: 'success',
+      imagePath: 'local.png',
+      createdAt: DateTime.now(),
+    );
+    expect(vm.displayImportedImage(image), isTrue);
+    expect(vm.selectedResult, image);
+    expect(vm.lastCompletedTask, image);
+    expect(vm.prompt, 'unsaved draft');
+    expect(vm.seed, 100);
+    expect(vm.selectedResult?.seed, isNull);
+    expect(repository.submitted, isEmpty);
+    vm.queueState =
+        const QueueState(isProcessing: true, pendingCount: 0, pendingTasks: []);
+    expect(vm.displayImportedImage(image.copyWith(taskId: 'late-import')),
+        isFalse);
+    expect(vm.selectedResult, image);
+  });
 
   test('generate completes only after successful result is displayable',
       () async {
@@ -1237,6 +1282,43 @@ void main() {
     expect(result.width, 17);
     expect(result.height, 9);
     expect(result.size, '17x9');
+  });
+
+  test(
+      'plain imported image Enhance uses active model without invented source settings',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('vm_import_enhance_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = await _writeTestPng(directory, 'source.png', 5, 7);
+    final output = await _writeTestPng(directory, 'enhanced.png', 17, 9);
+    final api = _TestOfficialNovelAiApiService(enhanceOutputPath: output.path);
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository(source.path), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+        officialApi: api,
+        officialTokenStore: _TestOfficialNovelAiTokenStore('test-token'));
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.selectedModel = 'nai-diffusion-5';
+    vm.steps = 28;
+    vm.scale = 5;
+    vm.prompt = 'current prompt';
+    vm.displayImportedImage(await WorkspaceImageImporter.read(source.path));
+    expect(await vm.enhanceWithOfficial(scale: 1.5, strength: .3), isTrue);
+    expect(api.enhanceRequests.single.model, 'nai-diffusion-5');
+    expect(api.enhanceRequests.single.steps, 28);
+    expect(api.enhanceRequests.single.scaleValue, 5);
+    expect(vm.selectedResult!.steps, 28);
+    expect(vm.selectedResult!.scale, 5);
+    expect(vm.selectedModel, 'nai-diffusion-5');
+    expect(vm.prompt, 'current prompt');
   });
 
   test('inpaint handler completion resets cancellation for the next run',

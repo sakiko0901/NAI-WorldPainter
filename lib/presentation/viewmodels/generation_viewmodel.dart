@@ -1880,6 +1880,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  /// Adds a local image to this workspace without submitting a generation task.
+  bool displayImportedImage(GenerationTask image) {
+    if (isGenerating) return false;
+    sessionResults = [...sessionResults, image];
+    selectedResultTaskId = image.taskId;
+    lastCompletedTask = image;
+    _userPickedResult = true;
+    errorMessage = null;
+    notifyListeners();
+    return true;
+  }
+
   // ── 官方超分 ──
   bool _officialUpscaling = false;
   bool get isOfficialUpscaling => _officialUpscaling;
@@ -1980,7 +1992,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         );
       }
       final sourceTask = task!;
-      final model = _resolveActualModelId(sourceTask.model);
+      final imported = sourceTask.model == 'imported-image';
+      final model =
+          _resolveActualModelId(imported ? selectedModel : sourceTask.model);
+      final effectiveSteps =
+          (imported && sourceTask.steps <= 0 ? steps : sourceTask.steps)
+              .clamp(1, _isV5ModelId(model) ? 28 : 50);
+      final effectiveScale =
+          imported && sourceTask.scale <= 0 ? this.scale : sourceTask.scale;
+      final effectiveNegative = sourceTask.negativePrompt ?? negativePrompt;
       final promptText =
           (promptOverride != null && promptOverride.trim().isNotEmpty)
               ? promptOverride.trim()
@@ -1992,12 +2012,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         token: token,
         model: model,
         prompt: promptText,
-        negativePrompt: sourceTask.negativePrompt ?? negativePrompt,
+        negativePrompt: effectiveNegative,
         seed: sourceTask.seed,
-        steps: _isV5ModelId(model)
-            ? sourceTask.steps.clamp(1, 28)
-            : sourceTask.steps.clamp(1, 50),
-        scaleValue: sourceTask.scale,
+        steps: effectiveSteps,
+        scaleValue: effectiveScale,
         scale: scale,
         strength: strength,
         noise: noise,
@@ -2012,6 +2030,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       final newTask = sourceTask.copyWith(
         model: model,
         prompt: promptText,
+        negativePrompt: effectiveNegative,
+        steps: effectiveSteps,
+        scale: effectiveScale,
         width: dimensions.$1,
         height: dimensions.$2,
         size: '${dimensions.$1}x${dimensions.$2}',

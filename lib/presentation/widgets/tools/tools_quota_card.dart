@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 /// Shows only quota values returned by the official NovelAI account endpoint.
 /// Image-count estimates stay unavailable because generation cost depends on
@@ -52,13 +53,9 @@ class ToolsQuotaCard extends StatelessWidget {
       accountStatus = null;
     }
 
-    return Container(
+    return FrostedSurface(
       padding: const EdgeInsets.fromLTRB(16, 14, 14, 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color ?? colors.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.18)),
-      ),
+      radius: 18,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

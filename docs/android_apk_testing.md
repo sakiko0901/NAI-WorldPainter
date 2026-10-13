@@ -61,3 +61,15 @@ $env:ANDROID_HOME = 'E:\NAI-WorldPainter\.tools\android-sdk'
 ## 前台生成服务
 
 补齐 `flutter_foreground_task` 已有保活功能缺失的 `ForegroundService` 清单声明。生成过程涉及网络传输，使用 [Android 官方定义的 dataSync 类型](https://developer.android.com/develop/background-work/services/fgs/service-types#data-sync) 和原有对应权限；服务不导出，移除应用任务时停止。未引入插件示例中与本应用无关的 remoteMessaging 类型或权限。真机上仍需验证通知授权、前后台切换及系统电池限制下的实际行为。
+
+## 2026-10-13 磨砂玻璃产物 preview.3
+
+- 文件：`NAI-WorldPainter-mobile-preview.3-arm64.apk`，52,246,675字节（49.8 MiB）。
+- 版本：`1.2.3-mobile-preview.3` / `212017`；ARM64、最低API 24、目标API 36。
+- SHA-256：`06d031bc7734a9117f9a5bbb9281feaf2d4c380a48762c3069300cf4ef3bef91`。
+- 继续使用 `com.naihuishi.nai_huishi.preview`，签名与preview.1/2一致，可覆盖更新测试版并保留其数据。
+- 签名、安装身份、Provider/前台服务声明、ZIP CRC、16 KB ZIP对齐及全部8个原生ELF库对齐检查通过。
+- 215项Flutter测试通过，实际组件截图完成设计对照。尚未连接真机，未验证真实API或手机GPU性能。
+- 交付目录：`E:\NAI-WorldPainter\安装包\2026-10-13\frosted-preview.3`。最终构建日志、校验脚本和结果同目录保留。
+
+重建沿用上方命令，将 `--build-name` 改为 `1.2.3-mobile-preview.3`、`--build-number` 改为 `212017`。源码保留在 `feat/mobile-preview-v5`，没有合并主分支或覆盖原发布APK。

@@ -16,22 +16,24 @@ void main() {
     expect(AppearanceMode.coffeePaper.brightness, Brightness.dark);
   });
 
-  test('dark theme keeps black and gold palette', () {
+  test('dark theme uses mist gray and neutral selection', () {
     final theme = buildNaiHuishiTheme(Brightness.dark, useGoogleFonts: false);
 
     expect(theme.brightness, Brightness.dark);
-    expect(theme.scaffoldBackgroundColor, const Color(0xFF101216));
-    expect(theme.colorScheme.primary, const Color(0xFFE3CE98));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFF15181C));
+    expect(theme.colorScheme.primary, const Color(0xFFB5C2D3));
+    expect(theme.extension<FrostedTheme>()!.selection, const Color(0xFFCFD5DD));
+    expect(theme.navigationBarTheme.height, 52);
   });
 
-  test('light theme uses soft white and blue palette with extra colors', () {
+  test('light theme uses silver white and muted secondary colors', () {
     final theme = buildNaiHuishiTheme(Brightness.light, useGoogleFonts: false);
 
     expect(theme.brightness, Brightness.light);
-    expect(theme.scaffoldBackgroundColor, const Color(0xFFF5F6F8));
-    expect(theme.colorScheme.primary, const Color(0xFF507AB2));
-    expect(theme.colorScheme.secondary, const Color(0xFF8B5CF6));
-    expect(theme.colorScheme.tertiary, const Color(0xFF14B8A6));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFFEDF0F4));
+    expect(theme.colorScheme.primary, const Color(0xFF7488A3));
+    expect(theme.colorScheme.secondary, const Color(0xFF8F839A));
+    expect(theme.colorScheme.tertiary, const Color(0xFF718F81));
     expect(theme.colorScheme.error, const Color(0xFFFF6B6B));
   });
 }

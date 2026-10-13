@@ -8,6 +8,8 @@ import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/history_page.dart';
 import 'package:nai_huishi/presentation/pages/settings_page.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/fountain_pen_icon.dart';
 
 class HomePage extends StatefulWidget {
   static const initialIndex = 0;
@@ -69,8 +71,20 @@ class _HomePageState extends State<HomePage> {
     if (_galleryRoute != null) return;
 
     FocusManager.instance.primaryFocus?.unfocus();
-    final route = CupertinoPageRoute<void>(
-      builder: (_) => HistoryPage(onNavigate: _handleLegacyNavigation),
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final route = PageRouteBuilder<void>(
+      transitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
+      reverseTransitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
+      pageBuilder: (_, __, ___) =>
+          HistoryPage(onNavigate: _handleLegacyNavigation),
+      transitionsBuilder: (_, animation, __, child) => SlideTransition(
+        position: Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
+            .animate(CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+                reverseCurve: Curves.easeInCubic)),
+        child: child,
+      ),
     );
     _galleryRoute = route;
     try {
@@ -137,28 +151,39 @@ class _HomePageState extends State<HomePage> {
       ),
       bottomNavigationBar: keyboardOpen
           ? null
-          : NavigationBar(
-              selectedIndex: _destination.index,
-              onDestinationSelected: (index) =>
-                  _selectDestination(AppDestination.values[index]),
-              destinations: [
-                _navigationDestination(
-                  label: AppDestination.create.label,
-                  icon: CupertinoIcons.paintbrush,
-                  selectedIcon: CupertinoIcons.paintbrush_fill,
-                ),
-                _navigationDestination(
-                  label: AppDestination.assistant.label,
-                  icon: CupertinoIcons.sparkles,
-                  selectedIcon: CupertinoIcons.sparkles,
-                ),
-                _navigationDestination(
-                  label: AppDestination.tools.label,
-                  icon: CupertinoIcons.square_grid_2x2,
-                  selectedIcon: CupertinoIcons.square_grid_2x2_fill,
-                ),
-              ],
-            ),
+          : FrostedSurface(
+              radius: 0,
+              blur: 18,
+              child: NavigationBar(
+                height: 52 +
+                    ((MediaQuery.textScalerOf(context).scale(11) - 11) * 1.5)
+                        .clamp(0, 24),
+                animationDuration: Duration(
+                    milliseconds:
+                        MediaQuery.disableAnimationsOf(context) ? 0 : 200),
+                selectedIndex: _destination.index,
+                onDestinationSelected: (index) =>
+                    _selectDestination(AppDestination.values[index]),
+                destinations: [
+                  NavigationDestination(
+                    label: AppDestination.create.label,
+                    tooltip: AppDestination.create.label,
+                    icon: const FountainPenIcon(),
+                    selectedIcon: FountainPenIcon(
+                        color: FrostedTheme.of(context).onSelection),
+                  ),
+                  _navigationDestination(
+                    label: AppDestination.assistant.label,
+                    icon: CupertinoIcons.sparkles,
+                    selectedIcon: CupertinoIcons.sparkles,
+                  ),
+                  _navigationDestination(
+                    label: AppDestination.tools.label,
+                    icon: CupertinoIcons.square_grid_2x2,
+                    selectedIcon: CupertinoIcons.square_grid_2x2_fill,
+                  ),
+                ],
+              )),
     );
   }
 
@@ -168,8 +193,9 @@ class _HomePageState extends State<HomePage> {
     required IconData selectedIcon,
   }) {
     return NavigationDestination(
-      icon: Icon(icon),
-      selectedIcon: Icon(selectedIcon),
+      icon: Icon(icon, size: 20),
+      selectedIcon: Icon(selectedIcon,
+          size: 20, color: FrostedTheme.of(context).onSelection),
       label: label,
       tooltip: label,
     );

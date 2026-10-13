@@ -13,6 +13,8 @@ import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dar
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_sessions_panel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 
 class ChatDrawer extends StatefulWidget {
   final VoidCallback onClose;
@@ -20,6 +22,7 @@ class ChatDrawer extends StatefulWidget {
   final Future<void> Function(LlmChatViewModel vm)? onCloseScope;
   final String? title;
   final bool embedded;
+  final bool parentResizesForKeyboard;
   final bool? active;
 
   const ChatDrawer({
@@ -29,6 +32,7 @@ class ChatDrawer extends StatefulWidget {
     this.onCloseScope,
     this.title,
     this.embedded = false,
+    this.parentResizesForKeyboard = false,
     this.active,
   });
 
@@ -41,11 +45,11 @@ class _ChatDrawerState extends State<ChatDrawer> {
       false;
 
   static final Future<bool> Function(AgentToolConfirmRequest request)
-  _failClosedConfirmation = _rejectConfirmation;
+      _failClosedConfirmation = _rejectConfirmation;
 
   late final LlmChatViewModel _vm;
   late final Future<bool> Function(AgentToolConfirmRequest request)
-  _confirmationHandler = _showConfirmationDialog;
+      _confirmationHandler = _showConfirmationDialog;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   bool _ready = false;
@@ -275,7 +279,10 @@ class _ChatDrawerState extends State<ChatDrawer> {
     if (widget.embedded) {
       return ColoredBox(
         color: theme.scaffoldBackgroundColor,
-        child: SafeArea(child: _buildChatColumn()),
+        child: Stack(children: [
+          const Positioned.fill(child: StudioBackground()),
+          SafeArea(child: _buildChatColumn()),
+        ]),
       );
     }
 
@@ -309,9 +316,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                 filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF14141A).withValues(alpha: 0.92)
-                        : Colors.white.withValues(alpha: 0.94),
+                    color: theme.colorScheme.surface.withValues(alpha: 0.82),
                     border: Border.all(
                       color: theme.colorScheme.onSurface.withValues(
                         alpha: 0.08,
@@ -382,14 +387,16 @@ class _ChatDrawerState extends State<ChatDrawer> {
             ),
           ),
         ChatInputBar(
+          includeKeyboardInset:
+              !(widget.embedded || widget.parentResizesForKeyboard),
           controller: _inputController,
           isSending: _vm.isSending,
           onSend: (text, {String? imageBase64, String? textAttachment}) =>
               _vm.sendUserMessage(
-                text,
-                imageBase64: imageBase64,
-                textAttachment: textAttachment,
-              ),
+            text,
+            imageBase64: imageBase64,
+            textAttachment: textAttachment,
+          ),
         ),
       ],
     );
@@ -397,7 +404,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
 
   Widget _buildTopBar() {
     final title = widget.title;
-    return Padding(
+    return FrostedSurface(
+      radius: 0,
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
       child: Row(
         children: [
@@ -478,7 +486,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
               Icon(
                 CupertinoIcons.wand_stars,
                 size: 34,
-                color: Theme.of(context).colorScheme.onSurfaceVariant
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant
                     .withValues(alpha: 0.5),
               ),
               SizedBox(height: 12),
@@ -517,10 +527,10 @@ class _ChatDrawerState extends State<ChatDrawer> {
                   : null,
               onAnswerInteraction: (optionId, customAnswer) =>
                   _vm.answerInteraction(
-                    message: message,
-                    optionId: optionId,
-                    customAnswer: customAnswer,
-                  ),
+                message: message,
+                optionId: optionId,
+                customAnswer: customAnswer,
+              ),
             );
           },
         ),
