@@ -1,10 +1,13 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 
@@ -26,6 +29,94 @@ void main() {
     if (await imageDirectory.exists()) {
       await imageDirectory.delete(recursive: true);
     }
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final highContrast in [false, true]) {
+      testWidgets(
+          'workspace backdrop stays stable: ${brightness.name}, contrast $highContrast',
+          (tester) async {
+        final captureKey = GlobalKey();
+        await tester.pumpWidget(MaterialApp(
+          theme: buildNaiHuishiTheme(brightness),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+            child: child!,
+          ),
+          home: RepaintBoundary(
+            key: captureKey,
+            child: Scaffold(
+              body: ColoredBox(
+                color: const Color(0xFFD06030),
+                child: GenerationResultCard(
+                  task: null,
+                  workspaceHeight: 280,
+                  onSelect: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+
+        Future<List<int>> sample() async {
+          final boundary = captureKey.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
+          final image = await boundary.toImage();
+          final rgba =
+              (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+          final point = tester
+              .getTopLeft(find.byKey(const ValueKey('result-workspace-empty')))
+              .translate(11, 11);
+          final index = (point.dy.toInt() * image.width + point.dx.toInt()) * 4;
+          final pixel = rgba.buffer.asUint8List().sublist(index, index + 4);
+          image.dispose();
+          return pixel;
+        }
+
+        final initial = (await tester.runAsync(sample))!;
+        expect(initial[3], 255,
+            reason:
+                'Painting a translucent grid must not erase its opaque backdrop');
+        await tester.pump(const Duration(seconds: 3));
+        expect(await tester.runAsync(sample), initial);
+        final boundary = captureKey.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+        boundary.markNeedsPaint();
+        await tester.pump();
+        expect(await tester.runAsync(sample), initial);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  testWidgets('image tap opens fullscreen without a duplicate toolbar button',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+            builder: (context) => GenerationResultCard(
+                  task:
+                      _result('preview', imagePath: resultImage.path, seed: 11),
+                  workspaceHeight: 280,
+                  onSelect: (_) {},
+                  onPreview: () => showFullscreenImagePreview(
+                    context,
+                    imagePath: resultImage.path,
+                  ),
+                )),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('全屏查看'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('result-image-viewer')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('fullscreen-image-viewer')), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('result-image-viewer')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('empty workspace stays usable and exposes the real import action',
@@ -212,7 +303,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('导入新图片'), findsOneWidget);
-      expect(find.byTooltip('全屏查看'), findsOneWidget);
+      expect(find.byTooltip('全屏查看'), findsNothing);
       expect(find.byKey(const ValueKey('result-save-button')), findsOneWidget);
       expect(find.byKey(const ValueKey('result-more-button')), findsOneWidget);
       expect(

@@ -56,3 +56,31 @@ flutter analyze --no-pub
 新测试包版本为 `1.2.3-mobile-preview.3+212017`，沿用独立测试包名和上一版签名，可覆盖更新测试版。构建和静态校验不能替代真机安装、平台相册权限、真实API及手机GPU性能验证。没有合并主分支。
 
 仓库现有静态检查告警尚未全量清理。没有通过禁用有效测试或降低静态检查规则规避问题。
+
+## 2026-10-15 手机端五项 UI 缺陷修复
+
+按用户提供的《待优化汇总》处理五项明确问题，第六项空白不扩展需求。沿用 `feat/mobile-preview-v5`，生成请求仍由原串行队列执行。
+
+| 问题 | 实现与回归覆盖 |
+| --- | --- |
+| 局部重绘遮罩绘制卡顿 | 缓存已完成的遮罩路径，每次移动只合并新线段；通过 `ValueListenable` 直接重绘独立的蒙版 `RepaintBoundary`，移动期间不重建整个页面、不复制完整点列。保留实时轮廓、等比变换、重叠不加深、擦除、撤销与重做。方格历史按整笔去重网格单元构造路径；清空或切换历史时取消活动笔迹，避免抬手恢复旧缓存。 |
+| 工作区静置后变黑 | 网格底色在限定矩形内使用默认 `srcOver` 叠加，移除会替换底图的 `drawColor(..., BlendMode.src)`。回归在明暗主题、普通/高对比渲染路径下采样像素，确认不透明底图保留，并对比静置和强制重画后的像素。生成中徽标复用外层玻璃效果，取消重叠的共享模糊。 |
+| 重复全屏入口 | 移除工作区右上角全屏按钮，保留点击图片全屏、双指缩放与适应窗口，并补充点按全屏的语义提示。测试覆盖图片点击、全屏返回和缩放复位。 |
+| 右上角参数入口却从底部弹出 | 参数改为从右侧进入的独立页面，默认展开基础参数，支持系统返回和减少动画。沿用同一 ViewModel；测试实际修改批量数量、返回保留提示词和滚动位置，以及进入/退出高级参数、320dp、双倍字号与键盘避让。下拉框继承主题字号与字体回退。 |
+| 图片偏小和两侧留边 | 根据当前结果图片的实际宽高比计算显示高度，普通竖图、方图和横图等比铺满可用宽度，长图设置高度上限并保留缩放。已有结果和新结果显示时，仅在底边超出可见范围时定位到卡片底部；保留编辑中不抢焦点/滚动及 Android 安全区内保存按钮可见的检查。 |
+
+实现参考 Flutter 官方的 [CustomPainter repaint 与共享画布说明](https://api.flutter.dev/flutter/rendering/CustomPainter-class.html)、[Path.combine](https://api.flutter.dev/flutter/dart-ui/Path/combine.html) 和 [BackdropFilter 重叠限制](https://api.flutter.dev/flutter/widgets/BackdropFilter-class.html)。背景修复前，关闭额外模糊层的像素回归得到 alpha 140，修复后得到 255；它证明了共享画布上的底图擦除缺陷，具体手机 GPU 的静置/交互时序仍需设备回归。
+
+验证使用 Flutter 3.47.7 / Dart 3.13.5。显式开启截图和热点样本的串行全套测试 230 项通过；界面字体修订后，创作布局与参数页面的 19 项定点测试再次通过。改动的九个 Dart 文件静态分析为 0 error、0 warning，另有 83 条风格 info；全仓分析为 0 error、12 条既有 warning、268 条 info，不宣称全仓 lint 全绿。
+
+```sh
+flutter test --no-pub --concurrency=1 --timeout 60s --dart-define=FRONTEND_CAPTURE=true --dart-define=INPAINT_MASK_BENCHMARK=true --reporter expanded
+flutter test --no-pub --concurrency=1 --dart-define=FRONTEND_CAPTURE=true test/mobile_creation_layout_test.dart test/presentation/pages/generation_settings_page_test.dart
+dart analyze --format machine lib test
+```
+
+最终热点样本使用同一合成输入（96 次移动、6 条历史笔迹），旧全量路径重建总耗时 15,983,805 微秒，增量线段合并为 11,087 微秒。该数字仅覆盖本机路径准备，不包含整帧布局、GPU 栅格、触摸延迟或网络，也不代表手机帧率。
+
+实际 Flutter 夹具截图、测试与分析日志位于本机 `E:\NAI-WorldPainter\设计预览\手机端缺陷修复\2026-10-15`；截图包括明暗主题的创作、参数、空工作区和重绘遮罩/候选结果。截图使用本地图片及假 ViewModel，没有发送真实付费 API 请求。未连接 Android 真机或模拟器，设备安装、手机 GPU 性能及真实接口仍未验证。
+
+本轮 Android ARM64 release 测试包为 `1.2.3-mobile-preview.4+212018`，文件 `E:\NAI-WorldPainter\安装包\2026-10-15\ui-fixes-preview.4\NAI-WorldPainter-mobile-preview.4-arm64.apk`，52,246,759 字节。沿用独立测试包名与 preview.3 签名；签名、安装身份与前台服务/Provider 声明、ZIP CRC、16 KB ZIP 对齐和全部 8 个原生 ELF LOAD 段对齐校验通过。SHA-256：`76f50ee867694c900c6b640eda5aceeecdb4d9be0d79fabf233c74e4bea1dcf5`。构建仍提示既有 Gradle/AGP/Kotlin 后续支持和 SDK XML 版本警告，没有跳过依赖校验或扩大工具链升级范围。

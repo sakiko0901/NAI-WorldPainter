@@ -46,6 +46,7 @@ class _GeneratePageState extends State<GeneratePage> {
   late final ScrollController _scrollController;
   bool _isPreparingImg2Img = false;
   bool _isImportingWorkspaceImage = false;
+  bool _isGenerationSettingsOpen = false;
   bool _hasOpenedInpaint = false;
   String? _img2ImgOriginalPath;
 
@@ -68,6 +69,10 @@ class _GeneratePageState extends State<GeneratePage> {
     _vm.addListener(_onVmChanged);
     InpaintWorkspaceCard.gestureActive.addListener(_onInpaintGestureChanged);
     _vm.loadModels();
+    if (_vm.selectedResult != null || _vm.lastCompletedTask != null) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _revealLatestResult());
+    }
   }
 
   late final TextEditingController _promptController = TextEditingController();
@@ -159,7 +164,8 @@ class _GeneratePageState extends State<GeneratePage> {
           ? Duration.zero
           : const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
-      alignment: 0.08,
+      alignment: 1,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
     );
   }
 
@@ -234,6 +240,16 @@ class _GeneratePageState extends State<GeneratePage> {
             (constraints.maxHeight - 210 - textExtra - thumbnails)
                 .clamp(220.0, 536.0)
                 .toDouble();
+        final displayedImage = _vm.selectedResult ?? _vm.lastCompletedTask;
+        final imageHeight = displayedImage != null &&
+                displayedImage.width > 0 &&
+                displayedImage.height > 0
+            ? ((constraints.maxWidth - 48) *
+                    displayedImage.height /
+                    displayedImage.width)
+                .clamp(160.0, MediaQuery.sizeOf(context).height * 0.85)
+                .toDouble()
+            : workspaceHeight;
         return Stack(
           children: [
             Positioned.fill(
@@ -272,7 +288,7 @@ class _GeneratePageState extends State<GeneratePage> {
                   _buildModeSection(),
                   const SizedBox(height: 12),
                   if (_vm.generationMode != GenerationMode.inpainting) ...[
-                    _buildResultSection(workspaceHeight: workspaceHeight),
+                    _buildResultSection(workspaceHeight: imageHeight),
                     const SizedBox(height: 12),
                     _buildPromptSection(),
                     const SizedBox(height: 12),
@@ -849,7 +865,7 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   TextStyle _dropdownTextStyle(BuildContext context) {
-    return TextStyle(
+    return Theme.of(context).textTheme.bodyLarge!.copyWith(
       fontWeight: FontWeight.w600,
       color: Theme.of(context).colorScheme.onSurface,
     );
@@ -1837,114 +1853,92 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  void _openGenerationSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
-          ? AnimationStyle.noAnimation
-          : const AnimationStyle(
-              duration: Duration(milliseconds: 280),
-              reverseDuration: Duration(milliseconds: 220),
-            ),
-      builder: (sheetContext) => _GenerationSettingsSheet(
-        vm: _vm,
-        buildModelSection: () => _buildModelSection(initiallyExpanded: false),
-      ),
-    );
+  Future<void> _openGenerationSettings() async {
+    if (_isGenerationSettingsOpen || _vm.isGenerating) return;
+    _isGenerationSettingsOpen = true;
+    FocusManager.instance.primaryFocus?.unfocus();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    try {
+      await Navigator.of(context).push<void>(PageRouteBuilder<void>(
+        settings: const RouteSettings(name: '/generation-settings'),
+        transitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
+        reverseTransitionDuration:
+            Duration(milliseconds: reduceMotion ? 0 : 220),
+        pageBuilder: (_, __, ___) => _GenerationSettingsPage(
+          vm: _vm,
+          buildModelSection: () => _buildModelSection(),
+        ),
+        transitionsBuilder: (_, animation, __, child) => SlideTransition(
+          position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+              .animate(CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          )),
+          child: child,
+        ),
+      ));
+    } finally {
+      _isGenerationSettingsOpen = false;
+    }
   }
 }
 
-class _GenerationSettingsSheet extends StatelessWidget {
+class _GenerationSettingsPage extends StatelessWidget {
   final GenerationViewModel vm;
   final Widget Function() buildModelSection;
 
-  const _GenerationSettingsSheet({
+  const _GenerationSettingsPage({
     required this.vm,
     required this.buildModelSection,
   });
 
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final maxHeight = (media.size.height - media.viewInsets.bottom) * 0.9;
-    final theme = Theme.of(context);
-    return AnimatedPadding(
-      duration: media.disableAnimations
-          ? Duration.zero
-          : const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
-      child: AnimatedBuilder(
-        animation: vm,
-        builder: (context, _) {
-          return Align(
-            alignment: Alignment.bottomCenter,
-            child: AnimatedSize(
-              duration: media.disableAnimations
-                  ? Duration.zero
-                  : const Duration(milliseconds: 240),
-              curve: Curves.easeInOutCubic,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: maxHeight),
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: FrostedSurface(
-                    radius: 28,
-                    child: SafeArea(
-                      top: false,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Center(
-                              child: Container(
-                                width: 42,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.onSurfaceVariant
-                                      .withValues(alpha: 0.35),
-                                  borderRadius: BorderRadius.circular(99),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              '生成参数',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                                color: theme.colorScheme.onSurface,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            KeyedSubtree(
-                              key: const ValueKey('generation_settings_model'),
-                              child: buildModelSection(),
-                            ),
-                            const SizedBox(height: 12),
-                            Material(
-                                color: Colors.transparent,
-                                child: ListTile(
-                                  leading: const Icon(Icons.tune),
-                                  title: const Text('采样与高级参数'),
-                                  trailing: const Icon(Icons.chevron_right),
-                                  onTap: () => Navigator.of(context)
-                                      .push(MaterialPageRoute(
-                                    builder: (_) =>
-                                        const AdvancedParametersPage(),
-                                  )),
-                                )),
-                          ],
+    return Scaffold(
+      key: const ValueKey('generation-settings-page'),
+      appBar: AppBar(
+        title: const Text('生成参数'),
+        flexibleSpace:
+            const FrostedSurface(radius: 0, child: SizedBox.expand()),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const StudioBackground(),
+          SafeArea(
+            top: false,
+            child: AnimatedBuilder(
+              animation: vm,
+              builder: (context, _) => SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    KeyedSubtree(
+                      key: const ValueKey('generation_settings_model'),
+                      child: buildModelSection(),
+                    ),
+                    const SizedBox(height: 12),
+                    FrostedSurface(
+                      blur: 0,
+                      child: ListTile(
+                        leading: const Icon(Icons.tune),
+                        title: const Text('采样与高级参数'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const AdvancedParametersPage(),
+                          ),
                         ),
                       ),
-                    )),
+                    ),
+                  ],
+                ),
               ),
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

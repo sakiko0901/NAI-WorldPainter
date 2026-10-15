@@ -232,6 +232,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+      'image stage fills its width using the displayed image dimensions',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 852);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    for (final dimensions in [
+      const Size(832, 1216),
+      const Size(1024, 1024),
+      const Size(1216, 832),
+      const Size(300, 4000),
+    ]) {
+      vm.sessionResults = [];
+      vm.receive(frontendResult().copyWith(
+        width: dimensions.width.toInt(),
+        height: dimensions.height.toInt(),
+      ));
+      await tester.pumpWidget(host(GeneratePage(key: ValueKey(dimensions))));
+      await tester.pumpAndSettle();
+      final stage = tester.getSize(
+        find.byKey(const ValueKey('result-workspace-stage')),
+      );
+      if (dimensions.height / dimensions.width < 2) {
+        expect(stage.height,
+            closeTo(stage.width * dimensions.height / dimensions.width, 0.01));
+      } else {
+        expect(stage.height, lessThanOrEqualTo(852 * .85));
+      }
+      expect(
+        tester.getRect(find.byKey(const ValueKey('result-save-button'))).bottom,
+        lessThanOrEqualTo(tester
+            .getRect(find.byKey(const ValueKey('generate-primary-button')))
+            .top),
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('capture actual Flutter creation widgets', (tester) async {
     if (!const bool.fromEnvironment('FRONTEND_CAPTURE')) return;
     final fontPath = Platform.environment['FRONTEND_QA_FONT'];
@@ -315,6 +354,11 @@ void main() {
       }
 
       await capture('creation');
+      await tester.tap(find.byTooltip('生成参数'));
+      await tester.pumpAndSettle();
+      await capture('settings');
+      await tester.pageBack();
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.text('正向提示词'), 240,
           scrollable: find.byType(Scrollable).first);
       await tester.pumpAndSettle();
@@ -347,6 +391,27 @@ void main() {
           alignment: .08);
       await tester.pumpAndSettle();
       await capture('position-landscape');
+      vm.sessionResults = [];
+      vm.lastCompletedTask = null;
+      vm.selectedResultTaskId = null;
+      await tester.pumpWidget(RepaintBoundary(
+        key: key,
+        child: host(
+          HomePage(
+            key: const ValueKey('empty-workspace-capture'),
+            appearanceMode: AppearanceMode.dark,
+            onAppearanceChanged: (_) {},
+          ),
+          brightness: brightness,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position
+          .jumpTo(0);
+      await tester.pumpAndSettle();
+      await capture('workspace-empty');
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });

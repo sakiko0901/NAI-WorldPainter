@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -358,6 +359,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   bool _paramsExpanded = false;
   bool _busy = false;
   InpaintStroke? _draft;
+  final List<InpaintPoint> _draftPoints = [];
+  ui.Path _maskPath = ui.Path();
+  final ValueNotifier<ui.Path?> _previewMaskPath = ValueNotifier(null);
   int _batchCompleted = 0;
   int _batchTotal = 1;
   final Map<int, Offset> _pointers = {};
@@ -437,6 +441,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _maskPreviewDebounce?.cancel();
     _promptController.dispose();
     _negativeController.dispose();
+    _previewMaskPath.dispose();
     super.dispose();
   }
 
@@ -468,6 +473,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _transform = const InpaintTransform();
         _box = null;
         _strokes.clear();
+        _draft = null;
+        _draftPoints.clear();
+        _maskPath = ui.Path();
+        _previewMaskPath.value = null;
         _undo.clear();
         _redo.clear();
         _maskUndo.clear();
@@ -524,24 +533,61 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _maskRedo.clear();
   }
 
-  List<InpaintStroke> get _allStrokes => [
-        ..._strokes,
-        if (_draft != null) _draft!,
-      ];
+  List<InpaintStroke> get _allStrokes {
+    final draft = _draft;
+    if (draft == null) return List.of(_strokes);
+    return [..._strokes, _strokeWithPoints(draft, _draftPoints)];
+  }
+
+  InpaintStroke _strokeWithPoints(
+    InpaintStroke stroke,
+    List<InpaintPoint> points,
+  ) =>
+      InpaintStroke(
+        target: stroke.target,
+        mode: stroke.mode,
+        type: stroke.type,
+        size: stroke.size,
+        color: stroke.color,
+        opacity: stroke.opacity,
+        square: stroke.square,
+        points: List<InpaintPoint>.unmodifiable(points),
+        start: stroke.start,
+        rectangle: stroke.rectangle,
+      );
+
+  void _rebuildMaskPath() {
+    _maskPath =
+        InpaintCanvasPainter.mergeMaskStrokes(_maskStrokes) ?? ui.Path();
+  }
+
+  void _clearActiveStrokePreview() {
+    _draft = null;
+    _draftPoints.clear();
+    _previewMaskPath.value = null;
+  }
 
   void _clearAllStrokes() {
     if (_busy) return;
     if (_strokes.isEmpty) return;
     _saveHistory();
     if (_maskStrokes.isNotEmpty) _saveMaskHistory();
-    setState(() => _strokes.clear());
+    setState(() {
+      _strokes.clear();
+      _maskPath = ui.Path();
+      _clearActiveStrokePreview();
+    });
   }
 
   void _clearCurrentLayer() {
     if (_busy || !_strokes.any((stroke) => stroke.target == _target)) return;
     _saveHistory();
     if (_target == InpaintPaintTarget.mask) _saveMaskHistory();
-    setState(() => _strokes.removeWhere((stroke) => stroke.target == _target));
+    setState(() {
+      _clearActiveStrokePreview();
+      _strokes.removeWhere((stroke) => stroke.target == _target);
+      if (_target == InpaintPaintTarget.mask) _maskPath = ui.Path();
+    });
   }
 
   void _undoStroke() {
@@ -553,6 +599,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _strokes
         ..clear()
         ..addAll(previous);
+      _clearActiveStrokePreview();
+      _rebuildMaskPath();
     });
     _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: true);
   }
@@ -566,6 +614,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _strokes
         ..clear()
         ..addAll(next);
+      _clearActiveStrokePreview();
+      _rebuildMaskPath();
     });
     _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: false);
   }
@@ -605,6 +655,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _strokes
         ..removeWhere((stroke) => stroke.target == InpaintPaintTarget.mask)
         ..addAll(target);
+      _clearActiveStrokePreview();
+      _rebuildMaskPath();
     });
   }
 
@@ -838,48 +890,72 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   void _startStroke(Offset point) {
     if (_sourceWidth <= 0 || _busy) return;
     final world = _screenToWorld(point);
+    final firstPoint = InpaintPoint(world.dx, world.dy);
     _saveHistory();
-    setState(() {
-      _draft = InpaintStroke(
-        target: _target,
-        mode: _uiMode == InpaintUiMode.erase
-            ? InpaintStrokeMode.erase
-            : InpaintStrokeMode.paint,
-        type: InpaintStrokeType.path,
-        size: _brushSize,
-        square: _squareBrush,
-        points: [InpaintPoint(world.dx, world.dy)],
-        start: InpaintPoint(world.dx, world.dy),
+    final draft = InpaintStroke(
+      target: _target,
+      mode: _uiMode == InpaintUiMode.erase
+          ? InpaintStrokeMode.erase
+          : InpaintStrokeMode.paint,
+      type: InpaintStrokeType.path,
+      size: _brushSize,
+      square: _squareBrush,
+      points: [firstPoint],
+      start: firstPoint,
+    );
+    _draft = draft;
+    _draftPoints
+      ..clear()
+      ..add(firstPoint);
+    _previewMaskPath.value = null;
+    if (draft.target == InpaintPaintTarget.mask) {
+      _previewMaskPath.value = InpaintCanvasPainter.appendMaskPreviewPoint(
+        ui.Path.from(_maskPath),
+        draft,
+        firstPoint,
       );
-    });
+    }
   }
 
   void _updateStroke(Offset point) {
     final draft = _draft;
     if (draft == null) return;
     final world = _screenToWorld(point);
-    setState(() {
-      _draft = InpaintStroke(
-        target: draft.target,
-        mode: draft.mode,
-        type: draft.type,
-        size: draft.size,
-        color: draft.color,
-        opacity: draft.opacity,
-        square: draft.square,
-        points: [...draft.points, InpaintPoint(world.dx, world.dy)],
+    final previous = _draftPoints.isEmpty ? null : _draftPoints.last;
+    final next = InpaintPoint(world.dx, world.dy);
+    _draftPoints.add(next);
+
+    if (draft.target == InpaintPaintTarget.mask) {
+      _previewMaskPath.value = InpaintCanvasPainter.appendMaskPreviewPoint(
+        _previewMaskPath.value!,
+        draft,
+        next,
+        previous: previous,
       );
+      return;
+    }
+
+    setState(() {
+      _draft = _strokeWithPoints(draft, _draftPoints);
     });
   }
 
   void _finishStroke() {
     final draft = _draft;
     if (draft == null) return;
-    if (draft.type == InpaintStrokeType.path && draft.points.isEmpty) return;
-    if (draft.target == InpaintPaintTarget.mask) _saveMaskHistory();
+    if (draft.type == InpaintStrokeType.path && _draftPoints.isEmpty) return;
+    final completed = _strokeWithPoints(draft, _draftPoints);
+    if (draft.target == InpaintPaintTarget.mask) {
+      _saveMaskHistory();
+      // The live preview is already the canonical result of every input
+      // segment; reuse it instead of rebuilding the whole stroke on pointer-up.
+      _maskPath = _previewMaskPath.value ?? ui.Path.from(_maskPath);
+    }
     setState(() {
-      _strokes.add(draft);
+      _strokes.add(completed);
       _draft = null;
+      _draftPoints.clear();
+      _previewMaskPath.value = null;
     });
   }
 
@@ -908,7 +984,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         }
       }
     } else if (_pointers.length == 2) {
-      _draft = null;
+      _clearActiveStrokePreview();
       _gesture = _GestureKind.none;
       final points = _pointers.values.toList();
       _lastGestureCenter =
@@ -998,7 +1074,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   void _onPointerCancel(PointerCancelEvent event) {
     _pointers.remove(event.pointer);
     if (_pointers.isEmpty) {
-      _draft = null;
+      _clearActiveStrokePreview();
       _gesture = _GestureKind.none;
       _lastGestureCenter = null;
       _lastGestureDistance = null;
@@ -1594,10 +1670,12 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                     CustomPaint(
                       painter: InpaintCanvasPainter(
                         transform: _transform,
-                        strokes: _allStrokes
-                            .where((stroke) =>
-                                stroke.target == InpaintPaintTarget.image)
-                            .toList(),
+                        strokes: [
+                          ..._strokes.where((stroke) =>
+                              stroke.target == InpaintPaintTarget.image),
+                          if (_draft?.target == InpaintPaintTarget.image)
+                            _strokeWithPoints(_draft!, _draftPoints),
+                        ],
                         showMask: false,
                       ),
                     ),
@@ -1616,16 +1694,22 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                         ),
                       ),
                     if (_displayBox != null) _buildBoxDimmer(),
-                    CustomPaint(
-                      key: const ValueKey('inpaint-live-mask'),
-                      painter: InpaintCanvasPainter(
-                        transform: _transform,
-                        strokes: _allStrokes
-                            .where((stroke) =>
-                                stroke.target == InpaintPaintTarget.mask)
-                            .toList(),
-                        showMask:
-                            _showMask && review == null && !previewCurrent,
+                    RepaintBoundary(
+                      key: const ValueKey('inpaint-mask-repaint-boundary'),
+                      child: CustomPaint(
+                        key: const ValueKey('inpaint-live-mask'),
+                        painter: InpaintCanvasPainter(
+                          transform: _transform,
+                          strokes: [
+                            ..._maskStrokes,
+                            if (_draft?.target == InpaintPaintTarget.mask)
+                              _strokeWithPoints(_draft!, _draftPoints),
+                          ],
+                          showMask:
+                              _showMask && review == null && !previewCurrent,
+                          maskPath: _maskPath,
+                          previewMaskPathListenable: _previewMaskPath,
+                        ),
                       ),
                     ),
                     if (_showMask &&

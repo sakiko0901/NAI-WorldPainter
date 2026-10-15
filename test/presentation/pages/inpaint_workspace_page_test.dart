@@ -171,15 +171,42 @@ void main() {
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
     final gesture = await tester.startGesture(tester.getRect(stage).center);
-    await gesture.moveBy(const Offset(20, 0));
     await tester.pump();
     InpaintCanvasPainter painter() => tester
         .widget<CustomPaint>(find.byKey(const ValueKey('inpaint-live-mask')))
         .painter! as InpaintCanvasPainter;
+    final painterBeforeMove = painter();
+    final initialPreview = painterBeforeMove.previewMaskPathListenable!.value!;
+    final initialBounds = initialPreview.getBounds();
+    const maskBoundaryKey = ValueKey('inpaint-mask-repaint-boundary');
+    final pixelsBeforeMove =
+        await _captureRepaintBoundaryPixels(tester, maskBoundaryKey);
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+    expect(identical(painter(), painterBeforeMove), isTrue);
+    final movedPreview = painter().previewMaskPathListenable!.value!;
+    expect(identical(movedPreview, initialPreview), isFalse);
+    expect(movedPreview.getBounds().right, greaterThan(initialBounds.right));
+    final pixelsAfterMove =
+        await _captureRepaintBoundaryPixels(tester, maskBoundaryKey);
+    expect(_pixelsDiffer(pixelsBeforeMove, pixelsAfterMove), isTrue);
     expect(painter().strokes.single.square, isTrue);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(painter().strokes.single.square, isTrue);
+    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+
+    final undoMask = find.byTooltip('撤销蒙版');
+    await tester.ensureVisible(undoMask);
+    await tester.tap(undoMask);
+    await tester.pumpAndSettle();
+    expect(painter().maskPath!.getBounds().isEmpty, isTrue);
+    final redoMask = find.byTooltip('重做蒙版');
+    await tester.ensureVisible(redoMask);
+    await tester.tap(redoMask);
+    await tester.pumpAndSettle();
+    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+
     await tester.ensureVisible(find.byTooltip('隐藏蒙版'));
     await tester.tap(find.byTooltip('隐藏蒙版'));
     await tester.pumpAndSettle();
@@ -190,6 +217,40 @@ void main() {
           .where((image) => image.image is MemoryImage),
       isEmpty,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('clearing a held mask stroke cannot restore stale cached content',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(_host(
+      const SingleChildScrollView(child: InpaintWorkspaceCard()),
+    ));
+    await _loadWorkspaceImage(tester, vm);
+    await tester.tap(find.text('画笔'));
+    await tester.pumpAndSettle();
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.drag(stage, const Offset(25, 0));
+    await tester.pumpAndSettle();
+    InpaintCanvasPainter painter() => tester
+        .widget<CustomPaint>(find.byKey(const ValueKey('inpaint-live-mask')))
+        .painter! as InpaintCanvasPainter;
+    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+    final held =
+        await tester.startGesture(tester.getCenter(stage), pointer: 33);
+    await tester.pump();
+    await held.moveBy(const Offset(-25, 10));
+    await tester.pump();
+    await tester.tap(find.byTooltip('清空蒙版'));
+    await tester.pump();
+    await held.up();
+    await tester.pumpAndSettle();
+    expect(painter().strokes, isEmpty);
+    expect(painter().maskPath!.getBounds().isEmpty, isTrue);
+    expect(painter().previewMaskPathListenable!.value, isNull);
     expect(tester.takeException(), isNull);
   });
 
@@ -438,6 +499,32 @@ Future<void> _captureBoundary(
     file.writeAsBytesSync(data!.buffer.asUint8List());
     image.dispose();
   });
+}
+
+Future<Uint8List> _captureRepaintBoundaryPixels(
+  WidgetTester tester,
+  Key key,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(key));
+  return (await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 1);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      return Uint8List.fromList(
+        data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
+    } finally {
+      image.dispose();
+    }
+  }))!;
+}
+
+bool _pixelsDiffer(Uint8List first, Uint8List second) {
+  if (first.length != second.length) return true;
+  for (var index = 0; index < first.length; index++) {
+    if (first[index] != second[index]) return true;
+  }
+  return false;
 }
 
 Future<void> _settleFileImages(WidgetTester tester) async {

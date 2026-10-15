@@ -98,7 +98,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
         ((media.textScaler.scale(14) - 14) * 5).clamp(0.0, 72.0);
     final requested =
         widget.workspaceHeight ?? availableHeight - 424 - textScaleExtra;
-    return requested.clamp(220.0, 536.0).toDouble();
+    final maxHeight = (availableHeight * 0.85).clamp(536.0, double.infinity);
+    return requested
+        .clamp(widget.task == null ? 220.0 : 160.0, maxHeight)
+        .toDouble();
   }
 
   @override
@@ -185,12 +188,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             tooltip: _imageScale > 1.02 ? '重置缩放' : '适应窗口',
             onPressed: current == null ? null : _resetImageView,
             icon: Icons.fit_screen_outlined,
-          ),
-          _toolbarButton(
-            context: context,
-            tooltip: '全屏查看',
-            onPressed: current == null ? null : widget.onPreview,
-            icon: Icons.open_in_full,
           ),
         ],
       ),
@@ -318,7 +315,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return Semantics(
       container: true,
       label:
-          '图像工作区，双指缩放，Seed ${current.seed ?? '未记录'}，${current.width} × ${current.height}',
+          '图像工作区，点按全屏查看，双指缩放，Seed ${current.seed ?? '未记录'}，${current.width} × ${current.height}',
       child: ClipRRect(
         borderRadius: BorderRadius.circular(13),
         child: SizedBox(
@@ -355,7 +352,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   top: 10,
                   child: FrostedSurface(
                     radius: 10,
-                    blur: 12,
+                    blur: 0,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 7,
@@ -602,7 +599,10 @@ class _WorkspaceGridPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawColor(background, BlendMode.src);
+    // This painter can share a canvas with the glass panel's backdrop. Source
+    // replacement erases that backdrop and changes appearance when the engine
+    // moves the grid into or out of a cached layer. Composite within our bounds.
+    canvas.drawRect(Offset.zero & size, Paint()..color = background);
     final paint = Paint()
       ..color = line
       ..strokeWidth = 0.65;
