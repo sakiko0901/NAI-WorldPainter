@@ -216,9 +216,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           _toolbarButton(
             context: context,
             tooltip: '删除当前图片',
-            onPressed: current == null || widget.onDelete == null
-                ? null
-                : () => widget.onDelete!(current),
+            onPressed:
+                widget.generating || current == null || widget.onDelete == null
+                    ? null
+                    : () => widget.onDelete!(current),
             icon: Icons.delete_outline,
           ),
         ],
@@ -381,8 +382,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
               left: 10,
               top: 10,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surface.withValues(alpha: 0.72),
                   borderRadius: BorderRadius.circular(999),
@@ -586,7 +586,8 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             button: true,
             label: '查看第 ${index + 1} 张结果',
             child: Tooltip(
-              message: isPending ? '第 ${index + 1} 张（生成中）' : '第 ${index + 1} 张结果',
+              message:
+                  isPending ? '第 ${index + 1} 张（生成中）' : '第 ${index + 1} 张结果',
               child: InkWell(
                 onTap: () => widget.onSelect(result),
                 borderRadius: BorderRadius.circular(9),
@@ -851,9 +852,7 @@ class _EffortToggle extends StatelessWidget {
                 ),
                 const SizedBox(width: 3),
                 Icon(
-                  isHigh
-                      ? Icons.arrow_forward_ios
-                      : Icons.arrow_back_ios,
+                  isHigh ? Icons.arrow_forward_ios : Icons.arrow_back_ios,
                   size: 10,
                   color: colors.onSurfaceVariant,
                 ),

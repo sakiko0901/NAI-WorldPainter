@@ -866,9 +866,9 @@ class _GeneratePageState extends State<GeneratePage> {
 
   TextStyle _dropdownTextStyle(BuildContext context) {
     return Theme.of(context).textTheme.bodyLarge!.copyWith(
-      fontWeight: FontWeight.w600,
-      color: Theme.of(context).colorScheme.onSurface,
-    );
+          fontWeight: FontWeight.w600,
+          color: Theme.of(context).colorScheme.onSurface,
+        );
   }
 
   Widget _dropdownShell({required Widget child}) {
@@ -1716,9 +1716,8 @@ class _GeneratePageState extends State<GeneratePage> {
       streamPreviewBytes: taskStreamBytes,
       streamPreviewStep: taskStreamStep,
       effort: _vm.supportsEffortToggle ? _vm.effort : null,
-      onEffortChanged: _vm.supportsEffortToggle
-          ? (value) => _vm.updateEffort(value)
-          : null,
+      onEffortChanged:
+          _vm.supportsEffortToggle ? (value) => _vm.updateEffort(value) : null,
       onImport: _vm.isGenerating || _isImportingWorkspaceImage
           ? null
           : _importWorkspaceImage,
@@ -1778,6 +1777,10 @@ class _GeneratePageState extends State<GeneratePage> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    if (_vm.isGenerating) {
+      _showToast('生成中请稍后删除');
+      return;
+    }
     _vm.removeSessionResult(result.taskId);
     _showToast('已从工作区移除');
   }
