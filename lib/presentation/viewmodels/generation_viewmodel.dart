@@ -1855,7 +1855,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     errorMessage = null;
-    // 保留之前的结果，新批次追加占位卡（用户仍可回看旧图）
+    // 新批次开始：清掉上批结果，本批图片到位前先建占位卡
+    sessionResults = [];
+    selectedResultTaskId = null;
+    _userPickedResult = false;
     final count = batchCount.clamp(1, AppConstants.maxBatchCount);
     _batchRemaining = count;
     notifyListeners();
@@ -1919,7 +1922,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
 
-    // 保留之前的结果，分块重绘完成后追加新图
+    // 新任务开始：清掉上批结果，完成后展示新图
+    sessionResults = [];
+    selectedResultTaskId = null;
     _userPickedResult = false;
     _cancelTiled = false;    errorMessage = null;
     await BackgroundKeepAliveService.instance.acquire(
