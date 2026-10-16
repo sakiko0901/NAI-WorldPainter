@@ -52,6 +52,10 @@ class _GenerationRepository implements GenerationRepository {
 
   @override
   Future<GenerationTask> submitGeneration(GenerationTask task) async => task;
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 }
 
 class _HistoryRepository implements HistoryRepository {

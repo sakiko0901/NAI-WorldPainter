@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
@@ -244,6 +245,91 @@ class OfficialNovelAiApiService {
     } on DioException catch (error) {
       throw _error(error, '官方生图失败');
     }
+  }
+
+  /// 流式生成：官方 V4/V4.5/V5 模型可用（V3 与精确参考 multipart 不支持）。
+  ///
+  /// 协议（参考 NekoAI-JS StreamingMsgpackParser）：
+  /// 响应为重复的 [4字节大端长度][MessagePack 消息体]；
+  /// msgpack 字段 event_type = "intermediate"（JPEG 预览）/ "final"（PNG 成品），
+  /// image 字段直接是原始字节。每帧回调 onFrame(imageBytes, step, total?)。
+  Future<GenerationTask> generateImageStream(
+    GenerationTask task,
+    String token, {
+    void Function(Uint8List imageBytes, int? step)? onFrame,
+  }) async {
+    if (token.trim().isEmpty) {
+      throw ApiException(
+          message: '请先在 API 配置中填写 NovelAI 官方 Token', code: 'NO_OFFICIAL_TOKEN');
+    }
+    try {
+      final payload = await buildPayload(task);
+      (payload['parameters'] as Map<String, dynamic>)['stream'] = 'msgpack';
+      final response = await _dio.post<ResponseBody>(
+        ApiConstants.officialGenerateImageStream,
+        data: payload,
+        options: _options(token, responseType: ResponseType.stream),
+      );
+      final stream = response.data!;
+      Uint8List? finalImage;
+      final buffer = BytesBuilder();
+      await for (final chunk in stream.stream) {
+        buffer.add(chunk);
+        final data = buffer.toBytes();
+        var pos = 0;
+        while (pos + 4 <= data.length) {
+          final length = (data[pos] << 24) |
+              (data[pos + 1] << 16) |
+              (data[pos + 2] << 8) |
+              data[pos + 3];
+          if (pos + 4 + length > data.length) break;
+          final message = data.sublist(pos + 4, pos + 4 + length);
+          pos += 4 + length;
+          final decoded = _decodeMsgpackMap(message);
+          if (decoded == null) continue;
+          final eventType = decoded['event_type']?.toString();
+          final image = decoded['image'];
+          if (image is List<int>) {
+            final bytes = Uint8List.fromList(image);
+            if (eventType == 'final') {
+              finalImage = bytes;
+            } else if (eventType == 'intermediate') {
+              onFrame?.call(bytes, decoded['step_ix'] as int?);
+            }
+          } else if (decoded.containsKey('error') ||
+              decoded.containsKey('message') && eventType == null) {
+            throw ApiException(
+                message: decoded['error']?.toString() ??
+                    decoded['message']?.toString() ??
+                    '官方流式生成失败');
+          }
+        }
+        buffer.clear();
+        buffer.add(data.sublist(pos));
+      }
+      if (finalImage == null) {
+        throw ApiException(message: '官方流式生成未返回最终图像');
+      }
+      final filePath = await _saveImage(finalImage);
+      return task.copyWith(
+        status: 'success',
+        imagePath: filePath,
+        completedAt: DateTime.now(),
+      );
+    } on DioException catch (error) {
+      throw _error(error, '官方流式生成失败');
+    }
+  }
+
+  /// 解码一条 msgpack 消息为 Map（仅支持本协议用到的类型子集）。
+  static Map<String, dynamic>? _decodeMsgpackMap(Uint8List message) {
+    try {
+      final value = msgpack.deserialize(message, copyBinaryData: true);
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), v));
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<String> encodeVibeReference({

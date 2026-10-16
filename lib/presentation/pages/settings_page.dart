@@ -126,13 +126,11 @@ class _SettingsPageState extends State<SettingsPage> {
         SafeArea(
           top: false,
           child: BackdropGroup(
-              child: ListView(
+          child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
             children: [
-              _buildV5UsageCard(),
-              const SizedBox(height: 18),
               _SettingsGroup(
-                title: 'API 与账号',
+                title: 'API 配置',
                 children: [
                   _SettingsTile(
                     icon: CupertinoIcons.cube_box,
@@ -148,20 +146,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
+              if (_v5TokenConfigured) ...[
+                const SizedBox(height: 18),
+                _buildV5UsageCard(),
+              ],
               const SizedBox(height: 18),
               _SettingsGroup(
                 title: '创作扩展',
                 children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.rectangle_3_offgrid,
-                    title: '漫画生成',
-                    subtitle: '分镜项目、候选主图与本地对白后期',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const ComicProjectsPage(),
-                      ),
-                    ),
-                  ),
                   _SettingsTile(
                     icon: CupertinoIcons.video_camera_solid,
                     title: '导演工具',
@@ -169,6 +161,18 @@ class _SettingsPageState extends State<SettingsPage> {
                     onTap: () => Navigator.of(context).push(
                       CupertinoPageRoute(
                         builder: (_) => const DirectorToolsPage(),
+                      ),
+                    ),
+                  ),
+                  _SettingsTile(
+                    icon: CupertinoIcons.tag,
+                    title: '图片解析',
+                    subtitle: 'NAI 元数据提取 / WD-Tagger 智能识别',
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute(
+                        builder: (_) => ImageTagPage(
+                          onNavigateToGenerate: widget.onNavigateToGenerate,
+                        ),
                       ),
                     ),
                   ),
@@ -234,18 +238,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.tag,
-                    title: '图片解析',
-                    subtitle: 'NAI 元数据提取 / WD-Tagger 智能识别',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => ImageTagPage(
-                          onNavigateToGenerate: widget.onNavigateToGenerate,
-                        ),
-                      ),
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(height: 18),
@@ -262,6 +254,22 @@ class _SettingsPageState extends State<SettingsPage> {
                           appearanceMode: widget.appearanceMode,
                           onAppearanceChanged: widget.onAppearanceChanged,
                         ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _SettingsGroup(
+                title: '更多',
+                children: [
+                  _SettingsTile(
+                    icon: CupertinoIcons.rectangle_3_offgrid,
+                    title: '漫画生成',
+                    subtitle: '分镜项目、候选主图与本地对白后期',
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute(
+                        builder: (_) => const ComicProjectsPage(),
                       ),
                     ),
                   ),

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
@@ -55,6 +57,25 @@ class FrontendGenerationFake extends ChangeNotifier
   bool get isIkunEndpoint => false;
   @override
   bool get isV5Model => selectedModel.contains('diffusion-5');
+  @override
+  bool get supportsEffortToggle => false;
+  @override
+  Uint8List? streamPreviewBytes;
+  @override
+  int? streamPreviewStep;
+  @override
+  final Map<String, Uint8List> streamPreviews = {};
+  @override
+  final Map<String, int> streamPreviewSteps = {};
+  @override
+  bool get isMediumEffort => false;
+  @override
+  GenerationEffort effort = GenerationEffort.high;
+  @override
+  Future<void> updateEffort(GenerationEffort value) async {
+    effort = value;
+    notifyListeners();
+  }
   @override
   bool get isTiledImg2Img => false;
   @override
