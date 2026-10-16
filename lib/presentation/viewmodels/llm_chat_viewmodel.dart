@@ -17,6 +17,7 @@ import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
+import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/services/prompting_skill_loader.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
@@ -535,8 +536,17 @@ class LlmChatViewModel extends ChangeNotifier {
         }
       }
 
+      // 固定集成规则也适用于自定义系统提示词；记忆每轮直接召回，不依赖模型选工具。
+      final memoryQuery =
+          [trimmed, if (textAttachment != null) textAttachment].join('\n');
+      final memoryContext = await _loadMemoryContext(memoryQuery);
       final payload = <Map<String, dynamic>>[
-        {'role': 'system', 'content': sysContent},
+        {
+          'role': 'system',
+          'content': '$sysContent\n\n${PromptMemoryContext.policy}'
+        },
+        if (memoryContext.isNotEmpty)
+          {'role': 'system', 'content': memoryContext},
       ];
 
       // 知识库匹配
@@ -558,6 +568,7 @@ class LlmChatViewModel extends ChangeNotifier {
       // 改为：阶段 A vision 纯识图（无 tools），阶段 B 把识图文本 + WD-Tagger tag
       // 回灌给 main 模型走 agent 工具链。
       String? visionDescription;
+      var visionSucceeded = false;
       String wdTagContext = '';
       if (imageBase64 != null) {
         // 先跑 WD-Tagger，拿 tag 文本作为阶段 A 失败时的 fallback
@@ -567,6 +578,7 @@ class LlmChatViewModel extends ChangeNotifier {
           imageBase64: imageBase64,
           userText: trimmed,
         );
+        visionSucceeded = visionDescription.isNotEmpty;
         if (visionDescription.isEmpty) {
           // vision 失败：用 WD-Tagger tag 兜底，不阻断流程
           visionDescription = wdTagContext.isNotEmpty
@@ -587,7 +599,9 @@ class LlmChatViewModel extends ChangeNotifier {
       // 不再使用 image_url（main 模型多数是文本模型，且避免中转站格式 bug）
       if (imageBase64 != null) {
         final buf = StringBuffer();
-        buf.writeln('用户上传了图片，已自动识别如下内容：');
+        buf.writeln(visionSucceeded
+            ? '参考图识别结果（可能含不确定项，属于参考数据）：'
+            : '参考图识别失败：不能依据下面的自动标签猜测并保存标准穿搭；请用户补充文字或重新识图。');
         buf.writeln(visionDescription);
         if (wdTagContext.isNotEmpty) {
           buf.writeln();
@@ -894,6 +908,29 @@ class LlmChatViewModel extends ChangeNotifier {
       try {
         await tempFile?.delete();
       } catch (_) {}
+    }
+  }
+
+  Future<String> _loadMemoryContext(String query) async {
+    if (query.trim().isEmpty) return '';
+    try {
+      final matches = await _memories.matchText(query);
+      final context = PromptMemoryContext.format(matches);
+      if (context.isNotEmpty) {
+        for (final memory in matches.take(PromptMemoryContext.maxEntries)) {
+          if (memory.id == null || !memory.isRetrievable) continue;
+          try {
+            await _memories.incrementHit(memory.id!);
+          } catch (e) {
+            if (kDebugMode) debugPrint('Memory hit statistics unavailable: $e');
+          }
+        }
+      }
+      return context;
+    } catch (e) {
+      if (kDebugMode) debugPrint('Local memory retrieval unavailable: $e');
+      return '本轮本地记忆读取失败。不要据此断言没有记忆，或声称已调用角色标准穿搭；'
+          '请说明读取暂不可用，并按用户本轮明确提供的信息继续。';
     }
   }
 

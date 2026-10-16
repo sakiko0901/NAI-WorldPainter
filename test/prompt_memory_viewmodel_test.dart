@@ -106,6 +106,66 @@ void main() {
     expect(vm.pendingMemories.single.id, 7);
     expect(vm.memories, isEmpty);
   });
+
+  test('editing an archived memory preserves its superseded state', () async {
+    final archived = PromptMemory(
+      id: 11,
+      trigger: 'Nahida',
+      content: 'old outfit',
+      type: PromptMemoryType.characterOutfit,
+      source: PromptMemorySource.manual,
+      supersededBy: 12,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );
+    final repo = _FakePromptMemoryRepository(
+      memories: [archived],
+      pending: const [],
+    );
+    final vm = PromptMemoryViewModel(ManagePromptMemoriesUseCase(repo));
+    await vm.load();
+
+    await vm.saveOrFindConflicts(
+      id: archived.id,
+      trigger: archived.trigger,
+      content: 'edited old outfit',
+      type: archived.type,
+      supersededBy: archived.supersededBy,
+    );
+
+    expect(repo.savedMemories.single.supersededBy, 12);
+    expect(repo.savedMemories.single.isRetrievable, isFalse);
+  });
+
+  test('new standard outfit skips the generic conflict strategy', () async {
+    final existing = PromptMemory(
+      id: 5,
+      trigger: 'Nahida',
+      content: 'old outfit',
+      type: PromptMemoryType.characterOutfit,
+      source: PromptMemorySource.manual,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );
+    final repo = _FakePromptMemoryRepository(
+      memories: [existing],
+      pending: const [],
+    )..conflictsForTrigger = {
+        'Nahida': [existing],
+      };
+    final vm = PromptMemoryViewModel(ManagePromptMemoriesUseCase(repo));
+    await vm.load();
+
+    final conflicts = await vm.saveOrFindConflicts(
+      trigger: 'Nahida',
+      content: 'new standard outfit',
+      type: PromptMemoryType.characterOutfit,
+    );
+
+    expect(conflicts, isEmpty);
+    expect(repo.savedMemories, hasLength(1));
+    expect(repo.savedMemories.single.content, 'new standard outfit');
+  });
 }
 
 class _FakePromptMemoryRepository implements PromptMemoryRepository {

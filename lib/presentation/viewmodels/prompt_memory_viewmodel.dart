@@ -41,6 +41,7 @@ class PromptMemoryViewModel extends ChangeNotifier {
     required String content,
     PromptMemoryType type = PromptMemoryType.other,
     PromptMemorySource source = PromptMemorySource.manual,
+    int? supersededBy,
   }) async {
     final now = DateTime.now();
     final memory = PromptMemory(
@@ -49,10 +50,12 @@ class PromptMemoryViewModel extends ChangeNotifier {
       content: content,
       type: type,
       source: source,
+      supersededBy: supersededBy,
       createdAt: now,
       updatedAt: now,
     );
-    if (id == null) {
+    // 标准穿搭由仓库按角色名原子替换旧穿搭，避免进入通用冲突策略。
+    if (id == null && type != PromptMemoryType.characterOutfit) {
       final conflicts = await _useCase.findConflicts(trigger);
       if (conflicts.isNotEmpty) {
         return conflicts;
