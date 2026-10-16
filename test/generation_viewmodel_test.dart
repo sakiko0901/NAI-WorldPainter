@@ -25,6 +25,41 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('batch generation keeps selection on the newest placeholder', () async {
+    final image = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'generation_viewmodel_batch.png',
+    );
+    await image.writeAsBytes(const [1, 2, 3]);
+    addTearDown(() => image.deleteSync());
+
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _DelayedGenerationRepository(image.path),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    viewModel.prompt = '1girl';
+    viewModel.selectedModel = 'model';
+    await viewModel.updateBatchCount(3);
+
+    final generateFuture = viewModel.generate();
+
+    // 第 1 张完成后，第 2 张的占位卡应自动成为选中项
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await generateFuture;
+
+    expect(viewModel.sessionResults, hasLength(3));
+    expect(viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
+  });
+
   test('imported image displays without submitting a task or replacing drafts',
       () async {
     final history = _MemoryHistoryRepository();
@@ -1570,6 +1605,17 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// 每次提交延迟片刻再返回成功，模拟真实生成耗时，让批量循环可观察。
+class _DelayedGenerationRepository extends _SuccessfulGenerationRepository {
+  _DelayedGenerationRepository(super.imagePath);
+
+  @override
+  Future<GenerationTask> submitGeneration(GenerationTask task) async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    return super.submitGeneration(task);
+  }
 }
 
 class _CapturingGenerationRepository implements GenerationRepository {
