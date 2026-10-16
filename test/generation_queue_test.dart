@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -52,6 +54,10 @@ class _Repository implements GenerationRepository {
   @override
   Future<GenerationTask> submitGeneration(GenerationTask task) async =>
       task.copyWith(status: 'success', imagePath: '/tmp/${task.taskId}.png');
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 
   @override
   Future<List<NaiModel>> fetchModels() async => const [];

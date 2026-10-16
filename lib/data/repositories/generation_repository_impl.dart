@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
@@ -10,7 +12,6 @@ import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart'
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/domain/repositories/vibe_encoding_repository.dart';
 import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
-import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 
 class GenerationRepositoryImpl implements GenerationRepository {
@@ -21,6 +22,10 @@ class GenerationRepositoryImpl implements GenerationRepository {
   final NanoBananaApiService _nanoApiService;
   final SettingsRepository _settingsRepo;
   final VibeEncodingRepository _vibeEncodingRepo;
+
+  /// 流式预览回调（taskId → handler），任务完成后移除。
+  final Map<String, void Function(Uint8List bytes, int? step)> _streamHandlers =
+      {};
 
   GenerationRepositoryImpl({
     required NovelAiApiService apiService,
@@ -90,6 +95,16 @@ class GenerationRepositoryImpl implements GenerationRepository {
     return _resolveCreds(ImageProviderType.novelAi);
   }
 
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {
+    if (onFrame == null) {
+      _streamHandlers.remove(taskId);
+    } else {
+      _streamHandlers[taskId] = onFrame;
+    }
+  }
+
   Future<GenerationTask> _submitNovelAi(GenerationTask task) async {
     final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
     if (route.isOfficial) {
@@ -101,6 +116,21 @@ class GenerationRepositoryImpl implements GenerationRepository {
         );
       }
       final prepared = await _prepareOfficialVibeReferences(task, token);
+      final handler = _streamHandlers.remove(task.taskId);
+      final hasPrecise = prepared.preciseReferences.isNotEmpty;
+      // 官方流式：V4/V4.5/V5 且非精确参考 multipart 时可用
+      final canStream = !hasPrecise;
+      if (canStream) {
+        try {
+          return await _officialApiService.generateImageStream(
+            prepared,
+            token,
+            onFrame: handler,
+          );
+        } on ApiException {
+          rethrow;
+        }
+      }
       return _officialApiService.generateImage(prepared, token);
     }
 

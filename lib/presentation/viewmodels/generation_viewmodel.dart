@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -52,7 +53,22 @@ class ImageModelOption {
   });
 }
 
+/// V5 思考（Effort）等级。官方 API 通过切换 model 字段实现。
+enum GenerationEffort {
+  /// nai-diffusion-5-full（默认）
+  high,
+
+  /// nai-diffusion-5-full-medium 蒸馏版，固定 14 steps
+  medium,
+}
+
 class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
+  /// 流式预览：当前生成任务的实时预览帧（JPEG 字节）。
+  /// 仅官方渠道 V4/V4.5/V5 生成时有值；任务结束/失败清空。
+  Uint8List? streamPreviewBytes;
+  int? streamPreviewStep;
+  StreamSubscription? _previewSub;
+  String? _previewTaskId;
   final GenerateImageUseCase _generateImage;
   final ManageSettingsUseCase _manageSettings;
   final SaveImageUseCase _saveImage;
@@ -86,6 +102,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String negativePrompt = '';
   String inpaintPrompt = '';
   String inpaintNegativePrompt = '';
+
+  /// V5 官方渠道思考等级：High = nai-diffusion-5-full，
+  /// Medium = nai-diffusion-5-full-medium（固定 14 steps、k_euler_ancestral、无 rescale）。
+  GenerationEffort effort = GenerationEffort.high;
 
   /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
   /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
@@ -143,6 +163,35 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final normalized = model.trim().toLowerCase();
     return normalized.contains('nai-diffusion-5') || normalized.contains('v5');
+  }
+
+  /// 官方渠道 V5 Full 模型才支持 Effort 切换（High/Medium）。
+  bool get supportsEffortToggle {
+    if (!isOfficialEndpoint) return false;
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final normalized = model.trim().toLowerCase();
+    return normalized == 'nai-diffusion-5-full' ||
+        normalized == 'nai-diffusion-5-full-inpainting';
+  }
+
+  /// Medium 等级生效中（决定 steps/sampler/rescale 强制约束）。
+  bool get isMediumEffort =>
+      supportsEffortToggle && effort == GenerationEffort.medium;
+
+  Future<void> updateEffort(GenerationEffort value) async {
+    if (effort == value) return;
+    effort = value;
+    if (isMediumEffort) {
+      // Medium 强制约束：14 steps、k_euler_ancestral、无 rescale
+      steps = 14;
+      await _manageSettings.setStepsDraft(steps);
+      selectedSampler = 'k_euler_ancestral';
+      await _manageSettings.setSelectedSamplerDraft(selectedSampler);
+      cfgRescale = 0.0;
+      await _manageSettings.setCfgRescaleDraft(cfgRescale);
+    }
+    notifyListeners();
   }
 
   bool get supportsCharacterPrompts => true;
@@ -436,10 +485,24 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     });
 
     _taskSub = _queue.taskStream.listen(_onQueueTask);
+    _previewSub = _queue.previewStream.listen((frame) {
+      final (taskId, bytes, step) = frame;
+      if (_previewTaskId != taskId && _previewTaskId != null) return;
+      _previewTaskId = taskId;
+      streamPreviewBytes = bytes;
+      streamPreviewStep = step;
+      notifyListeners();
+    });
   }
 
   Future<void> _onQueueTask(GenerationTask task) async {
     if (task.isInternal || !_isFinalTask(task)) return;
+    // 任务终态：清空流式预览
+    if (_previewTaskId == null || _previewTaskId == task.taskId) {
+      _previewTaskId = null;
+      streamPreviewBytes = null;
+      streamPreviewStep = null;
+    }
     await _applyCompletedTask(task);
   }
 
@@ -1633,8 +1696,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         await _manageSettings.setSelectedModelDraft(selectedModel);
       }
     }
-    final actualModelId =
-        selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final actualModelId = _applyEffortToModel(
+      selectedOption?.actualModel ?? _resolveActualModelId(selectedModel),
+    );
     final provider = selectedOption?.provider ?? currentProvider;
     final rolePreciseReferences =
         generationMode == GenerationMode.textToImage &&
@@ -1684,9 +1748,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
                 AppConstants.novelAiImageGenerationsProtocol
         ? ApiConstants.ikunSupportedNoiseSchedules
         : ApiConstants.supportedNoiseSchedules;
-    final taskSampler = samplerOptions.contains(selectedSampler)
-        ? selectedSampler
-        : ApiConstants.defaultSampler;
+    final taskSampler = isMediumEffort
+        ? 'k_euler_ancestral'
+        : samplerOptions.contains(selectedSampler)
+            ? selectedSampler
+            : ApiConstants.defaultSampler;
     final taskNoiseSchedule =
         noiseScheduleOptions.contains(selectedNoiseSchedule)
             ? selectedNoiseSchedule
@@ -1707,14 +1773,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       height: res.$2,
       size: selectedResolution,
       scale: scale,
-      cfgRescale: cfgRescale,
+      cfgRescale: isMediumEffort ? 0.0 : cfgRescale,
       sampler: taskSampler,
       noiseSchedule: taskNoiseSchedule,
-      steps: isV5Model
-          ? steps.clamp(1, 28)
-          : isIkunEndpoint && isStepsLocked
-              ? ApiConstants.defaultSteps
-              : steps.clamp(1, 50),
+      steps: isMediumEffort
+          ? 14
+          : isV5Model
+              ? steps.clamp(1, 28)
+              : isIkunEndpoint && isStepsLocked
+                  ? ApiConstants.defaultSteps
+                  : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
         (character) => character.centerX != null && character.centerY != null,
       ),
@@ -1890,6 +1958,22 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     errorMessage = null;
     notifyListeners();
     return true;
+  }
+
+  /// 从当前结果区移除一张图片（仅工作区显示，不删除历史记录）。
+  void removeSessionResult(String taskId) {
+    if (isGenerating) return;
+    sessionResults =
+        sessionResults.where((item) => item.taskId != taskId).toList();
+    if (selectedResultTaskId == taskId) {
+      selectedResultTaskId = null;
+      _userPickedResult = false;
+    }
+    if (lastCompletedTask?.taskId == taskId) {
+      lastCompletedTask = sessionResults.isEmpty ? null : sessionResults.last;
+      selectedResultTaskId = lastCompletedTask?.taskId;
+    }
+    notifyListeners();
   }
 
   // ── 官方超分 ──
@@ -2472,6 +2556,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         normalized.contains('nai-diffusion-4.');
   }
 
+  /// Effort=Medium 时把官方 V5 Full 模型切换为对应 medium 蒸馏版
+  /// （inpainting 模型映射到 nai-diffusion-5-full-medium-inpainting）。
+  String _applyEffortToModel(String model) {
+    if (!isMediumEffort) return model;
+    final normalized = model.trim();
+    if (normalized == 'nai-diffusion-5-full-inpainting') {
+      return 'nai-diffusion-5-full-medium-inpainting';
+    }
+    if (normalized == 'nai-diffusion-5-full') {
+      return 'nai-diffusion-5-full-medium';
+    }
+    return model;
+  }
+
   String _resolveActualModelId(String selectedModelId) {
     String stripPrefix(String prefix) {
       var rest = selectedModelId.substring(prefix.length);
@@ -2515,6 +2613,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   void dispose() {
     _queueSub?.cancel();
     _taskSub?.cancel();
+    _previewSub?.cancel();
     super.dispose();
   }
 }

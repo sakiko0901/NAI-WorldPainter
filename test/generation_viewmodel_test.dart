@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -1560,6 +1561,10 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
       );
 
   @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -1578,6 +1583,10 @@ class _CapturingGenerationRepository implements GenerationRepository {
       completedAt: DateTime.now(),
     );
   }
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1603,6 +1612,10 @@ class _BadGatewayGenerationRepository implements GenerationRepository {
         message: '服务器错误 (502)：上游请求失败: All connection attempts failed',
         statusCode: 502,
       );
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

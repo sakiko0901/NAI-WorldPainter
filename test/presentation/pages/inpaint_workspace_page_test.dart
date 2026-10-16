@@ -710,6 +710,10 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
   }
 
   @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 

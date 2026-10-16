@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
@@ -18,10 +19,16 @@ class GenerationQueue {
   final _queueController = StreamController<QueueState>.broadcast();
   final _taskController = StreamController<GenerationTask>.broadcast();
 
+  /// 流式预览帧：(taskId, 图像字节, 当前步数)
+  final _previewController =
+      StreamController<(String, Uint8List, int?)>.broadcast();
+
   GenerationQueue(this._generationRepo, this._historyRepo);
 
   Stream<QueueState> get queueStream => _queueController.stream;
   Stream<GenerationTask> get taskStream => _taskController.stream;
+  Stream<(String, Uint8List, int?)> get previewStream =>
+      _previewController.stream;
   int get length => _queue.length;
   bool get isProcessing => _isProcessing;
   GenerationTask? get currentTask => _currentTask;
@@ -103,6 +110,12 @@ class GenerationQueue {
         await _historyRepo.updateTask(generatingTask);
       }
       _taskController.add(generatingTask);
+      _generationRepo.setStreamPreviewHandler(
+        generatingTask.taskId,
+        (bytes, step) => _previewController.add(
+          (generatingTask.taskId, bytes, step),
+        ),
+      );
 
       final completedTask =
           await _generationRepo.submitGeneration(generatingTask);
@@ -128,6 +141,7 @@ class GenerationQueue {
       await _publishFailedTask(failedTask, queuedTask.persistHistory);
       queuedTask.completion?.complete(failedTask);
     } finally {
+      _generationRepo.setStreamPreviewHandler(_currentTask!.taskId, null);
       _currentTask = null;
       _isProcessing = false;
       _notifyState();

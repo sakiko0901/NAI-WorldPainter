@@ -28,13 +28,11 @@ void main() {
 
     expect(find.text('官方 Token 未配置'), findsOneWidget);
     expect(find.text('V5 体力'), findsOneWidget);
-    expect(find.text('Anlas'), findsOneWidget);
-    expect(find.text('—'), findsNWidgets(3));
-    expect(find.textContaining('张'), findsNothing);
+    expect(find.text('预计剩余 —'), findsOneWidget);
+    expect(find.text('—'), findsOneWidget);
   });
 
-  testWidgets('displays only returned stamina and Anlas; estimate stays blank',
-      (
+  testWidgets('shows stamina with image estimate and Anlas beside bar', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -53,11 +51,75 @@ void main() {
 
     expect(find.text('Opus V5 体力'), findsOneWidget);
     expect(find.text('72.5%'), findsOneWidget);
+    expect(find.text('Anlas '), findsOneWidget);
     expect(find.text('1200'), findsOneWidget);
-    expect(find.text('预计剩余 '), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
-    expect(find.textContaining('张'), findsNothing);
+    // 72.5% * 17 ≈ 1233 张
+    expect(find.text('预计剩余 约1233张'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    // 72.5% ≥ 65% → 绿色进度条
+    final context = tester.element(find.byType(LinearProgressIndicator));
+    final theme = Theme.of(context);
+    final indicator = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(
+      indicator.valueColor!.value,
+      ToolsQuotaCard.staminaColor(72.5, theme.colorScheme),
+    );
+  });
+
+  testWidgets('yellow bar between 20 and 64 percent', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        const ToolsQuotaCard(
+          tokenConfigured: true,
+          isLoading: false,
+          hasError: false,
+          staminaPercent: 40,
+          isNegative: false,
+          tier: 3,
+          anlas: null,
+        ),
+      ),
+    );
+
+    final context = tester.element(find.byType(LinearProgressIndicator));
+    final theme = Theme.of(context);
+    final indicator = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(
+      indicator.valueColor!.value,
+      ToolsQuotaCard.staminaColor(40, theme.colorScheme),
+    );
+    expect(
+      indicator.valueColor!.value,
+      isNot(theme.colorScheme.error),
+    );
+  });
+
+  testWidgets('red bar below 20 percent', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        const ToolsQuotaCard(
+          tokenConfigured: true,
+          isLoading: false,
+          hasError: false,
+          staminaPercent: 12,
+          isNegative: false,
+          tier: 3,
+          anlas: null,
+        ),
+      ),
+    );
+
+    final context = tester.element(find.byType(LinearProgressIndicator));
+    final theme = Theme.of(context);
+    final indicator = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(indicator.valueColor!.value, theme.colorScheme.error);
   });
 
   testWidgets('missing fields and query failure remain explicit',
@@ -77,7 +139,7 @@ void main() {
     );
 
     expect(find.text('查询失败'), findsOneWidget);
-    expect(find.text('—'), findsNWidgets(3));
+    expect(find.text('—'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 }

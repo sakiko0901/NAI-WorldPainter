@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 typedef GenerationResultAction = FutureOr<void> Function(GenerationTask task);
@@ -30,6 +32,17 @@ class GenerationResultCard extends StatefulWidget {
   /// the stage grows with the available window height and remains capped.
   final double? workspaceHeight;
 
+  /// V5 官方渠道 Effort 等级（High/Medium），为 null 时不显示切换按钮。
+  final GenerationEffort? effort;
+  final ValueChanged<GenerationEffort>? onEffortChanged;
+
+  /// 删除当前工作区显示的图像（由页面给出确认弹窗）。
+  final GenerationResultAction? onDelete;
+
+  /// 官方渠道流式预览帧（JPEG 字节），生成中实时刷新；为 null 显示占位。
+  final Uint8List? streamPreviewBytes;
+  final int? streamPreviewStep;
+
   const GenerationResultCard({
     super.key,
     required this.task,
@@ -43,7 +56,12 @@ class GenerationResultCard extends StatefulWidget {
     this.onInpaint,
     this.onUpscale,
     this.onEnhance,
+    this.onDelete,
     this.workspaceHeight,
+    this.effort,
+    this.onEffortChanged,
+    this.streamPreviewBytes,
+    this.streamPreviewStep,
   });
 
   @override
@@ -78,11 +96,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
   String? _imageIdentity(GenerationTask? task) {
     if (task == null) return null;
     return '${task.taskId}\u0000${task.imagePath ?? ''}\u0000${task.imageUrl ?? ''}';
-  }
-
-  void _resetImageView() {
-    _imageController.value = Matrix4.identity();
-    setState(() => _imageScale = 1);
   }
 
   void _handleInteractionUpdate(ScaleUpdateDetails details) {
@@ -124,7 +137,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           ],
           const SizedBox(height: 8),
           if (current == null)
-            _buildEmptyState(context, theme, workspaceHeight)
+            widget.generating && widget.streamPreviewBytes != null
+                ? _buildStreamPreview(context, theme, workspaceHeight)
+                : _buildEmptyState(context, theme, workspaceHeight)
           else ...[
             _buildImageViewport(context, theme, current, workspaceHeight),
             const SizedBox(height: 4),
@@ -154,17 +169,12 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
       height: 36,
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              '图像工作区',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.1,
-              ),
+          if (widget.effort != null && widget.onEffortChanged != null)
+            _EffortToggle(
+              effort: widget.effort!,
+              onChanged: widget.onEffortChanged!,
             ),
-          ),
+          const Spacer(),
           if (widget.results.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 2),
@@ -185,9 +195,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             ),
           _toolbarButton(
             context: context,
-            tooltip: _imageScale > 1.02 ? '重置缩放' : '适应窗口',
-            onPressed: current == null ? null : _resetImageView,
-            icon: Icons.fit_screen_outlined,
+            tooltip: '删除当前图片',
+            onPressed: current == null || widget.onDelete == null
+                ? null
+                : () => widget.onDelete!(current),
+            icon: Icons.delete_outline,
           ),
         ],
       ),
@@ -304,6 +316,71 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     );
   }
 
+  /// 生成中的流式预览：显示官方渠道返回的中间帧（JPEG）。
+  Widget _buildStreamPreview(
+    BuildContext context,
+    ThemeData theme,
+    double workspaceHeight,
+  ) {
+    final glass = FrostedTheme.of(context);
+    final bytes = widget.streamPreviewBytes!;
+    final step = widget.streamPreviewStep;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(13),
+      child: SizedBox(
+        key: const ValueKey('result-workspace-preview'),
+        height: workspaceHeight,
+        width: double.infinity,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(
+              painter: _WorkspaceGridPainter(
+                background: glass.stage,
+                line: glass.border.withValues(alpha: 0.04),
+              ),
+            ),
+            Center(
+              child: Image.memory(
+                bytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+              ),
+            ),
+            Positioned(
+              left: 10,
+              top: 10,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox.square(
+                      dimension: 10,
+                      child: CircularProgressIndicator(strokeWidth: 1.6),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      step != null ? '流式预览 · 第 $step 步' : '流式预览',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildImageViewport(
     BuildContext context,
     ThemeData theme,
@@ -386,8 +463,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     ThemeData theme,
     GenerationTask current,
   ) {
-    final media = MediaQuery.of(context);
-    final textScale = media.textScaler.scale(14) / 14;
     final metadataStyle = theme.textTheme.labelSmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
       fontFeatures: const [FontFeature.tabularFigures()],
@@ -395,7 +470,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return LayoutBuilder(
       key: const ValueKey('result-workspace-metadata'),
       builder: (context, constraints) {
-        final shouldStack = constraints.maxWidth < 330 || textScale >= 1.45;
         final seedMetadata = Row(
           children: [
             Flexible(
@@ -445,19 +519,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: shouldStack
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [dimensions, seedMetadata],
-                )
-              : Row(
-                  children: [
-                    dimensions,
-                    const SizedBox(width: 12),
-                    Expanded(child: seedMetadata),
-                  ],
-                ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [dimensions, seedMetadata],
+          ),
         );
       },
     );
@@ -668,5 +734,83 @@ class _ResultImage extends StatelessWidget {
       );
     }
     return unavailable();
+  }
+}
+
+/// V5 Effort 等级左右切换控件（High ⇄ Medium），点击或左右滑动切换。
+class _EffortToggle extends StatelessWidget {
+  final GenerationEffort effort;
+  final ValueChanged<GenerationEffort> onChanged;
+
+  const _EffortToggle({required this.effort, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isHigh = effort == GenerationEffort.high;
+    return Tooltip(
+      message: isHigh
+          ? '思考等级：High（完整模型，点击切换 Medium 节约模式）'
+          : '思考等级：Medium（蒸馏版，固定 14 步，点击切换 High）',
+      child: GestureDetector(
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity < -120 && isHigh) {
+            onChanged(GenerationEffort.medium);
+          } else if (velocity > 120 && !isHigh) {
+            onChanged(GenerationEffort.high);
+          }
+        },
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => onChanged(
+            isHigh ? GenerationEffort.medium : GenerationEffort.high,
+          ),
+          child: Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: isHigh
+                  ? colors.primary.withValues(alpha: 0.14)
+                  : colors.tertiary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                width: 1,
+                color: isHigh
+                    ? colors.primary.withValues(alpha: 0.45)
+                    : colors.tertiary.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isHigh ? Icons.psychology : Icons.bolt,
+                  size: 14,
+                  color: isHigh ? colors.primary : colors.tertiary,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  isHigh ? 'High' : 'Medium',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: isHigh ? colors.primary : colors.tertiary,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(
+                  isHigh
+                      ? Icons.arrow_forward_ios
+                      : Icons.arrow_back_ios,
+                  size: 10,
+                  color: colors.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -56,6 +57,21 @@ class SaveImageUseCase {
 
   Future<bool> saveToGallery(String filePath) async {
     final result = await ImageGallerySaverPlus.saveFile(filePath);
+    if (result is Map) {
+      final isSuccess = result['isSuccess'];
+      final success = result['success'];
+      return isSuccess == true || success == true;
+    }
+    return false;
+  }
+
+  /// 将内存中的图片字节直接保存到相册（不落盘到应用目录）。
+  Future<bool> saveBytesToGallery(List<int> bytes) async {
+    final result = await ImageGallerySaverPlus.saveImage(
+      Uint8List.fromList(bytes),
+      quality: 100,
+      name: 'nai_edit_${DateTime.now().millisecondsSinceEpoch ~/ 1000}',
+    );
     if (result is Map) {
       final isSuccess = result['isSuccess'];
       final success = result['success'];
