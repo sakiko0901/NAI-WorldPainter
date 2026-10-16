@@ -122,6 +122,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     final theme = Theme.of(context);
     final current = widget.task;
     final workspaceHeight = _resolvedWorkspaceHeight(context);
+    // 占位卡：任务存在但还没有本地/网络图片（pending/generating），
+    // 有流式帧就实时显示，否则显示生成中占位。
+    final isPlaceholder = current != null &&
+        (current.imagePath == null || !File(current.imagePath!).existsSync()) &&
+        (current.imageUrl == null || current.imageUrl!.trim().isEmpty);
 
     return FrostedSurface(
       radius: 16,
@@ -137,11 +142,26 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           ],
           const SizedBox(height: 8),
           if (current == null)
-            widget.generating && widget.streamPreviewBytes != null
+            _buildEmptyState(context, theme, workspaceHeight)
+          else if (isPlaceholder && widget.generating) ...[
+            // 选中项是生成中的占位卡：显示流式帧/转圈，
+            // 缩略图条保留，用户可随时切回旧图。
+            widget.streamPreviewBytes != null
                 ? _buildStreamPreview(context, theme, workspaceHeight)
-                : _buildEmptyState(context, theme, workspaceHeight)
-          else ...[
-            _buildImageViewport(context, theme, current, workspaceHeight),
+                : _buildEmptyState(context, theme, workspaceHeight,
+                    generating: true),
+            if (widget.results.length > 1) ...[
+              const SizedBox(height: 6),
+              _buildThumbnails(context, theme, current),
+            ],
+          ] else ...[
+            _buildImageViewport(
+              context,
+              theme,
+              current,
+              workspaceHeight,
+              isPlaceholder: isPlaceholder,
+            ),
             const SizedBox(height: 4),
             _buildImageMetadata(context, theme, current),
             if (widget.results.length > 1) ...[
@@ -267,9 +287,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
   Widget _buildEmptyState(
     BuildContext context,
     ThemeData theme,
-    double workspaceHeight,
-  ) {
+    double workspaceHeight, {
+    bool generating = false,
+  }) {
     final glass = FrostedTheme.of(context);
+    final showGenerating = generating || widget.generating;
     return ClipRRect(
       borderRadius: BorderRadius.circular(13),
       child: SizedBox(
@@ -287,18 +309,26 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.auto_awesome_outlined,
-                    size: 34,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+                  if (showGenerating) ...[
+                    const SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                    const SizedBox(height: 12),
+                  ] else
+                    Icon(
+                      Icons.auto_awesome_outlined,
+                      size: 34,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   const SizedBox(height: 12),
                   Text(
-                    widget.generating ? '正在生成' : '图像工作区',
+                    showGenerating ? '正在生成' : '图像工作区',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyLarge,
                   ),
-                  if (widget.onImport != null) ...[
+                  if (!showGenerating && widget.onImport != null) ...[
                     const SizedBox(height: 14),
                     FilledButton.tonalIcon(
                       key: const ValueKey('result-import-button'),
@@ -385,8 +415,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     BuildContext context,
     ThemeData theme,
     GenerationTask current,
-    double workspaceHeight,
-  ) {
+    double workspaceHeight, {
+    bool isPlaceholder = false,
+  }) {
     final glass = FrostedTheme.of(context);
     final gridLine = glass.border.withValues(alpha: 0.04);
     return Semantics(
@@ -423,7 +454,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   ),
                 ),
               ),
-              if (widget.generating)
+              // 仅当选中的还是生成中的占位卡时才提示"正在生成"，
+              // 查看旧图时不打扰。
+              if (widget.generating && isPlaceholder)
                 Positioned(
                   right: 10,
                   top: 10,
@@ -544,12 +577,16 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
         itemBuilder: (context, index) {
           final result = widget.results[index];
           final selected = current.taskId == result.taskId;
+          // 占位（生成中）：无任何图片来源的任务。仅在生成期间显示转圈。
+          final isPending = widget.generating &&
+              result.imagePath == null &&
+              (result.imageUrl == null || result.imageUrl!.trim().isEmpty);
           return Semantics(
             selected: selected,
             button: true,
             label: '查看第 ${index + 1} 张结果',
             child: Tooltip(
-              message: '第 ${index + 1} 张结果',
+              message: isPending ? '第 ${index + 1} 张（生成中）' : '第 ${index + 1} 张结果',
               child: InkWell(
                 onTap: () => widget.onSelect(result),
                 borderRadius: BorderRadius.circular(9),
@@ -568,7 +605,21 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: _ResultImage(task: result, thumbnail: true),
+                    child: isPending
+                        ? Container(
+                            color: glass.stage,
+                            child: Center(
+                              child: SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.8,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          )
+                        : _ResultImage(task: result, thumbnail: true),
                   ),
                 ),
               ),

@@ -109,7 +109,11 @@ void main() {
     await saveStarted.future;
     await Future<void>.delayed(Duration.zero);
     expect(generateCompleted, isFalse);
-    expect(viewModel.sessionResults, isEmpty);
+    // 请求发出后即建占位卡，生成中用户仍可切换查看
+    expect(viewModel.sessionResults, hasLength(1));
+    expect(viewModel.sessionResults.single.status, 'pending');
+    expect(viewModel.selectedResultTaskId,
+        viewModel.sessionResults.single.taskId);
 
     allowSave.complete();
     await generateFuture;

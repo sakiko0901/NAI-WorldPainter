@@ -64,6 +64,10 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   int? streamPreviewStep;
   @override
+  final Map<String, Uint8List> streamPreviews = {};
+  @override
+  final Map<String, int> streamPreviewSteps = {};
+  @override
   bool get isMediumEffort => false;
   @override
   GenerationEffort effort = GenerationEffort.high;

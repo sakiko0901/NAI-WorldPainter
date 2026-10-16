@@ -63,10 +63,15 @@ enum GenerationEffort {
 }
 
 class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
-  /// 流式预览：当前生成任务的实时预览帧（JPEG 字节）。
-  /// 仅官方渠道 V4/V4.5/V5 生成时有值；任务结束/失败清空。
-  Uint8List? streamPreviewBytes;
-  int? streamPreviewStep;
+  /// 流式预览：taskId → 最新预览帧（JPEG 字节）。
+  /// 每个生成任务在结果区有自己的占位卡，帧只在对应占位卡上显示。
+  final Map<String, Uint8List> streamPreviews = {};
+  final Map<String, int> streamPreviewSteps = {};
+  /// 旧字段保留供页面兼容（当前选中占位的帧）。
+  Uint8List? get streamPreviewBytes =>
+      _previewTaskId == null ? null : streamPreviews[_previewTaskId];
+  int? get streamPreviewStep =>
+      _previewTaskId == null ? null : streamPreviewSteps[_previewTaskId];
   StreamSubscription? _previewSub;
   String? _previewTaskId;
   final GenerateImageUseCase _generateImage;
@@ -377,6 +382,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 用户是否在缩略图条上手动选过某张。手动选过后，新到达的结果不再自动跟随。
   bool _userPickedResult = false;
 
+  /// 当前是否正查看结果区最后一张（含生成中的占位卡）。
+  /// 查看最新时新结果自动跟随；用户翻看旧图时不打断。
+  bool get isViewingLatestResult =>
+      sessionResults.isEmpty ||
+      selectedResultTaskId == null ||
+      selectedResultTaskId == sessionResults.last.taskId;
+
+  void _followLatestResult(String taskId) {
+    if (!_userPickedResult || isViewingLatestResult) {
+      selectedResultTaskId = taskId;
+    }
+  }
+
   /// generate() 重入守卫：从按下"生成"到批次全部完成期间一直为 true，
   /// 比 queueState.isProcessing 更早置位、更晚置位，杜绝任何并发批次。
   bool _generateInFlight = false;
@@ -487,21 +505,21 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _taskSub = _queue.taskStream.listen(_onQueueTask);
     _previewSub = _queue.previewStream.listen((frame) {
       final (taskId, bytes, step) = frame;
-      if (_previewTaskId != taskId && _previewTaskId != null) return;
+      // 每个任务持有自己的预览帧，多张并行/串行生成互不覆盖
+      streamPreviews[taskId] = bytes;
+      if (step != null) streamPreviewSteps[taskId] = step;
       _previewTaskId = taskId;
-      streamPreviewBytes = bytes;
-      streamPreviewStep = step;
       notifyListeners();
     });
   }
 
   Future<void> _onQueueTask(GenerationTask task) async {
     if (task.isInternal || !_isFinalTask(task)) return;
-    // 任务终态：清空流式预览
-    if (_previewTaskId == null || _previewTaskId == task.taskId) {
+    // 任务终态：清掉该任务的流式帧
+    streamPreviews.remove(task.taskId);
+    streamPreviewSteps.remove(task.taskId);
+    if (_previewTaskId == task.taskId) {
       _previewTaskId = null;
-      streamPreviewBytes = null;
-      streamPreviewStep = null;
     }
     await _applyCompletedTask(task);
   }
@@ -526,13 +544,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           }
           _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
-          if (!sessionResults.any((result) => result.taskId == task.taskId)) {
+          final existingIndex =
+              sessionResults.indexWhere((result) => result.taskId == task.taskId);
+          if (existingIndex >= 0) {
+            // 占位卡升级为完成结果（原位替换，不打乱顺序）
+            final updated = [...sessionResults];
+            updated[existingIndex] = completed;
+            sessionResults = updated;
+          } else {
             sessionResults = [...sessionResults, completed];
           }
-          // 自动跟随到最新结果，除非用户已手动锁定某张
-          if (!_userPickedResult) {
-            selectedResultTaskId = completed.taskId;
-          }
+          // 自动跟随到最新结果，除非用户已翻回旧图
+          _followLatestResult(completed.taskId);
           errorMessage = null;
         } else {
           errorMessage = task.errorMessage;
@@ -1832,10 +1855,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     errorMessage = null;
-    // 重置批次结果区
-    sessionResults = [];
-    selectedResultTaskId = null;
-    _userPickedResult = false;
+    // 保留之前的结果，新批次追加占位卡（用户仍可回看旧图）
     final count = batchCount.clamp(1, AppConstants.maxBatchCount);
     _batchRemaining = count;
     notifyListeners();
@@ -1860,6 +1880,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           await BackgroundKeepAliveService.instance
               .updateNotification('批量生成 ${i + 1}/$count');
         }
+        // 发请求前先在结果区建占位卡：流式帧显示在对应占位上。
+        // 用户正在翻看旧图时不打断。
+        final placeholder = taskI.copyWith(status: 'pending');
+        if (!sessionResults.any((item) => item.taskId == taskI.taskId)) {
+          sessionResults = [...sessionResults, placeholder];
+        }
+        _followLatestResult(taskI.taskId);
+        notifyListeners();
         // 先订阅再 enqueue，避免任务完成事件早于订阅丢失。
         // 主流程直接接收最终任务，不依赖长期监听器的调度顺序。
         final waitFuture = _awaitTaskComplete(taskI.taskId);
@@ -1891,11 +1919,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
 
-    sessionResults = [];
-    selectedResultTaskId = null;
+    // 保留之前的结果，分块重绘完成后追加新图
     _userPickedResult = false;
-    _cancelTiled = false;
-    errorMessage = null;
+    _cancelTiled = false;    errorMessage = null;
     await BackgroundKeepAliveService.instance.acquire(
       notificationText: '准备分块重绘…',
     );

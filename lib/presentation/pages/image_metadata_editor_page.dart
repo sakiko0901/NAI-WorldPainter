@@ -234,6 +234,8 @@ class _ImageMetadataEditorPageState extends State<ImageMetadataEditorPage> {
 
   // ── stealth LSB 提取（列优先、字节 MSB 先行）──
 
+  static const String _stealthMagic = 'stealth_pngcomp';
+
   static Map<String, dynamic>? _extractStealth(Uint8List bytes) {
     final image = img.decodePng(bytes);
     if (image == null) return null;
@@ -241,10 +243,10 @@ class _ImageMetadataEditorPageState extends State<ImageMetadataEditorPage> {
       // 不透明 PNG（无 alpha 通道）无法携带隐写层
       return null;
     }
-    final magic = _readStealthBytes(image, 16);
+    final magic = _readStealthBytes(image, _stealthMagic.length);
     if (magic == null) return null;
     final magicStr = utf8.decode(magic, allowMalformed: true);
-    if (magicStr != 'stealth_pngcomp') return null;
+    if (magicStr != _stealthMagic) return null;
     final lenBytes = _readStealthBytes(image, 4);
     if (lenBytes == null) return null;
     final bitLen = _be32(lenBytes, 0);
@@ -364,13 +366,14 @@ class _ImageMetadataEditorPageState extends State<ImageMetadataEditorPage> {
     return _rewriteAll(bytes, cloaking);
   }
 
-  /// 重写 text chunks + 重新编码 PNG（重写 stealth 隐写层）。
+  /// 重写元数据：解码 PNG → RGBA → 注入 stealth 隐写层 → 重新编码。
+  /// image 包编码出的 PNG 不含任何 tEXt/iTXt（文本块即被清除），
+  /// 隐写层写入新数据，与官方读取工具（novelai-image-metadata 等）兼容。
   static Uint8List _rewriteAll(
     Uint8List bytes,
     Map<String, String> updates,
   ) {
-    final withoutText = _stripTextChunks(bytes, updates);
-    final image = img.decodePng(withoutText);
+    final image = img.decodePng(bytes);
     if (image == null) {
       throw Exception('无法解码 PNG 图片');
     }
@@ -380,25 +383,13 @@ class _ImageMetadataEditorPageState extends State<ImageMetadataEditorPage> {
     return Uint8List.fromList(encoded);
   }
 
-  /// 移除全部 tEXt/iTXt，返回纯图像 PNG。
-  static Uint8List _stripTextChunks(
-    Uint8List bytes,
-    Map<String, String> updates,
-  ) {
-    // 先解码图像本体，再重新编码，保证 chunk 干净
-    final image = img.decodePng(bytes);
-    if (image == null) throw Exception('无法解码 PNG 图片');
-    final rgba = image.convert(numChannels: 4);
-    _injectStealth(rgba, updates);
-    return Uint8List.fromList(img.encodePng(rgba));
-  }
-
-  /// stealth LSB 注入：magic + 32位 bit 长度 + gzip JSON，写入 alpha 最低位。
+  /// stealth LSB 注入：magic(15字节) + 32位 bit 长度 + gzip JSON，
+  /// 按列优先、MSB-first 写入 alpha 最低位（与官方 LSBInjector 一致）。
   static void _injectStealth(img.Image rgba, Map<String, String> data) {
     final jsonStr = jsonEncode(data);
     final compressed = Uint8List.fromList(gzip.encode(utf8.encode(jsonStr)));
     final payload = BytesBuilder()
-      ..add(utf8.encode('stealth_pngcomp'))
+      ..add(utf8.encode(_stealthMagic))
       ..add(_be32Bytes(compressed.length * 8))
       ..add(compressed);
     final bytes = payload.toBytes();

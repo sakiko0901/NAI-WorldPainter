@@ -1701,6 +1701,11 @@ class _GeneratePageState extends State<GeneratePage> {
     final task = _vm.selectedResult ?? _vm.lastCompletedTask;
     final hasLocalImage =
         task?.imagePath != null && File(task!.imagePath!).existsSync();
+    // 流式帧只在对应任务的占位卡上显示
+    final taskStreamBytes =
+        task == null ? null : _vm.streamPreviews[task.taskId];
+    final taskStreamStep =
+        task == null ? null : _vm.streamPreviewSteps[task.taskId];
     return GenerationResultCard(
       key: _resultSectionKey,
       workspaceHeight: workspaceHeight,
@@ -1708,8 +1713,8 @@ class _GeneratePageState extends State<GeneratePage> {
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
       error: _vm.errorMessage,
-      streamPreviewBytes: _vm.streamPreviewBytes,
-      streamPreviewStep: _vm.streamPreviewStep,
+      streamPreviewBytes: taskStreamBytes,
+      streamPreviewStep: taskStreamStep,
       effort: _vm.supportsEffortToggle ? _vm.effort : null,
       onEffortChanged: _vm.supportsEffortToggle
           ? (value) => _vm.updateEffort(value)
