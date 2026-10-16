@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -52,7 +53,27 @@ class ImageModelOption {
   });
 }
 
+/// V5 思考（Effort）等级。官方 API 通过切换 model 字段实现。
+enum GenerationEffort {
+  /// nai-diffusion-5-full（默认）
+  high,
+
+  /// nai-diffusion-5-full-medium 蒸馏版，固定 14 steps
+  medium,
+}
+
 class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
+  /// 流式预览：taskId → 最新预览帧（JPEG 字节）。
+  /// 每个生成任务在结果区有自己的占位卡，帧只在对应占位卡上显示。
+  final Map<String, Uint8List> streamPreviews = {};
+  final Map<String, int> streamPreviewSteps = {};
+  /// 旧字段保留供页面兼容（当前选中占位的帧）。
+  Uint8List? get streamPreviewBytes =>
+      _previewTaskId == null ? null : streamPreviews[_previewTaskId];
+  int? get streamPreviewStep =>
+      _previewTaskId == null ? null : streamPreviewSteps[_previewTaskId];
+  StreamSubscription? _previewSub;
+  String? _previewTaskId;
   final GenerateImageUseCase _generateImage;
   final ManageSettingsUseCase _manageSettings;
   final SaveImageUseCase _saveImage;
@@ -86,6 +107,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String negativePrompt = '';
   String inpaintPrompt = '';
   String inpaintNegativePrompt = '';
+
+  /// V5 官方渠道思考等级：High = nai-diffusion-5-full，
+  /// Medium = nai-diffusion-5-full-medium（固定 14 steps、k_euler_ancestral、无 rescale）。
+  GenerationEffort effort = GenerationEffort.high;
 
   /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
   /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
@@ -143,6 +168,35 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final normalized = model.trim().toLowerCase();
     return normalized.contains('nai-diffusion-5') || normalized.contains('v5');
+  }
+
+  /// 官方渠道 V5 Full 模型才支持 Effort 切换（High/Medium）。
+  bool get supportsEffortToggle {
+    if (!isOfficialEndpoint) return false;
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final normalized = model.trim().toLowerCase();
+    return normalized == 'nai-diffusion-5-full' ||
+        normalized == 'nai-diffusion-5-full-inpainting';
+  }
+
+  /// Medium 等级生效中（决定 steps/sampler/rescale 强制约束）。
+  bool get isMediumEffort =>
+      supportsEffortToggle && effort == GenerationEffort.medium;
+
+  Future<void> updateEffort(GenerationEffort value) async {
+    if (effort == value) return;
+    effort = value;
+    if (isMediumEffort) {
+      // Medium 强制约束：14 steps、k_euler_ancestral、无 rescale
+      steps = 14;
+      await _manageSettings.setStepsDraft(steps);
+      selectedSampler = 'k_euler_ancestral';
+      await _manageSettings.setSelectedSamplerDraft(selectedSampler);
+      cfgRescale = 0.0;
+      await _manageSettings.setCfgRescaleDraft(cfgRescale);
+    }
+    notifyListeners();
   }
 
   bool get supportsCharacterPrompts => true;
@@ -328,6 +382,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 用户是否在缩略图条上手动选过某张。手动选过后，新到达的结果不再自动跟随。
   bool _userPickedResult = false;
 
+  /// 当前是否正查看结果区最后一张（含生成中的占位卡）。
+  /// 查看最新时新结果自动跟随；用户翻看旧图时不打断。
+  bool get isViewingLatestResult =>
+      sessionResults.isEmpty ||
+      selectedResultTaskId == null ||
+      selectedResultTaskId == sessionResults.last.taskId;
+
+  void _followLatestResult(String taskId) {
+    if (!_userPickedResult || isViewingLatestResult) {
+      selectedResultTaskId = taskId;
+    }
+  }
+
   /// generate() 重入守卫：从按下"生成"到批次全部完成期间一直为 true，
   /// 比 queueState.isProcessing 更早置位、更晚置位，杜绝任何并发批次。
   bool _generateInFlight = false;
@@ -436,10 +503,24 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     });
 
     _taskSub = _queue.taskStream.listen(_onQueueTask);
+    _previewSub = _queue.previewStream.listen((frame) {
+      final (taskId, bytes, step) = frame;
+      // 每个任务持有自己的预览帧，多张并行/串行生成互不覆盖
+      streamPreviews[taskId] = bytes;
+      if (step != null) streamPreviewSteps[taskId] = step;
+      _previewTaskId = taskId;
+      notifyListeners();
+    });
   }
 
   Future<void> _onQueueTask(GenerationTask task) async {
     if (task.isInternal || !_isFinalTask(task)) return;
+    // 任务终态：清掉该任务的流式帧
+    streamPreviews.remove(task.taskId);
+    streamPreviewSteps.remove(task.taskId);
+    if (_previewTaskId == task.taskId) {
+      _previewTaskId = null;
+    }
     await _applyCompletedTask(task);
   }
 
@@ -463,13 +544,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           }
           _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
-          if (!sessionResults.any((result) => result.taskId == task.taskId)) {
+          final existingIndex =
+              sessionResults.indexWhere((result) => result.taskId == task.taskId);
+          if (existingIndex >= 0) {
+            // 占位卡升级为完成结果（原位替换，不打乱顺序）
+            final updated = [...sessionResults];
+            updated[existingIndex] = completed;
+            sessionResults = updated;
+          } else {
             sessionResults = [...sessionResults, completed];
           }
-          // 自动跟随到最新结果，除非用户已手动锁定某张
-          if (!_userPickedResult) {
-            selectedResultTaskId = completed.taskId;
-          }
+          // 自动跟随到最新结果，除非用户已翻回旧图
+          _followLatestResult(completed.taskId);
           errorMessage = null;
         } else {
           errorMessage = task.errorMessage;
@@ -1633,8 +1719,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         await _manageSettings.setSelectedModelDraft(selectedModel);
       }
     }
-    final actualModelId =
-        selectedOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    final actualModelId = _applyEffortToModel(
+      selectedOption?.actualModel ?? _resolveActualModelId(selectedModel),
+    );
     final provider = selectedOption?.provider ?? currentProvider;
     final rolePreciseReferences =
         generationMode == GenerationMode.textToImage &&
@@ -1684,9 +1771,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
                 AppConstants.novelAiImageGenerationsProtocol
         ? ApiConstants.ikunSupportedNoiseSchedules
         : ApiConstants.supportedNoiseSchedules;
-    final taskSampler = samplerOptions.contains(selectedSampler)
-        ? selectedSampler
-        : ApiConstants.defaultSampler;
+    final taskSampler = isMediumEffort
+        ? 'k_euler_ancestral'
+        : samplerOptions.contains(selectedSampler)
+            ? selectedSampler
+            : ApiConstants.defaultSampler;
     final taskNoiseSchedule =
         noiseScheduleOptions.contains(selectedNoiseSchedule)
             ? selectedNoiseSchedule
@@ -1707,14 +1796,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       height: res.$2,
       size: selectedResolution,
       scale: scale,
-      cfgRescale: cfgRescale,
+      cfgRescale: isMediumEffort ? 0.0 : cfgRescale,
       sampler: taskSampler,
       noiseSchedule: taskNoiseSchedule,
-      steps: isV5Model
-          ? steps.clamp(1, 28)
-          : isIkunEndpoint && isStepsLocked
-              ? ApiConstants.defaultSteps
-              : steps.clamp(1, 50),
+      steps: isMediumEffort
+          ? 14
+          : isV5Model
+              ? steps.clamp(1, 28)
+              : isIkunEndpoint && isStepsLocked
+                  ? ApiConstants.defaultSteps
+                  : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
         (character) => character.centerX != null && character.centerY != null,
       ),
@@ -1764,7 +1855,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     errorMessage = null;
-    // 重置批次结果区
+    // 新批次开始：清掉上批结果，本批图片到位前先建占位卡
     sessionResults = [];
     selectedResultTaskId = null;
     _userPickedResult = false;
@@ -1792,6 +1883,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           await BackgroundKeepAliveService.instance
               .updateNotification('批量生成 ${i + 1}/$count');
         }
+        // 发请求前先在结果区建占位卡：流式帧显示在对应占位上。
+        // 用户正在翻看旧图时不打断。
+        final placeholder = taskI.copyWith(status: 'pending');
+        if (!sessionResults.any((item) => item.taskId == taskI.taskId)) {
+          sessionResults = [...sessionResults, placeholder];
+        }
+        _followLatestResult(taskI.taskId);
+        notifyListeners();
         // 先订阅再 enqueue，避免任务完成事件早于订阅丢失。
         // 主流程直接接收最终任务，不依赖长期监听器的调度顺序。
         final waitFuture = _awaitTaskComplete(taskI.taskId);
@@ -1823,11 +1922,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
 
+    // 新任务开始：清掉上批结果，完成后展示新图
     sessionResults = [];
     selectedResultTaskId = null;
     _userPickedResult = false;
-    _cancelTiled = false;
-    errorMessage = null;
+    _cancelTiled = false;    errorMessage = null;
     await BackgroundKeepAliveService.instance.acquire(
       notificationText: '准备分块重绘…',
     );
@@ -1890,6 +1989,22 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     errorMessage = null;
     notifyListeners();
     return true;
+  }
+
+  /// 从当前结果区移除一张图片（仅工作区显示，不删除历史记录）。
+  void removeSessionResult(String taskId) {
+    if (isGenerating) return;
+    sessionResults =
+        sessionResults.where((item) => item.taskId != taskId).toList();
+    if (selectedResultTaskId == taskId) {
+      selectedResultTaskId = null;
+      _userPickedResult = false;
+    }
+    if (lastCompletedTask?.taskId == taskId) {
+      lastCompletedTask = sessionResults.isEmpty ? null : sessionResults.last;
+      selectedResultTaskId = lastCompletedTask?.taskId;
+    }
+    notifyListeners();
   }
 
   // ── 官方超分 ──
@@ -2472,6 +2587,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         normalized.contains('nai-diffusion-4.');
   }
 
+  /// Effort=Medium 时把官方 V5 Full 模型切换为对应 medium 蒸馏版
+  /// （inpainting 模型映射到 nai-diffusion-5-full-medium-inpainting）。
+  String _applyEffortToModel(String model) {
+    if (!isMediumEffort) return model;
+    final normalized = model.trim();
+    if (normalized == 'nai-diffusion-5-full-inpainting') {
+      return 'nai-diffusion-5-full-medium-inpainting';
+    }
+    if (normalized == 'nai-diffusion-5-full') {
+      return 'nai-diffusion-5-full-medium';
+    }
+    return model;
+  }
+
   String _resolveActualModelId(String selectedModelId) {
     String stripPrefix(String prefix) {
       var rest = selectedModelId.substring(prefix.length);
@@ -2515,6 +2644,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   void dispose() {
     _queueSub?.cancel();
     _taskSub?.cancel();
+    _previewSub?.cancel();
     super.dispose();
   }
 }

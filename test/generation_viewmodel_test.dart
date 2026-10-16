@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -108,7 +109,11 @@ void main() {
     await saveStarted.future;
     await Future<void>.delayed(Duration.zero);
     expect(generateCompleted, isFalse);
-    expect(viewModel.sessionResults, isEmpty);
+    // 新批次开始即清掉上批结果，占位卡入列
+    expect(viewModel.sessionResults, hasLength(1));
+    expect(viewModel.sessionResults.single.status, 'pending');
+    expect(viewModel.selectedResultTaskId,
+        viewModel.sessionResults.single.taskId);
 
     allowSave.complete();
     await generateFuture;
@@ -1560,6 +1565,10 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
       );
 
   @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -1578,6 +1587,10 @@ class _CapturingGenerationRepository implements GenerationRepository {
       completedAt: DateTime.now(),
     );
   }
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1603,6 +1616,10 @@ class _BadGatewayGenerationRepository implements GenerationRepository {
         message: '服务器错误 (502)：上游请求失败: All connection attempts failed',
         statusCode: 502,
       );
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

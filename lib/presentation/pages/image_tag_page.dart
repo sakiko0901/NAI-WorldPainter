@@ -9,6 +9,7 @@ import 'package:nai_huishi/domain/entities/image_tag_result.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/image_tag_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
+import 'package:nai_huishi/presentation/pages/image_metadata_editor_page.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
 /// 图片解析页面：导入图片 → 选择分析方式（NAI 元数据 / WD-Tagger）→ 选择标签 → 复制 / 导入文生图
@@ -148,7 +149,20 @@ class _ImageTagPageState extends State<ImageTagPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      appBar: AppBar(title: const Text('图片解析')),
+      appBar: AppBar(
+        title: const Text('图片解析'),
+        actions: [
+          IconButton(
+            tooltip: '修改图片标签',
+            icon: const Icon(CupertinoIcons.pencil_circle, size: 22),
+            onPressed: () => Navigator.of(context).push(
+              CupertinoPageRoute(
+                builder: (_) => const ImageMetadataEditorPage(),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),

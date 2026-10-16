@@ -175,21 +175,23 @@ class NaiMetadataParser {
     }
 
     final packed = _packBits(alphaLsb);
-    if (packed.length < 20) return null;
+    if (packed.length < 19) return null;
 
-    final magicBytes = packed.sublist(0, 16);
+    // magic 为 15 字节（与官方 novelai-image-metadata 一致）
+    final magicBytes = packed.sublist(0, _stealthMagic.length);
     final magicStr = utf8.decode(magicBytes, allowMalformed: true);
     if (magicStr != _stealthMagic) return null;
 
-    final lenBytes = packed.sublist(16, 20);
+    final lenBytes = packed.sublist(_stealthMagic.length, _stealthMagic.length + 4);
     final jsonBitLen = (lenBytes[0] << 24) |
         (lenBytes[1] << 16) |
         (lenBytes[2] << 8) |
         lenBytes[3];
     final jsonByteLen = jsonBitLen ~/ 8;
-    if (jsonByteLen <= 0 || 20 + jsonByteLen > packed.length) return null;
+    final dataOffset = _stealthMagic.length + 4;
+    if (jsonByteLen <= 0 || dataOffset + jsonByteLen > packed.length) return null;
 
-    final gzipped = packed.sublist(20, 20 + jsonByteLen);
+    final gzipped = packed.sublist(dataOffset, dataOffset + jsonByteLen);
     Uint8List? decompressed;
     try {
       decompressed = Uint8List.fromList(gzip.decode(gzipped));

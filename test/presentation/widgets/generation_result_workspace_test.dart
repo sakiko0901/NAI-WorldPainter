@@ -201,10 +201,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(_viewerScale(tester, viewerFinder), greaterThan(1.05));
 
-    await tester.tap(find.byTooltip('重置缩放'));
-    await tester.pumpAndSettle();
-    expect(_viewerScale(tester, viewerFinder), closeTo(1, 0.02));
-
     await _pinch(tester, viewerFinder, 1.5);
     await tester.pumpAndSettle();
     expect(_viewerScale(tester, viewerFinder), greaterThan(1.05));

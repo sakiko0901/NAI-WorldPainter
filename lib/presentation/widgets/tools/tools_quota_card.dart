@@ -27,6 +27,17 @@ class ToolsQuotaCard extends StatelessWidget {
     this.onRefresh,
   });
 
+  /// 体力条颜色（按 10000 点满额基准换算）：
+  /// ≥ 65% 绿色，20%~64% 黄色，<20% 红色。
+  static Color staminaColor(double percent, ColorScheme colors) {
+    if (percent >= 65) return const Color(0xFF34C759);
+    if (percent >= 20) return const Color(0xFFFFCC00);
+    return colors.error;
+  }
+
+  /// 估算剩余张数：约 17 张 / 1% 体力（Normal 尺寸基准）。
+  static int estimateImages(double percent) => (percent * 17).round();
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -36,6 +47,9 @@ class ToolsQuotaCard extends StatelessWidget {
     final staminaValue = percent == null
         ? '—'
         : '${percent.toStringAsFixed(percent == percent.roundToDouble() ? 0 : 1)}%';
+    final staminaBarColor =
+        percent == null ? colors.primary : staminaColor(percent, colors);
+    final estimate = percent == null ? null : estimateImages(percent);
     final String? accountStatus;
     if (isLoading) {
       accountStatus = '正在读取';
@@ -65,7 +79,7 @@ class ToolsQuotaCard extends StatelessWidget {
                   size: 16, color: colors.primary),
               const SizedBox(width: 7),
               Text(
-                'NovelAI 用量',
+                'Opus 体力',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -98,28 +112,38 @@ class ToolsQuotaCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _QuotaMetric(
-                  label: tier == 3 ? 'Opus V5 体力' : 'V5 体力',
-                  value: staminaValue,
-                  valueColor: colors.primary,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _QuotaMetric(
-                  label: 'Anlas',
-                  value: tokenConfigured && anlas != null ? '$anlas' : '—',
-                  valueColor: colors.onSurface,
-                  alignEnd: true,
-                ),
-              ),
-            ],
+          _QuotaMetric(
+            label: tier == 3 ? 'Opus V5 体力' : 'V5 体力',
+            value: staminaValue,
+            valueColor:
+                percent == null ? colors.onSurface : staminaBarColor,
           ),
           if (hasStamina) ...[
             const SizedBox(height: 10),
+            // Anlas 显示在体力条右上角（与体力百分比同字号）
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  'Anlas ',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                Text(
+                  tokenConfigured && anlas != null ? '$anlas' : '—',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
@@ -127,7 +151,7 @@ class ToolsQuotaCard extends StatelessWidget {
                 minHeight: 5,
                 backgroundColor: colors.onSurface.withValues(alpha: 0.08),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  isNegative ? colors.error : colors.primary,
+                  isNegative ? colors.error : staminaBarColor,
                 ),
               ),
             ),
@@ -147,24 +171,12 @@ class ToolsQuotaCard extends StatelessWidget {
                     ),
               ),
               Tooltip(
-                message: '生成张数取决于当前模型、画幅和步数',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '预计剩余 ',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                          ),
-                    ),
-                    Text(
-                      '—',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colors.onSurface,
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                  ],
+                message: '估算基准：Normal 画幅约 17 张 / 1% 体力，实际张数取决于模型、画幅和步数',
+                child: Text(
+                  estimate == null ? '预计剩余 —' : '预计剩余 约$estimate张',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
                 ),
               ),
             ],
@@ -179,20 +191,17 @@ class _QuotaMetric extends StatelessWidget {
   final String label;
   final String value;
   final Color valueColor;
-  final bool alignEnd;
 
   const _QuotaMetric({
     required this.label,
     required this.value,
     required this.valueColor,
-    this.alignEnd = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment:
-          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,

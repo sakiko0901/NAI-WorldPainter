@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 typedef GenerationResultAction = FutureOr<void> Function(GenerationTask task);
@@ -30,6 +32,17 @@ class GenerationResultCard extends StatefulWidget {
   /// the stage grows with the available window height and remains capped.
   final double? workspaceHeight;
 
+  /// V5 官方渠道 Effort 等级（High/Medium），为 null 时不显示切换按钮。
+  final GenerationEffort? effort;
+  final ValueChanged<GenerationEffort>? onEffortChanged;
+
+  /// 删除当前工作区显示的图像（由页面给出确认弹窗）。
+  final GenerationResultAction? onDelete;
+
+  /// 官方渠道流式预览帧（JPEG 字节），生成中实时刷新；为 null 显示占位。
+  final Uint8List? streamPreviewBytes;
+  final int? streamPreviewStep;
+
   const GenerationResultCard({
     super.key,
     required this.task,
@@ -43,7 +56,12 @@ class GenerationResultCard extends StatefulWidget {
     this.onInpaint,
     this.onUpscale,
     this.onEnhance,
+    this.onDelete,
     this.workspaceHeight,
+    this.effort,
+    this.onEffortChanged,
+    this.streamPreviewBytes,
+    this.streamPreviewStep,
   });
 
   @override
@@ -80,11 +98,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return '${task.taskId}\u0000${task.imagePath ?? ''}\u0000${task.imageUrl ?? ''}';
   }
 
-  void _resetImageView() {
-    _imageController.value = Matrix4.identity();
-    setState(() => _imageScale = 1);
-  }
-
   void _handleInteractionUpdate(ScaleUpdateDetails details) {
     final nextScale = _imageController.value.getMaxScaleOnAxis();
     if ((nextScale - _imageScale).abs() < 0.02) return;
@@ -109,6 +122,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     final theme = Theme.of(context);
     final current = widget.task;
     final workspaceHeight = _resolvedWorkspaceHeight(context);
+    // 占位卡：任务存在但还没有本地/网络图片（pending/generating），
+    // 有流式帧就实时显示，否则显示生成中占位。
+    final isPlaceholder = current != null &&
+        (current.imagePath == null || !File(current.imagePath!).existsSync()) &&
+        (current.imageUrl == null || current.imageUrl!.trim().isEmpty);
 
     return FrostedSurface(
       radius: 16,
@@ -125,8 +143,25 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           const SizedBox(height: 8),
           if (current == null)
             _buildEmptyState(context, theme, workspaceHeight)
-          else ...[
-            _buildImageViewport(context, theme, current, workspaceHeight),
+          else if (isPlaceholder && widget.generating) ...[
+            // 选中项是生成中的占位卡：显示流式帧/转圈，
+            // 缩略图条保留，用户可随时切回旧图。
+            widget.streamPreviewBytes != null
+                ? _buildStreamPreview(context, theme, workspaceHeight)
+                : _buildEmptyState(context, theme, workspaceHeight,
+                    generating: true),
+            if (widget.results.length > 1) ...[
+              const SizedBox(height: 6),
+              _buildThumbnails(context, theme, current),
+            ],
+          ] else ...[
+            _buildImageViewport(
+              context,
+              theme,
+              current,
+              workspaceHeight,
+              isPlaceholder: isPlaceholder,
+            ),
             const SizedBox(height: 4),
             _buildImageMetadata(context, theme, current),
             if (widget.results.length > 1) ...[
@@ -154,17 +189,12 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
       height: 36,
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              '图像工作区',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.1,
-              ),
+          if (widget.effort != null && widget.onEffortChanged != null)
+            _EffortToggle(
+              effort: widget.effort!,
+              onChanged: widget.onEffortChanged!,
             ),
-          ),
+          const Spacer(),
           if (widget.results.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 2),
@@ -185,9 +215,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             ),
           _toolbarButton(
             context: context,
-            tooltip: _imageScale > 1.02 ? '重置缩放' : '适应窗口',
-            onPressed: current == null ? null : _resetImageView,
-            icon: Icons.fit_screen_outlined,
+            tooltip: '删除当前图片',
+            onPressed: current == null || widget.onDelete == null
+                ? null
+                : () => widget.onDelete!(current),
+            icon: Icons.delete_outline,
           ),
         ],
       ),
@@ -255,9 +287,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
   Widget _buildEmptyState(
     BuildContext context,
     ThemeData theme,
-    double workspaceHeight,
-  ) {
+    double workspaceHeight, {
+    bool generating = false,
+  }) {
     final glass = FrostedTheme.of(context);
+    final showGenerating = generating || widget.generating;
     return ClipRRect(
       borderRadius: BorderRadius.circular(13),
       child: SizedBox(
@@ -275,18 +309,26 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.auto_awesome_outlined,
-                    size: 34,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+                  if (showGenerating) ...[
+                    const SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                    const SizedBox(height: 12),
+                  ] else
+                    Icon(
+                      Icons.auto_awesome_outlined,
+                      size: 34,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   const SizedBox(height: 12),
                   Text(
-                    widget.generating ? '正在生成' : '图像工作区',
+                    showGenerating ? '正在生成' : '图像工作区',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyLarge,
                   ),
-                  if (widget.onImport != null) ...[
+                  if (!showGenerating && widget.onImport != null) ...[
                     const SizedBox(height: 14),
                     FilledButton.tonalIcon(
                       key: const ValueKey('result-import-button'),
@@ -304,12 +346,78 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     );
   }
 
+  /// 生成中的流式预览：显示官方渠道返回的中间帧（JPEG）。
+  Widget _buildStreamPreview(
+    BuildContext context,
+    ThemeData theme,
+    double workspaceHeight,
+  ) {
+    final glass = FrostedTheme.of(context);
+    final bytes = widget.streamPreviewBytes!;
+    final step = widget.streamPreviewStep;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(13),
+      child: SizedBox(
+        key: const ValueKey('result-workspace-preview'),
+        height: workspaceHeight,
+        width: double.infinity,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(
+              painter: _WorkspaceGridPainter(
+                background: glass.stage,
+                line: glass.border.withValues(alpha: 0.04),
+              ),
+            ),
+            Center(
+              child: Image.memory(
+                bytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+              ),
+            ),
+            Positioned(
+              left: 10,
+              top: 10,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox.square(
+                      dimension: 10,
+                      child: CircularProgressIndicator(strokeWidth: 1.6),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      step != null ? '流式预览 · 第 $step 步' : '流式预览',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildImageViewport(
     BuildContext context,
     ThemeData theme,
     GenerationTask current,
-    double workspaceHeight,
-  ) {
+    double workspaceHeight, {
+    bool isPlaceholder = false,
+  }) {
     final glass = FrostedTheme.of(context);
     final gridLine = glass.border.withValues(alpha: 0.04);
     return Semantics(
@@ -346,7 +454,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   ),
                 ),
               ),
-              if (widget.generating)
+              // 仅当选中的还是生成中的占位卡时才提示"正在生成"，
+              // 查看旧图时不打扰。
+              if (widget.generating && isPlaceholder)
                 Positioned(
                   right: 10,
                   top: 10,
@@ -386,8 +496,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     ThemeData theme,
     GenerationTask current,
   ) {
-    final media = MediaQuery.of(context);
-    final textScale = media.textScaler.scale(14) / 14;
     final metadataStyle = theme.textTheme.labelSmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
       fontFeatures: const [FontFeature.tabularFigures()],
@@ -395,7 +503,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return LayoutBuilder(
       key: const ValueKey('result-workspace-metadata'),
       builder: (context, constraints) {
-        final shouldStack = constraints.maxWidth < 330 || textScale >= 1.45;
         final seedMetadata = Row(
           children: [
             Flexible(
@@ -445,19 +552,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: shouldStack
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [dimensions, seedMetadata],
-                )
-              : Row(
-                  children: [
-                    dimensions,
-                    const SizedBox(width: 12),
-                    Expanded(child: seedMetadata),
-                  ],
-                ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [dimensions, seedMetadata],
+          ),
         );
       },
     );
@@ -478,12 +577,16 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
         itemBuilder: (context, index) {
           final result = widget.results[index];
           final selected = current.taskId == result.taskId;
+          // 占位（生成中）：无任何图片来源的任务。仅在生成期间显示转圈。
+          final isPending = widget.generating &&
+              result.imagePath == null &&
+              (result.imageUrl == null || result.imageUrl!.trim().isEmpty);
           return Semantics(
             selected: selected,
             button: true,
             label: '查看第 ${index + 1} 张结果',
             child: Tooltip(
-              message: '第 ${index + 1} 张结果',
+              message: isPending ? '第 ${index + 1} 张（生成中）' : '第 ${index + 1} 张结果',
               child: InkWell(
                 onTap: () => widget.onSelect(result),
                 borderRadius: BorderRadius.circular(9),
@@ -502,7 +605,21 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: _ResultImage(task: result, thumbnail: true),
+                    child: isPending
+                        ? Container(
+                            color: glass.stage,
+                            child: Center(
+                              child: SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.8,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          )
+                        : _ResultImage(task: result, thumbnail: true),
                   ),
                 ),
               ),
@@ -668,5 +785,83 @@ class _ResultImage extends StatelessWidget {
       );
     }
     return unavailable();
+  }
+}
+
+/// V5 Effort 等级左右切换控件（High ⇄ Medium），点击或左右滑动切换。
+class _EffortToggle extends StatelessWidget {
+  final GenerationEffort effort;
+  final ValueChanged<GenerationEffort> onChanged;
+
+  const _EffortToggle({required this.effort, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isHigh = effort == GenerationEffort.high;
+    return Tooltip(
+      message: isHigh
+          ? '思考等级：High（完整模型，点击切换 Medium 节约模式）'
+          : '思考等级：Medium（蒸馏版，固定 14 步，点击切换 High）',
+      child: GestureDetector(
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity < -120 && isHigh) {
+            onChanged(GenerationEffort.medium);
+          } else if (velocity > 120 && !isHigh) {
+            onChanged(GenerationEffort.high);
+          }
+        },
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => onChanged(
+            isHigh ? GenerationEffort.medium : GenerationEffort.high,
+          ),
+          child: Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: isHigh
+                  ? colors.primary.withValues(alpha: 0.14)
+                  : colors.tertiary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                width: 1,
+                color: isHigh
+                    ? colors.primary.withValues(alpha: 0.45)
+                    : colors.tertiary.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isHigh ? Icons.psychology : Icons.bolt,
+                  size: 14,
+                  color: isHigh ? colors.primary : colors.tertiary,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  isHigh ? 'High' : 'Medium',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: isHigh ? colors.primary : colors.tertiary,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(
+                  isHigh
+                      ? Icons.arrow_forward_ios
+                      : Icons.arrow_back_ios,
+                  size: 10,
+                  color: colors.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

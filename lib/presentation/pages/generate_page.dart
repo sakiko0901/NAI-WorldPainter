@@ -906,20 +906,20 @@ class _GeneratePageState extends State<GeneratePage> {
           style: ButtonStyle(
             backgroundColor: WidgetStateProperty.resolveWith(
               (states) => states.contains(WidgetState.selected)
-                  ? const Color(0xFFF5D57A)
+                  ? theme.colorScheme.primary.withValues(alpha: 0.18)
                   : theme.colorScheme.surfaceContainerHighest.withValues(
                       alpha: 0.45,
                     ),
             ),
             foregroundColor: WidgetStateProperty.resolveWith(
               (states) => states.contains(WidgetState.selected)
-                  ? Colors.black
+                  ? theme.colorScheme.primary
                   : theme.colorScheme.onSurfaceVariant,
             ),
             side: WidgetStateProperty.resolveWith(
               (states) => BorderSide(
                 color: states.contains(WidgetState.selected)
-                    ? const Color(0xFFF5D57A)
+                    ? theme.colorScheme.primary.withValues(alpha: 0.7)
                     : theme.colorScheme.outline.withValues(alpha: 0.28),
               ),
             ),
@@ -1339,6 +1339,15 @@ class _GeneratePageState extends State<GeneratePage> {
     _vm.setGenerationMode(GenerationMode.inpainting);
     _vm.setSourceImagePath(path);
     _vm.setMaskImagePath(null);
+    // 把当前正负提示词带入局部重绘（保留重绘区已有内容，追加原始提示词）
+    final positive = displayTask?.prompt ?? '';
+    final negative = displayTask?.negativePrompt ?? '';
+    if (positive.isNotEmpty) {
+      await _vm.updateInpaintPrompt(positive);
+    }
+    if (negative.isNotEmpty) {
+      await _vm.updateInpaintNegativePrompt(negative);
+    }
     _showToast('已导入局部重绘');
     await Future.delayed(const Duration(milliseconds: 60));
     if (!mounted) return;
@@ -1692,6 +1701,11 @@ class _GeneratePageState extends State<GeneratePage> {
     final task = _vm.selectedResult ?? _vm.lastCompletedTask;
     final hasLocalImage =
         task?.imagePath != null && File(task!.imagePath!).existsSync();
+    // 流式帧只在对应任务的占位卡上显示
+    final taskStreamBytes =
+        task == null ? null : _vm.streamPreviews[task.taskId];
+    final taskStreamStep =
+        task == null ? null : _vm.streamPreviewSteps[task.taskId];
     return GenerationResultCard(
       key: _resultSectionKey,
       workspaceHeight: workspaceHeight,
@@ -1699,6 +1713,12 @@ class _GeneratePageState extends State<GeneratePage> {
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
       error: _vm.errorMessage,
+      streamPreviewBytes: taskStreamBytes,
+      streamPreviewStep: taskStreamStep,
+      effort: _vm.supportsEffortToggle ? _vm.effort : null,
+      onEffortChanged: _vm.supportsEffortToggle
+          ? (value) => _vm.updateEffort(value)
+          : null,
       onImport: _vm.isGenerating || _isImportingWorkspaceImage
           ? null
           : _importWorkspaceImage,
@@ -1734,7 +1754,32 @@ class _GeneratePageState extends State<GeneratePage> {
               return _showEnhanceSheet();
             }
           : null,
+      onDelete: task == null ? null : (result) => _confirmDeleteResult(result),
     );
+  }
+
+  /// 删除工作区当前图片前弹窗确认。
+  Future<void> _confirmDeleteResult(GenerationTask result) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除图片'),
+        content: const Text('从工作区移除当前显示的图片？历史记录不受影响。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    _vm.removeSessionResult(result.taskId);
+    _showToast('已从工作区移除');
   }
 
   double get _outputAspectRatio {

@@ -493,7 +493,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
               ),
               SizedBox(height: 12),
               Text(
-                '描述你想生成的画面，我来帮你整理成提示词。\n信息不足时会给出可点击选项确认。',
+                '请阐述你的梦',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
