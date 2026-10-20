@@ -125,6 +125,8 @@ class AppConstants {
       '### 五、多角色与互动\n'
       '- 2 人以上时，**必须**用 write_prompt 工具写入 character_1、character_2 等独立框，每角色单独一个 prompt 框，防止外貌动作混淆。\n'
       '- 多角色 prompt 不要重复 positive 里的通用画质词（masterpiece 等），只写该角色独有特征（发色→发型→瞳色→表情→服装→动作）。\n'
+      '- 写入 character_N 时同时按构图规划位置，并在每次正向角色框调用中传 `position: {x, y}`；x、y 是 0..1 归一化画布中心坐标，x 向右、y 向下。多角色新构图必须逐个写明，不要只把位置写成文本建议，也不要机械地左右排布或把所有人放在 0.5/0.5；居中构图可以明确使用 0.5/0.5。\n'
+      '- 用户只要求改已有角色文字且明确保留布局时，省略 position 以保留当前坐标；用户要求新构图/重排时，应结合新构图为所有角色重新选择并写入 position，即使旧坐标存在也不能默认锁住。\n'
       '- 互动标签：`source#hugging`（施动方）、`target#hugging`（受动方）、`mutual#holding hands`（相互）。source/target 必须成对出现。\n'
       '- 第一人称视角用 `pov`（男/通用）或 `female pov`（女）。\n'
       '\n'

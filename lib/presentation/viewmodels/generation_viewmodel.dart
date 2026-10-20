@@ -67,6 +67,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 每个生成任务在结果区有自己的占位卡，帧只在对应占位卡上显示。
   final Map<String, Uint8List> streamPreviews = {};
   final Map<String, int> streamPreviewSteps = {};
+
   /// 旧字段保留供页面兼容（当前选中占位的帧）。
   Uint8List? get streamPreviewBytes =>
       _previewTaskId == null ? null : streamPreviews[_previewTaskId];
@@ -544,8 +545,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           }
           _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
-          final existingIndex =
-              sessionResults.indexWhere((result) => result.taskId == task.taskId);
+          final existingIndex = sessionResults
+              .indexWhere((result) => result.taskId == task.taskId);
           if (existingIndex >= 0) {
             // 占位卡升级为完成结果（原位替换，不打乱顺序）
             final updated = [...sessionResults];
@@ -787,8 +788,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     required String target,
     required String content,
     required bool append,
+    double? centerX,
+    double? centerY,
   }) async {
     final trimmed = content.trim();
+    final charMatch = RegExp(r'^character_(\d+)(_uc)?$').firstMatch(target);
+    final hasPosition = centerX != null || centerY != null;
+    if (hasPosition && (centerX == null || centerY == null)) {
+      throw ArgumentError('角色 position 必须同时提供 centerX 和 centerY');
+    }
+    if (hasPosition) {
+      if (!RegExp(r'^character_[1-6]$').hasMatch(target)) {
+        throw ArgumentError('角色 position 仅能写入 character_N 正向角色框');
+      }
+      final x = centerX!;
+      final y = centerY!;
+      if (!x.isFinite || !y.isFinite || x < 0 || x > 1 || y < 0 || y > 1) {
+        throw ArgumentError('角色 position 的 centerX、centerY 必须在 0..1 范围内');
+      }
+    }
+
     // 局部重绘框守卫：非重绘模式下禁止写入 inpaint 框
     if ((target == 'inpaint_positive' || target == 'inpaint_negative') &&
         !isInpaintingMode) {
@@ -796,7 +815,6 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     // 多角色框：character_N（prompt）或 character_N_uc（负向）
-    final charMatch = RegExp(r'^character_(\d+)(_uc)?$').firstMatch(target);
     if (charMatch != null) {
       final idx = int.parse(charMatch.group(1)!) - 1; // 用户视角 1-based
       final isUc = charMatch.group(2) == '_uc';
@@ -807,26 +825,35 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       while (_characters.length <= idx) {
         _characters = [
           ..._characters,
-          const CharacterSpec(
-            prompt: '',
-            uc: null,
-            centerX: 0.5,
-            centerY: 0.5,
-          )
+          const CharacterSpec(prompt: ''),
         ];
       }
+      final currentCharacter = _characters[idx];
       if (isUc) {
-        final current = _characters[idx].uc ?? '';
+        final current = currentCharacter.uc ?? '';
         final newUc = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        replaceCharacterNegative(idx, newUc);
+        _characters = [
+          for (int i = 0; i < _characters.length; i++)
+            i == idx ? currentCharacter.copyWith(uc: newUc) : _characters[i],
+        ];
       } else {
-        final current = _characters[idx].prompt;
+        final current = currentCharacter.prompt;
         final newPrompt = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        replaceCharacterPrompt(idx, newPrompt);
+        _characters = [
+          for (int i = 0; i < _characters.length; i++)
+            if (i == idx)
+              currentCharacter.copyWith(
+                prompt: newPrompt,
+                centerX: centerX,
+                centerY: centerY,
+              )
+            else
+              _characters[i],
+        ];
       }
       _promptVersion++;
       await _saveCharactersDraft();
@@ -919,12 +946,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     while (characters.length <= index) {
       characters = [
         ...characters,
-        const CharacterSpec(
-          prompt: '',
-          uc: null,
-          centerX: 0.5,
-          centerY: 0.5,
-        )
+        const CharacterSpec(prompt: ''),
       ];
     }
     updateCharacter(index, characters[index].copyWith(prompt: value.trim()));
@@ -936,12 +958,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     while (characters.length <= index) {
       characters = [
         ...characters,
-        const CharacterSpec(
-          prompt: '',
-          uc: null,
-          centerX: 0.5,
-          centerY: 0.5,
-        )
+        const CharacterSpec(prompt: ''),
       ];
     }
     updateCharacter(index, characters[index].copyWith(uc: value.trim()));
@@ -970,6 +987,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     List<String>? characterPrompts,
     List<String>? characterNegatives,
   }) async {
+    final previousCharacters = _characters;
     await clearAllPrompts();
     if (positive != null && positive.trim().isNotEmpty) {
       if (generationMode == GenerationMode.inpainting) {
@@ -992,11 +1010,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         final uc = (characterNegatives != null && i < characterNegatives.length)
             ? characterNegatives[i].trim()
             : '';
+        final previous =
+            i < previousCharacters.length ? previousCharacters[i] : null;
+        final hasPreviousPosition =
+            previous?.centerX != null && previous?.centerY != null;
         newChars.add(CharacterSpec(
           prompt: p,
           uc: uc.isEmpty ? null : uc,
-          centerX: 0.5,
-          centerY: 0.5,
+          centerX: hasPreviousPosition ? previous?.centerX : null,
+          centerY: hasPreviousPosition ? previous?.centerY : null,
         ));
       }
       characters = newChars;
@@ -1926,7 +1948,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     sessionResults = [];
     selectedResultTaskId = null;
     _userPickedResult = false;
-    _cancelTiled = false;    errorMessage = null;
+    _cancelTiled = false;
+    errorMessage = null;
     await BackgroundKeepAliveService.instance.acquire(
       notificationText: '准备分块重绘…',
     );
@@ -2367,11 +2390,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
     characters = [
       ...characters,
-      const CharacterSpec(
-        prompt: '',
-        centerX: 0.5,
-        centerY: 0.5,
-      )
+      const CharacterSpec(prompt: ''),
     ];
     errorMessage = null;
     _saveCharactersDraft();

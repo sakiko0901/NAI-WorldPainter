@@ -115,11 +115,22 @@ class InpaintRasterizer {
     required img.Image generated,
     required img.Image mask,
     required int outwardFeatherPixels,
+    img.Image? base,
+    int? inwardFeatherPixels,
   }) {
     if (generated.width != mask.width || generated.height != mask.height) {
       throw ArgumentError('生成图与遮罩尺寸不一致');
     }
-    final alpha = _featherAlpha(mask, outwardFeatherPixels);
+    if (base != null &&
+        (generated.width != base.width || generated.height != base.height)) {
+      throw ArgumentError('底图与生成图尺寸不一致');
+    }
+    final alpha = _layerFeatherAlpha(
+      mask,
+      outwardFeatherPixels: outwardFeatherPixels,
+      inwardFeatherPixels: inwardFeatherPixels,
+      base: base,
+    );
     final layer = img.Image(
       width: generated.width,
       height: generated.height,
@@ -178,12 +189,7 @@ class InpaintRasterizer {
       final height = math.max(1, layer.worldRect.height.round());
       final sized = layer.image.width == width && layer.image.height == height
           ? layer.image
-          : img.copyResize(
-              layer.image,
-              width: width,
-              height: height,
-              interpolation: img.Interpolation.linear,
-            );
+          : _resizePremultipliedLinear(layer.image, width, height);
       img.compositeImage(
         output,
         sized,
@@ -400,20 +406,131 @@ class InpaintRasterizer {
     return result;
   }
 
+  List<List<int>> _layerFeatherAlpha(
+    img.Image mask, {
+    required int outwardFeatherPixels,
+    required int? inwardFeatherPixels,
+    required img.Image? base,
+  }) {
+    if (base == null || outwardFeatherPixels <= 0) {
+      return _featherAlpha(mask, outwardFeatherPixels);
+    }
+
+    final inwardRadius =
+        (inwardFeatherPixels ?? math.min(outwardFeatherPixels, 2))
+            .clamp(0, outwardFeatherPixels)
+            .toInt();
+    if (inwardRadius == 0) {
+      return _featherAlpha(mask, outwardFeatherPixels);
+    }
+
+    // One EDT gives the distance to the selected side of the mask boundary.
+    // For unselected pixels, the nearest selected pixel must be on this
+    // boundary; for selected pixels, it measures the inward transition.
+    // Selected frame pixels seed the transform as a virtual outside region.
+    final distances = _squaredMaskDistances(mask, boundaryOnly: true);
+    final result =
+        List.generate(mask.height, (_) => List.filled(mask.width, 0));
+    final denominator = (inwardRadius + outwardFeatherPixels).toDouble();
+    for (var y = 0; y < mask.height; y++) {
+      for (var x = 0; x < mask.width; x++) {
+        final selected = mask.getPixel(x, y).r > 0;
+        final squared = distances[y * mask.width + x];
+        if (!squared.isFinite) continue;
+
+        if (selected) {
+          // Newly generated pixels beyond the source image have no base to
+          // blend against. Keep these expansion pixels fully opaque.
+          if (base.getPixel(x, y).a == 0) {
+            result[y][x] = 255;
+            continue;
+          }
+        }
+
+        // Use one signed-distance ramp on both sides of the selection. The
+        // half-pixel offset makes adjacent inside/outside samples symmetric.
+        final distance = math.sqrt(squared);
+        final signedDistance = selected ? distance + 0.5 : -(distance - 0.5);
+        final coverage = ((signedDistance + outwardFeatherPixels) / denominator)
+            .clamp(0.0, 1.0);
+        var alpha = (coverage * 255).round();
+
+        if (alpha > 0 && base.getPixel(x, y).a > 0) {
+          // Both the selection and its outward feather can reach the request
+          // frame. Fade their clipped edges against the existing base. The
+          // radius shrinks on narrow axes so tiny patches retain their content.
+          final horizontal = _frameAxisCoverage(
+            x,
+            mask.width,
+            inwardRadius,
+          );
+          final vertical = _frameAxisCoverage(
+            y,
+            mask.height,
+            inwardRadius,
+          );
+          alpha = (alpha * math.min(horizontal, vertical)).round();
+        }
+        result[y][x] = alpha;
+      }
+    }
+    return result;
+  }
+
+  double _frameAxisCoverage(
+    int position,
+    int length,
+    int requestedRadius,
+  ) {
+    if (requestedRadius <= 0) return 1;
+    final radius = math.min(requestedRadius.toDouble(), (length - 1) / 2);
+    if (radius <= 0) return 1;
+
+    final distance = math.min(position + 0.5, length - position - 0.5);
+    final normalized = (distance / radius).clamp(0.0, 1.0);
+    // A smooth quadratic ramp brings the outside frame close to transparent
+    // while restoring full coverage within the adaptive radius.
+    return (normalized * normalized).toDouble();
+  }
+
   /// Exact Euclidean distances in O(width * height). Horizontal nearest-point
   /// scans are followed by the lower envelope of vertical squared distances.
   /// This avoids a radius-sized neighborhood search for every output pixel.
-  Float64List _squaredMaskDistances(img.Image mask) {
+  Float64List _squaredMaskDistances(
+    img.Image mask, {
+    bool boundaryOnly = false,
+  }) {
     final width = mask.width;
     final height = mask.height;
     final distances = Float64List(width * height);
     final unreachable = (width * width + height * height + 1).toDouble();
     var hasSelectedPixel = false;
+
+    bool isSeed(int x, int y) {
+      if (mask.getPixel(x, y).r == 0) return false;
+      if (!boundaryOnly) return true;
+      for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+          if (dx == 0 && dy == 0) continue;
+          final neighborX = x + dx;
+          final neighborY = y + dy;
+          if (neighborX < 0 ||
+              neighborY < 0 ||
+              neighborX >= width ||
+              neighborY >= height ||
+              mask.getPixel(neighborX, neighborY).r == 0) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
     for (var y = 0; y < height; y++) {
       var nearest = -width;
       final row = y * width;
       for (var x = 0; x < width; x++) {
-        if (mask.getPixel(x, y).r > 0) {
+        if (isSeed(x, y)) {
           nearest = x;
           hasSelectedPixel = true;
         }
@@ -423,7 +540,7 @@ class InpaintRasterizer {
       }
       nearest = width * 2;
       for (var x = width - 1; x >= 0; x--) {
-        if (mask.getPixel(x, y).r > 0) nearest = x;
+        if (isSeed(x, y)) nearest = x;
         if (nearest < width) {
           distances[row + x] = math.min(
             distances[row + x],
@@ -472,6 +589,100 @@ class InpaintRasterizer {
       }
     }
     return distances;
+  }
+
+  img.Image _resizePremultipliedLinear(
+    img.Image source,
+    int width,
+    int height,
+  ) {
+    final resized = img.Image(width: width, height: height, numChannels: 4);
+    final scaleX = source.width / width;
+    final scaleY = source.height / height;
+    final maxX = source.width - 1;
+    final maxY = source.height - 1;
+    final topLeft = source.getPixelSafe(0, 0);
+    final bottomLeft = source.getPixelSafe(0, 0);
+    final topRight = source.getPixelSafe(0, 0);
+    final bottomRight = source.getPixelSafe(0, 0);
+
+    for (var y = 0; y < height; y++) {
+      final fy = y * scaleY;
+      final iy = fy.toInt();
+      final ky = fy - iy;
+      final ny = (iy + 1).clamp(0, maxY).toInt();
+      for (var x = 0; x < width; x++) {
+        final fx = x * scaleX;
+        final ix = fx.toInt();
+        final kx = fx - ix;
+        final nx = (ix + 1).clamp(0, maxX).toInt();
+        source
+          ..getPixel(ix, iy, topLeft)
+          ..getPixel(ix, ny, bottomLeft)
+          ..getPixel(nx, iy, topRight)
+          ..getPixel(nx, ny, bottomRight);
+
+        final alpha = _bilinear(
+          topLeft.a,
+          topRight.a,
+          bottomLeft.a,
+          bottomRight.a,
+          kx,
+          ky,
+        );
+        final premultipliedRed = _bilinear(
+          _premultiply(topLeft.r, topLeft.a),
+          _premultiply(topRight.r, topRight.a),
+          _premultiply(bottomLeft.r, bottomLeft.a),
+          _premultiply(bottomRight.r, bottomRight.a),
+          kx,
+          ky,
+        );
+        final premultipliedGreen = _bilinear(
+          _premultiply(topLeft.g, topLeft.a),
+          _premultiply(topRight.g, topRight.a),
+          _premultiply(bottomLeft.g, bottomLeft.a),
+          _premultiply(bottomRight.g, bottomRight.a),
+          kx,
+          ky,
+        );
+        final premultipliedBlue = _bilinear(
+          _premultiply(topLeft.b, topLeft.a),
+          _premultiply(topRight.b, topRight.a),
+          _premultiply(bottomLeft.b, bottomLeft.a),
+          _premultiply(bottomRight.b, bottomRight.a),
+          kx,
+          ky,
+        );
+        final alphaByte = alpha.round().clamp(0, 255);
+        final red = alphaByte == 0
+            ? 0
+            : (premultipliedRed * 255 / alpha).round().clamp(0, 255);
+        final green = alphaByte == 0
+            ? 0
+            : (premultipliedGreen * 255 / alpha).round().clamp(0, 255);
+        final blue = alphaByte == 0
+            ? 0
+            : (premultipliedBlue * 255 / alpha).round().clamp(0, 255);
+        resized.setPixelRgba(x, y, red, green, blue, alphaByte);
+      }
+    }
+    return resized;
+  }
+
+  double _premultiply(num channel, num alpha) => channel * alpha / 255;
+
+  double _bilinear(
+    num topLeft,
+    num topRight,
+    num bottomLeft,
+    num bottomRight,
+    double kx,
+    double ky,
+  ) {
+    final top = topLeft * (1 - kx) + topRight * kx;
+    final bottom = bottomLeft * (1 - kx) + bottomRight * kx;
+    return (top * (1 - ky) + bottom * ky).toDouble();
   }
 
   (int, int, int, int)? _alphaBounds(img.Image image) {

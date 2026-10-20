@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,6 +12,8 @@ import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.d
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
+import 'package:nai_huishi/domain/agents/tools/read_current_prompts_tool.dart';
+import 'package:nai_huishi/domain/agents/tools/write_prompt_tool.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
@@ -24,6 +27,238 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('agent character positions are read back and reach the generation task',
+      () async {
+    final image = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'generation_viewmodel_agent_character_positions.png',
+    );
+    await image.writeAsBytes(const [1, 2, 3]);
+    addTearDown(() async {
+      if (await image.exists()) await image.delete();
+    });
+
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository(image.path);
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'model',
+        displayName: 'model',
+        actualModel: 'nai-diffusion-4-5-full',
+        provider: ImageProviderType.novelAi,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    vm.selectedModel = 'model';
+    vm.prompt = '2girls';
+
+    final writePrompt = WritePromptTool(vm);
+    final firstWrite = await writePrompt.call({
+      'target': 'character_1',
+      'content': 'blue hair, at the center',
+      'mode': 'replace',
+      'position': {'x': 0.5, 'y': 0.5},
+    });
+    final secondWrite = await writePrompt.call({
+      'target': 'character_2',
+      'content': 'red hair, seated on the right',
+      'mode': 'replace',
+      'position': {'x': 0.76, 'y': 0.68},
+    });
+
+    expect(firstWrite.success, isTrue);
+    expect(secondWrite.success, isTrue);
+    expect(firstWrite.text, contains('0.50'));
+    final read = await ReadCurrentPromptsTool(vm).call(const {});
+    final readback = jsonDecode(read.followUpHint!) as Map<String, dynamic>;
+    final readCharacters = readback['characters'] as List<dynamic>;
+    expect(readCharacters[0]['position'], {'x': 0.5, 'y': 0.5});
+    expect(readCharacters[1]['position'], {'x': 0.76, 'y': 0.68});
+
+    await vm.generate();
+
+    final task = repository.submitted.single;
+    expect(task.useCoords, isTrue);
+    expect(task.characters, hasLength(2));
+    expect(task.characters![0].centerX, 0.5);
+    expect(task.characters![0].centerY, 0.5);
+    expect(task.characters![1].centerX, 0.76);
+    expect(task.characters![1].centerY, 0.68);
+  });
+
+  test('agent position validation and batch prompt replacement preserve layout',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _CapturingGenerationRepository('unused'),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.characters = const [
+      CharacterSpec(prompt: 'existing role', centerX: 0.3, centerY: 0.6),
+    ];
+    final writePrompt = WritePromptTool(vm);
+    final versionBeforeInvalidWrite = vm.version;
+
+    final invalidPositionArguments = <Map<String, dynamic>>[
+      {
+        'target': 'character_1',
+        'content': 'changed role',
+        'mode': 'replace',
+        'position': {'x': 0.5},
+      },
+      {
+        'target': 'character_1',
+        'content': 'changed role',
+        'mode': 'replace',
+        'position': {'x': double.nan, 'y': 0.6},
+      },
+      {
+        'target': 'character_1',
+        'content': 'changed role',
+        'mode': 'replace',
+        'position': {'x': double.infinity, 'y': 0.6},
+      },
+      {
+        'target': 'character_1',
+        'content': 'changed role',
+        'mode': 'replace',
+        'position': {'x': -0.1, 'y': 0.6},
+      },
+      {
+        'target': 'character_1',
+        'content': 'changed role',
+        'mode': 'replace',
+        'position': {'x': 1.1, 'y': 0.6},
+      },
+      {
+        'target': 'positive',
+        'content': 'changed main prompt',
+        'mode': 'replace',
+        'position': {'x': 0.4, 'y': 0.6},
+      },
+      {
+        'target': 'character_1_uc',
+        'content': 'bad hands',
+        'mode': 'replace',
+        'position': {'x': 0.4, 'y': 0.6},
+      },
+    ];
+    final missingNewRolePosition = await writePrompt.call({
+      'target': 'character_2',
+      'content': 'new role',
+      'mode': 'replace',
+    });
+
+    for (final arguments in invalidPositionArguments) {
+      final currentVersion = vm.version;
+      final result = await writePrompt.call(arguments);
+      expect(result.success, isFalse);
+      expect(vm.version, currentVersion);
+      expect(vm.characters, hasLength(1));
+      expect(vm.characters.single.prompt, 'existing role');
+      expect(vm.characters.single.centerX, 0.3);
+      expect(vm.characters.single.centerY, 0.6);
+    }
+    expect(missingNewRolePosition.success, isFalse);
+    expect(missingNewRolePosition.text, contains('position'));
+    expect(vm.version, versionBeforeInvalidWrite);
+    expect(vm.characters, hasLength(1));
+    expect(vm.characters.single.prompt, 'existing role');
+    expect(vm.characters.single.centerX, 0.3);
+    expect(vm.characters.single.centerY, 0.6);
+
+    final textOnlyEdit = await writePrompt.call({
+      'target': 'character_1',
+      'content': 'edited role',
+      'mode': 'replace',
+    });
+    expect(textOnlyEdit.success, isTrue);
+    expect(vm.characters.single.centerX, 0.3);
+    expect(vm.characters.single.centerY, 0.6);
+
+    // VM callers that intentionally omit coordinates remain supported, with
+    // new roles left unpositioned instead of receiving an implicit center.
+    await vm.writePrompt(
+      target: 'character_2',
+      content: 'new role',
+      append: false,
+    );
+    expect(vm.characters, hasLength(2));
+    expect(vm.characters[1].centerX, isNull);
+    expect(vm.characters[1].centerY, isNull);
+
+    await vm.replaceAll(characterPrompts: const ['imported role', 'another']);
+    expect(vm.characters[0].centerX, 0.3);
+    expect(vm.characters[0].centerY, 0.6);
+    expect(vm.characters[1].centerX, isNull);
+    expect(vm.characters[1].centerY, isNull);
+
+    // Filling an empty, manually positioned card must preserve its layout,
+    // including an explicitly selected center.
+    for (final position in [(0.3, 0.6), (0.5, 0.5)]) {
+      vm.characters = [
+        CharacterSpec(
+          prompt: '',
+          centerX: position.$1,
+          centerY: position.$2,
+        ),
+      ];
+      final fillPositionedCard = await writePrompt.call({
+        'target': 'character_1',
+        'content': 'new role',
+        'mode': 'replace',
+      });
+      expect(fillPositionedCard.success, isTrue);
+      expect(vm.characters.single.prompt, 'new role');
+      expect(vm.characters.single.centerX, position.$1);
+      expect(vm.characters.single.centerY, position.$2);
+    }
+
+    // Writing the negative card first may create an empty role slot, but must
+    // not let the following positive write bypass the new-role position guard.
+    final ucFirstWrite = await writePrompt.call({
+      'target': 'character_2_uc',
+      'content': 'bad hands',
+      'mode': 'replace',
+    });
+    expect(ucFirstWrite.success, isTrue);
+    expect(vm.characters, hasLength(2));
+    expect(vm.characters[1].prompt, isEmpty);
+    expect(vm.characters[1].uc, 'bad hands');
+    final versionBeforeUnpositionedPositive = vm.version;
+    final unpositionedPositiveAfterUc = await writePrompt.call({
+      'target': 'character_2',
+      'content': 'new role',
+      'mode': 'replace',
+    });
+    expect(unpositionedPositiveAfterUc.success, isFalse);
+    expect(vm.version, versionBeforeUnpositionedPositive);
+    expect(vm.characters, hasLength(2));
+    expect(vm.characters[1].prompt, isEmpty);
+    expect(vm.characters[1].uc, 'bad hands');
+    expect(vm.characters[1].centerX, isNull);
+    expect(vm.characters[1].centerY, isNull);
+  });
 
   test('batch generation keeps selection on the newest placeholder', () async {
     final image = File(
@@ -57,7 +292,8 @@ void main() {
     await generateFuture;
 
     expect(viewModel.sessionResults, hasLength(3));
-    expect(viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
+    expect(
+        viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
   });
 
   test('imported image displays without submitting a task or replacing drafts',
@@ -147,8 +383,8 @@ void main() {
     // 新批次开始即清掉上批结果，占位卡入列
     expect(viewModel.sessionResults, hasLength(1));
     expect(viewModel.sessionResults.single.status, 'pending');
-    expect(viewModel.selectedResultTaskId,
-        viewModel.sessionResults.single.taskId);
+    expect(
+        viewModel.selectedResultTaskId, viewModel.sessionResults.single.taskId);
 
     allowSave.complete();
     await generateFuture;

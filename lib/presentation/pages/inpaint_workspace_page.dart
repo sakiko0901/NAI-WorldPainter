@@ -166,6 +166,7 @@ _CandidateImages _maskLayerIsolate(_MaskLayerInput input) {
     generated: generated,
     mask: mask,
     outwardFeatherPixels: input.featherPixels,
+    base: base,
   );
   img.compositeImage(base, layer);
   return _CandidateImages(

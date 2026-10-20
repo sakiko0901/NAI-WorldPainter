@@ -528,7 +528,9 @@ class LlmChatViewModel extends ChangeNotifier {
               '## App 集成边界\n'
               '以上 Skill 只负责 V5 提示词的构思与编排。App 的工具名称、确认机制、提示词框目标、'
               'read-then-write 约束和图片生成流程以本系统规则为准，不要自行发明工具。需要详细构思或写法时，'
-              '调用 `read_prompting_reference` 读取对应参考文档；修改现有内容仍必须先调用 `read_current_prompts`。';
+              '调用 `read_prompting_reference` 读取对应参考文档；修改现有内容仍必须先调用 `read_current_prompts`。'
+              '`write_prompt` 的 position 参数会直接写入角色坐标，是本 App 的实际 Custom Position 控件；'
+              '参考文档中的纯文本 Position 建议不能代替坐标参数。';
           v5Registry = (_agentLoopRegistry()).copy()
             ..register(ReadPromptingReferenceTool(_promptingSkillLoader));
         } catch (e) {
