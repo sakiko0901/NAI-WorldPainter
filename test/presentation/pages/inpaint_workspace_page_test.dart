@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -176,36 +177,37 @@ void main() {
         .widget<CustomPaint>(find.byKey(const ValueKey('inpaint-live-mask')))
         .painter! as InpaintCanvasPainter;
     final painterBeforeMove = painter();
-    final initialPreview = painterBeforeMove.previewMaskPathListenable!.value!;
-    final initialBounds = initialPreview.getBounds();
+    final cache = painterBeforeMove.maskController!;
+    final initialAppends = cache.debugPointAppendCount;
+    final initialBuilds = cache.debugGeometryBuildCount;
     const maskBoundaryKey = ValueKey('inpaint-mask-repaint-boundary');
     final pixelsBeforeMove =
         await _captureRepaintBoundaryPixels(tester, maskBoundaryKey);
     await gesture.moveBy(const Offset(20, 0));
     await tester.pump();
     expect(identical(painter(), painterBeforeMove), isTrue);
-    final movedPreview = painter().previewMaskPathListenable!.value!;
-    expect(identical(movedPreview, initialPreview), isFalse);
-    expect(movedPreview.getBounds().right, greaterThan(initialBounds.right));
+    expect(painter().maskController, same(cache));
+    expect(cache.debugPointAppendCount, greaterThan(initialAppends));
+    expect(cache.debugGeometryBuildCount, initialBuilds);
     final pixelsAfterMove =
         await _captureRepaintBoundaryPixels(tester, maskBoundaryKey);
     expect(_pixelsDiffer(pixelsBeforeMove, pixelsAfterMove), isTrue);
-    expect(painter().strokes.single.square, isTrue);
+    expect(cache.activeStroke!.square, isTrue);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(painter().strokes.single.square, isTrue);
-    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+    expect(cache.strokes.single.square, isTrue);
+    expect(cache.activeStroke, isNull);
 
     final undoMask = find.byTooltip('撤销蒙版');
     await tester.ensureVisible(undoMask);
     await tester.tap(undoMask);
     await tester.pumpAndSettle();
-    expect(painter().maskPath!.getBounds().isEmpty, isTrue);
+    expect(cache.strokes, isEmpty);
     final redoMask = find.byTooltip('重做蒙版');
     await tester.ensureVisible(redoMask);
     await tester.tap(redoMask);
     await tester.pumpAndSettle();
-    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+    expect(cache.strokes.single.square, isTrue);
 
     await tester.ensureVisible(find.byTooltip('隐藏蒙版'));
     await tester.tap(find.byTooltip('隐藏蒙版'));
@@ -217,6 +219,45 @@ void main() {
           .where((image) => image.image is MemoryImage),
       isEmpty,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelled strokes do not consume a committed undo step',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1200);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(_host(
+      const SingleChildScrollView(child: InpaintWorkspaceCard()),
+    ));
+    await _loadWorkspaceImage(tester, vm);
+    await tester.tap(find.text('画笔'));
+    await tester.pumpAndSettle();
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(stage);
+    await tester.drag(stage, const Offset(20, 0));
+    await tester.pump();
+    final cache = (tester
+            .widget<CustomPaint>(
+              find.byKey(const ValueKey('inpaint-live-mask')),
+            )
+            .painter! as InpaintCanvasPainter)
+        .maskController!;
+    final committed = cache.strokes.single;
+    final cancelled = await tester.startGesture(tester.getCenter(stage));
+    await cancelled.moveBy(const Offset(0, 30));
+    await tester.pump();
+    await cancelled.cancel();
+    await tester.pump();
+    expect(cache.activeStroke, isNull);
+    expect(cache.strokes.single, same(committed));
+
+    final undo = find.byTooltip('撤销笔迹');
+    await tester.ensureVisible(undo);
+    await tester.tap(undo);
+    await tester.pumpAndSettle();
+    expect(cache.strokes, isEmpty);
     expect(tester.takeException(), isNull);
   });
 
@@ -238,7 +279,7 @@ void main() {
     InpaintCanvasPainter painter() => tester
         .widget<CustomPaint>(find.byKey(const ValueKey('inpaint-live-mask')))
         .painter! as InpaintCanvasPainter;
-    expect(painter().maskPath!.getBounds().isEmpty, isFalse);
+    expect(painter().maskController!.strokes, isNotEmpty);
     final held =
         await tester.startGesture(tester.getCenter(stage), pointer: 33);
     await tester.pump();
@@ -248,9 +289,8 @@ void main() {
     await tester.pump();
     await held.up();
     await tester.pumpAndSettle();
-    expect(painter().strokes, isEmpty);
-    expect(painter().maskPath!.getBounds().isEmpty, isTrue);
-    expect(painter().previewMaskPathListenable!.value, isNull);
+    expect(painter().maskController!.strokes, isEmpty);
+    expect(painter().maskController!.activeStroke, isNull);
     expect(tester.takeException(), isNull);
   });
 
@@ -306,7 +346,7 @@ void main() {
     vm.batchCount = 3;
     final generate = vm.inpaintWorkspaceHandler;
     expect(generate, isNotNull);
-    final firstHandled = await tester.runAsync(generate!);
+    final firstHandled = await _generateWhilePumping(tester, generate!);
     await tester.pumpAndSettle();
     expect(firstHandled, isTrue);
     expect(find.text('结果图层 1'), findsNothing);
@@ -320,7 +360,7 @@ void main() {
     // A failed new request must not remove the previous candidates.
     vm.batchCount = 1;
     generationRepository.failNext = true;
-    await tester.runAsync(generate);
+    await _generateWhilePumping(tester, generate);
     await tester.pumpAndSettle();
     expect(find.text('候选结果 3 / 3'), findsOneWidget);
     expect(find.byType(InpaintComparison), findsOneWidget);
@@ -366,7 +406,7 @@ void main() {
     await nextStroke.up();
     await tester.pumpAndSettle();
 
-    final secondHandled = await tester.runAsync(generate);
+    final secondHandled = await _generateWhilePumping(tester, generate);
     await tester.pumpAndSettle();
     expect(secondHandled, isTrue);
     expect(find.text('结果图层 1'), findsOneWidget);
@@ -471,7 +511,7 @@ void main() {
           .any((image) => image.image is MemoryImage)) break;
     }
     await _captureBoundary(tester, key, 'inpaint-mask-revision.png');
-    await tester.runAsync(vm.inpaintWorkspaceHandler!);
+    await _generateWhilePumping(tester, vm.inpaintWorkspaceHandler!);
     await tester.pumpAndSettle();
     await _settleFileImages(tester);
     expect(find.text('候选结果 1 / 1'), findsOneWidget);
@@ -485,6 +525,35 @@ void main() {
     expect(find.text('结果图层 1'), findsOneWidget);
     await _captureBoundary(tester, key, 'inpaint-applied-revision.png');
   });
+}
+
+Future<bool?> _generateWhilePumping(
+  WidgetTester tester,
+  Future<bool?> Function() generate,
+) async {
+  bool? result;
+  Object? error;
+  var completed = false;
+  await tester.runAsync(() async {
+    unawaited(generate().then((value) {
+      result = value;
+      completed = true;
+    }, onError: (Object failure) {
+      error = failure;
+      completed = true;
+    }));
+  });
+  // A preview begun in the fake clock zone must be allowed to finish before
+  // generation takes its worker slot. Keep pumping while native isolates run.
+  for (var attempt = 0; attempt < 600 && !completed; attempt++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  if (error != null) throw error!;
+  expect(completed, isTrue, reason: 'Workspace generation did not finish');
+  return result;
 }
 
 Future<void> _captureBoundary(

@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -11,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
+import 'package:nai_huishi/domain/entities/inpaint_source_transparency.dart';
 import 'package:nai_huishi/domain/services/inpaint_rasterizer.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
@@ -19,6 +18,8 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
+import 'package:nai_huishi/presentation/controllers/inpaint_preview_scheduler.dart';
+import 'package:nai_huishi/presentation/controllers/inpaint_mask_controller.dart';
 
 /// 工作区顶部的选择模式。
 enum InpaintUiMode {
@@ -41,9 +42,11 @@ class _DecodeImageInput {
 
 class _DecodeImageResult {
   final Uint8List pngBytes;
+  final InpaintSourceTransparency transparency;
   final int width;
   final int height;
-  const _DecodeImageResult(this.pngBytes, this.width, this.height);
+  const _DecodeImageResult(
+      this.pngBytes, this.width, this.height, this.transparency);
 }
 
 _DecodeImageResult _decodeImageIsolate(_DecodeImageInput input) {
@@ -56,6 +59,7 @@ _DecodeImageResult _decodeImageIsolate(_DecodeImageInput input) {
     Uint8List.fromList(img.encodePng(rgba)),
     rgba.width,
     rgba.height,
+    InpaintSourceTransparency.fromImage(rgba),
   );
 }
 
@@ -90,10 +94,11 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
   final source = img.decodePng(input.sourcePng);
   if (source == null) throw const FormatException('源图解码失败');
   const rasterizer = InpaintRasterizer();
-  final composed = rasterizer.composeBase(
-    source: source,
-    strokes: input.strokes,
-  );
+  final composed = input.strokes.any(
+    (stroke) => stroke.target == InpaintPaintTarget.image,
+  )
+      ? rasterizer.composeBase(source: source, strokes: input.strokes)
+      : source;
   final result = rasterizer.rasterize(
     source: composed,
     worldRect: input.worldRect,
@@ -226,9 +231,10 @@ Uint8List _resizeImageIsolate(_ResizeImageInput input) {
   return Uint8List.fromList(img.encodePng(resized));
 }
 
-/// 遮罩预览：编码 → 解码 → 着色 → PNG（后台执行避免卡顿）。
+/// 遮罩预览：透明度采样 → latent 对齐 → 着色 PNG，后台单任务执行。
 class _MaskPreviewInput {
-  final Uint8List sourcePng;
+  final Uint8List? sourcePng;
+  final InpaintSourceTransparency transparency;
   final List<InpaintStroke> strokes;
   final InpaintViewport worldRect;
   final int outputWidth;
@@ -237,6 +243,7 @@ class _MaskPreviewInput {
   final int borderPixels;
   const _MaskPreviewInput({
     required this.sourcePng,
+    required this.transparency,
     required this.strokes,
     required this.worldRect,
     required this.outputWidth,
@@ -247,26 +254,34 @@ class _MaskPreviewInput {
 }
 
 Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
-  final source = img.decodePng(input.sourcePng);
-  if (source == null) throw const FormatException('源图解码失败');
   const rasterizer = InpaintRasterizer();
-  final composed =
-      rasterizer.composeBase(source: source, strokes: input.strokes);
-  final mask = rasterizer
-      .rasterize(
-        source: composed,
-        worldRect: input.worldRect,
-        outputWidth: input.outputWidth,
-        outputHeight: input.outputHeight,
-        strokes: input.strokes,
-        expandPixels: input.expandPixels,
-      )
-      .mask;
-  final encoded = rasterizer.encodeMask(mask);
-  final aligned = img.decodePng(encoded);
-  if (aligned == null) {
-    throw const FormatException('遮罩编码失败');
+  final img.Image mask;
+  if (input.sourcePng == null) {
+    mask = rasterizer.rasterizeMask(
+      source: input.transparency,
+      worldRect: input.worldRect,
+      outputWidth: input.outputWidth,
+      outputHeight: input.outputHeight,
+      strokes: input.strokes,
+      expandPixels: input.expandPixels,
+    );
+  } else {
+    final source = img.decodePng(input.sourcePng!);
+    if (source == null) throw const FormatException('源图解码失败');
+    final composed =
+        rasterizer.composeBase(source: source, strokes: input.strokes);
+    mask = rasterizer
+        .rasterize(
+          source: composed,
+          worldRect: input.worldRect,
+          outputWidth: input.outputWidth,
+          outputHeight: input.outputHeight,
+          strokes: input.strokes,
+          expandPixels: input.expandPixels,
+        )
+        .mask;
   }
+  final aligned = ImageUtils.alignNovelAiMask(mask);
   final preview = img.Image(
     width: aligned.width,
     height: aligned.height,
@@ -331,6 +346,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
 
   /// 源图 RGBA PNG 字节（后台 isolate 复用），以及宽高。
   Uint8List? _sourcePngBytes;
+  InpaintSourceTransparency? _sourceTransparency;
   int _sourceWidth = 0;
   int _sourceHeight = 0;
   InpaintTransform _transform = const InpaintTransform();
@@ -361,8 +377,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   bool _busy = false;
   InpaintStroke? _draft;
   final List<InpaintPoint> _draftPoints = [];
-  ui.Path _maskPath = ui.Path();
-  final ValueNotifier<ui.Path?> _previewMaskPath = ValueNotifier(null);
+  final InpaintMaskController _strokeCache = InpaintMaskController();
+  int _strokesRevision = 0;
   int _batchCompleted = 0;
   int _batchTotal = 1;
   final Map<int, Offset> _pointers = {};
@@ -382,9 +398,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
 
   /// 遮罩预览：后台生成，签名匹配才显示（防抖 + 防错位）。
   String? _maskPreviewSignature;
-  String _maskPreviewKey = '';
   Uint8List? _maskPreviewBytes;
-  Timer? _maskPreviewDebounce;
+  final InpaintPreviewScheduler _maskPreviewScheduler =
+      InpaintPreviewScheduler();
 
   InpaintUiMode _uiMode = InpaintUiMode.view;
 
@@ -439,10 +455,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_generation.inpaintWorkspaceHandler == _prepareGeneration) {
       _generation.inpaintWorkspaceHandler = null;
     }
-    _maskPreviewDebounce?.cancel();
+    _maskPreviewScheduler.dispose();
     _promptController.dispose();
     _negativeController.dispose();
-    _previewMaskPath.dispose();
+    _strokeCache.dispose();
     super.dispose();
   }
 
@@ -452,12 +468,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   }) async {
     final file = File(path);
     final revision = ++_sourceLoadRevision;
+    _maskPreviewScheduler.suspend();
     _loadingSourcePath = path;
     _failedSourcePath = null;
     try {
       if (!await file.exists()) {
         throw FileSystemException('找不到图片文件', path);
       }
+      await _maskPreviewScheduler.settled;
+      if (!mounted || revision != _sourceLoadRevision) return;
       // 后台解码大图，避免主线程阻塞。
       final fileBytes = await file.readAsBytes();
       final result = await compute<_DecodeImageInput, _DecodeImageResult>(
@@ -467,6 +486,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       if (!mounted || revision != _sourceLoadRevision) return;
       // 保留磁盘上的 PNG 字节供后台光栅化复用（RGBA 无损）。
       _sourcePngBytes = result.pngBytes;
+      _sourceTransparency = result.transparency;
       setState(() {
         _sourcePath = path;
         _sourceWidth = result.width;
@@ -476,15 +496,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _strokes.clear();
         _draft = null;
         _draftPoints.clear();
-        _maskPath = ui.Path();
-        _previewMaskPath.value = null;
+        _strokeCache.cancelStroke();
+        _strokeCache.replaceStrokes(const []);
+        _strokesRevision++;
         _undo.clear();
         _redo.clear();
         _maskUndo.clear();
         _maskRedo.clear();
-        _maskPreviewDebounce?.cancel();
+        _maskPreviewScheduler.invalidate();
         _maskPreviewSignature = null;
-        _maskPreviewKey = '';
         _maskPreviewBytes = null;
         _showMask = true;
         _uiMode = InpaintUiMode.view;
@@ -505,7 +525,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         showFloatingToast(context, '图片加载失败：$error');
       }
     } finally {
-      if (revision == _sourceLoadRevision) _loadingSourcePath = null;
+      if (revision == _sourceLoadRevision) {
+        _loadingSourcePath = null;
+        if (mounted) setState(() {});
+      }
     }
   }
 
@@ -558,14 +581,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       );
 
   void _rebuildMaskPath() {
-    _maskPath =
-        InpaintCanvasPainter.mergeMaskStrokes(_maskStrokes) ?? ui.Path();
+    _strokeCache.replaceStrokes(_strokes);
+    _strokesRevision++;
   }
 
   void _clearActiveStrokePreview() {
     _draft = null;
     _draftPoints.clear();
-    _previewMaskPath.value = null;
+    _strokeCache.cancelStroke();
   }
 
   void _clearAllStrokes() {
@@ -575,8 +598,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_maskStrokes.isNotEmpty) _saveMaskHistory();
     setState(() {
       _strokes.clear();
-      _maskPath = ui.Path();
       _clearActiveStrokePreview();
+      _rebuildMaskPath();
     });
   }
 
@@ -587,7 +610,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     setState(() {
       _clearActiveStrokePreview();
       _strokes.removeWhere((stroke) => stroke.target == _target);
-      if (_target == InpaintPaintTarget.mask) _maskPath = ui.Path();
+      _rebuildMaskPath();
     });
   }
 
@@ -892,7 +915,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_sourceWidth <= 0 || _busy) return;
     final world = _screenToWorld(point);
     final firstPoint = InpaintPoint(world.dx, world.dy);
-    _saveHistory();
     final draft = InpaintStroke(
       target: _target,
       mode: _uiMode == InpaintUiMode.erase
@@ -908,37 +930,16 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _draftPoints
       ..clear()
       ..add(firstPoint);
-    _previewMaskPath.value = null;
-    if (draft.target == InpaintPaintTarget.mask) {
-      _previewMaskPath.value = InpaintCanvasPainter.appendMaskPreviewPoint(
-        ui.Path.from(_maskPath),
-        draft,
-        firstPoint,
-      );
-    }
+    _strokeCache.beginStroke(draft);
   }
 
   void _updateStroke(Offset point) {
     final draft = _draft;
     if (draft == null) return;
     final world = _screenToWorld(point);
-    final previous = _draftPoints.isEmpty ? null : _draftPoints.last;
     final next = InpaintPoint(world.dx, world.dy);
     _draftPoints.add(next);
-
-    if (draft.target == InpaintPaintTarget.mask) {
-      _previewMaskPath.value = InpaintCanvasPainter.appendMaskPreviewPoint(
-        _previewMaskPath.value!,
-        draft,
-        next,
-        previous: previous,
-      );
-      return;
-    }
-
-    setState(() {
-      _draft = _strokeWithPoints(draft, _draftPoints);
-    });
+    _strokeCache.appendPoint(next);
   }
 
   void _finishStroke() {
@@ -946,23 +947,23 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (draft == null) return;
     if (draft.type == InpaintStrokeType.path && _draftPoints.isEmpty) return;
     final completed = _strokeWithPoints(draft, _draftPoints);
+    _saveHistory();
     if (draft.target == InpaintPaintTarget.mask) {
       _saveMaskHistory();
-      // The live preview is already the canonical result of every input
-      // segment; reuse it instead of rebuilding the whole stroke on pointer-up.
-      _maskPath = _previewMaskPath.value ?? ui.Path.from(_maskPath);
     }
+    _strokeCache.finishStroke(completed);
     setState(() {
       _strokes.add(completed);
+      _strokesRevision++;
       _draft = null;
       _draftPoints.clear();
-      _previewMaskPath.value = null;
     });
   }
 
   // ---- 手势 ----
 
   void _onPointerDown(PointerDownEvent event) {
+    _maskPreviewScheduler.suspend();
     _pointers[event.pointer] = event.localPosition;
     if (_pointers.length == 1) {
       if (_sourceWidth <= 0 || _busy) {
@@ -1129,6 +1130,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _activeRevision = revision;
       _reviewOpen = false;
     });
+    _maskPreviewScheduler.suspend();
     try {
       // 固定本轮模型、分辨率、提示词与采样选项，避免光栅化期间 UI/VM
       // 变化让同一批结果落入不同尺寸或使用不同提示词。
@@ -1145,6 +1147,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         ),
         growable: false,
       );
+      await _maskPreviewScheduler.settled;
+      if (!mounted || revision != _activeRevision) return false;
       // 光栅化与 PNG 编码在后台 isolate 执行，避免大图阻塞主线程导致 ANR 闪退。
       final raster = await compute<_RasterizeInput, _RasterizeResult>(
         _rasterizeIsolate,
@@ -1584,6 +1588,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final sourceWidth = _sourceWidth;
     final review = _reviewOpen ? _selectedCandidate : null;
     final previewCurrent = !_busy &&
+        _pointers.isEmpty &&
         _draft == null &&
         _maskPreviewSignature == _maskPreviewCurrentSignature &&
         _maskPreviewBytes != null;
@@ -1671,13 +1676,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                     CustomPaint(
                       painter: InpaintCanvasPainter(
                         transform: _transform,
-                        strokes: [
-                          ..._strokes.where((stroke) =>
-                              stroke.target == InpaintPaintTarget.image),
-                          if (_draft?.target == InpaintPaintTarget.image)
-                            _strokeWithPoints(_draft!, _draftPoints),
-                        ],
+                        strokes: const [],
                         showMask: false,
+                        maskController: _strokeCache,
                       ),
                     ),
                     for (final layer
@@ -1701,15 +1702,11 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                         key: const ValueKey('inpaint-live-mask'),
                         painter: InpaintCanvasPainter(
                           transform: _transform,
-                          strokes: [
-                            ..._maskStrokes,
-                            if (_draft?.target == InpaintPaintTarget.mask)
-                              _strokeWithPoints(_draft!, _draftPoints),
-                          ],
+                          strokes: const [],
                           showMask:
                               _showMask && review == null && !previewCurrent,
-                          maskPath: _maskPath,
-                          previewMaskPathListenable: _previewMaskPath,
+                          showImageStrokes: false,
+                          maskController: _strokeCache,
                         ),
                       ),
                     ),
@@ -2579,53 +2576,67 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _transform.offsetY,
       _transform.scale,
       _expandPixels,
-      Object.hashAll(_allStrokes),
+      _strokesRevision,
       _generation.selectedResolution,
     ].join('|');
   }
 
   void _scheduleMaskPreview() {
-    if (!_showMask || _reviewOpen) return;
+    if (!_showMask ||
+        _reviewOpen ||
+        _busy ||
+        _draft != null ||
+        _pointers.isNotEmpty ||
+        _sourceTransparency == null ||
+        (_loadingSourcePath != null && _loadingSourcePath != _sourcePath)) {
+      if (!_maskPreviewScheduler.isSuspended) _maskPreviewScheduler.suspend();
+      return;
+    }
+    _maskPreviewScheduler.resume();
     final pendingSignature = _maskPreviewCurrentSignature;
-    if (pendingSignature.isEmpty || pendingSignature == _maskPreviewKey) return;
-    _maskPreviewDebounce?.cancel();
-    _maskPreviewDebounce = Timer(const Duration(milliseconds: 250), () async {
-      final sourcePng = _sourcePngBytes;
-      final box = _box;
-      if (sourcePng == null || box == null || !mounted) return;
-      final signature = _maskPreviewCurrentSignature;
+    if (pendingSignature.isEmpty || pendingSignature == _maskPreviewSignature) {
+      return;
+    }
+    _maskPreviewScheduler.schedule(pendingSignature, () {
+      final box = _box!;
+      // Snapshot only after the debounce and the single-worker gate. Pointer
+      // moves never copy all stroke points or queue obsolete snapshots.
+      final strokes = List<InpaintStroke>.of(_strokes, growable: false);
+      final hasImageEdits = strokes.any(
+        (stroke) => stroke.target == InpaintPaintTarget.image,
+      );
       final worldRect = InpaintViewport(
         x: (box.x - _transform.offsetX) / _transform.scale,
         y: (box.y - _transform.offsetY) / _transform.scale,
         width: box.width / _transform.scale,
         height: box.height / _transform.scale,
       );
-      _maskPreviewKey = signature;
-      try {
-        final bytes = await compute<_MaskPreviewInput, Uint8List>(
-          _maskPreviewIsolate,
-          _MaskPreviewInput(
-            sourcePng: sourcePng,
-            strokes: _allStrokes,
-            worldRect: worldRect,
-            outputWidth: _resolution.$1,
-            outputHeight: _resolution.$2,
-            expandPixels: _expandPixels,
-            borderPixels: (2 * _resolution.$1 / box.width).ceil().clamp(1, 8),
-          ),
-        );
-        if (!mounted ||
-            _maskPreviewKey != signature ||
-            _maskPreviewCurrentSignature != signature) {
-          return;
-        }
-        setState(() {
-          _maskPreviewSignature = signature;
-          _maskPreviewBytes = bytes;
-        });
-      } catch (_) {
-        // 预览失败静默忽略（下一次签名变化会重试）。
+      return compute<_MaskPreviewInput, Uint8List>(
+        _maskPreviewIsolate,
+        _MaskPreviewInput(
+          sourcePng: hasImageEdits ? _sourcePngBytes : null,
+          transparency: _sourceTransparency!,
+          strokes: strokes,
+          worldRect: worldRect,
+          outputWidth: _resolution.$1,
+          outputHeight: _resolution.$2,
+          expandPixels: _expandPixels,
+          borderPixels: (2 * _resolution.$1 / box.width).ceil().clamp(1, 8),
+        ),
+        debugLabel: 'inpaint-mask-preview',
+      );
+    }, (signature, bytes) {
+      if (!mounted ||
+          _maskPreviewCurrentSignature != signature ||
+          _pointers.isNotEmpty ||
+          _draft != null ||
+          _busy) {
+        return;
       }
+      setState(() {
+        _maskPreviewSignature = signature;
+        _maskPreviewBytes = bytes;
+      });
     });
   }
 }

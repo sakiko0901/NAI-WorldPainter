@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
+import 'package:nai_huishi/domain/entities/inpaint_source_transparency.dart';
 
 class InpaintRasterResult {
   final img.Image image;
@@ -90,6 +91,46 @@ class InpaintRasterizer {
   }
 
   Uint8List encodeMask(img.Image mask) => ImageUtils.encodeNovelAiMask(mask);
+
+  /// The same mask as [rasterize] for mask-only edits, without decoding or
+  /// copying source RGB or allocating an unused output image.
+  img.Image rasterizeMask({
+    required InpaintSourceTransparency source,
+    required InpaintViewport worldRect,
+    required int outputWidth,
+    required int outputHeight,
+    required List<InpaintStroke> strokes,
+    int expandPixels = 0,
+  }) {
+    if (strokes.any((stroke) => stroke.target == InpaintPaintTarget.image)) {
+      throw ArgumentError('Image edits require the composed source alpha');
+    }
+    final mask = img.Image(
+      width: outputWidth,
+      height: outputHeight,
+      numChannels: 4,
+    );
+    final scaleX = outputWidth / worldRect.width;
+    final scaleY = outputHeight / worldRect.height;
+    for (var y = 0; y < outputHeight; y++) {
+      final worldY = worldRect.y + (y + 0.5) / scaleY;
+      for (var x = 0; x < outputWidth; x++) {
+        final worldX = worldRect.x + (x + 0.5) / scaleX;
+        if (worldX < 0 ||
+            worldY < 0 ||
+            worldX >= source.width ||
+            worldY >= source.height ||
+            source.isTransparent(worldX.floor(), worldY.floor())) {
+          mask.setPixelRgba(x, y, 255, 255, 255, 255);
+        }
+      }
+    }
+    for (final stroke in strokes) {
+      _drawStroke(mask, stroke, worldRect, scaleX, scaleY);
+    }
+    if (expandPixels > 0) _dilate(mask, expandPixels);
+    return mask;
+  }
 
   img.Image composeBase({
     required img.Image source,
