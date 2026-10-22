@@ -11,6 +11,7 @@ import 'package:nai_huishi/presentation/pages/danbooru_tag_search_page.dart';
 import 'package:nai_huishi/presentation/pages/director_tools_page.dart';
 import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
 import 'package:nai_huishi/presentation/pages/official_upscale_page.dart';
+import 'package:nai_huishi/presentation/pages/online_gallery_page.dart';
 import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
 import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
@@ -126,7 +127,7 @@ class _SettingsPageState extends State<SettingsPage> {
         SafeArea(
           top: false,
           child: BackdropGroup(
-          child: ListView(
+              child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
             children: [
               _SettingsGroup(
@@ -182,6 +183,18 @@ class _SettingsPageState extends State<SettingsPage> {
               _SettingsGroup(
                 title: '素材与提示词',
                 children: [
+                  _SettingsTile(
+                    icon: CupertinoIcons.photo_on_rectangle,
+                    title: '在线图库',
+                    subtitle: '浏览公开作品与提示词，可复用到创作草稿',
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute(
+                        builder: (_) => OnlineGalleryScreen(
+                          onNavigateToGenerate: widget.onNavigateToGenerate,
+                        ),
+                      ),
+                    ),
+                  ),
                   _SettingsTile(
                     icon: CupertinoIcons.search,
                     title: 'Danbooru 查词',
