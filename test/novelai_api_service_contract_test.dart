@@ -254,6 +254,241 @@ void main() {
     expect(body, isNot(contains('novelai_operation')));
   });
 
+  test('ikun V5 Medium 文生图使用 LFN 顶层字段和正向角色提示', () async {
+    final service = _service();
+
+    final result = await service.generateImage(
+      _task(
+        model: 'nai-v5-full-medium',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        negativePrompt: 'custom negative',
+        characters: const [
+          CharacterSpec(
+            prompt: 'red hair',
+            uc: 'blue hair',
+            centerX: 0.25,
+            centerY: 0.75,
+          ),
+        ],
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(body, model: 'nai-v5-full-medium');
+    expect(body['characterPrompts'], [
+      {
+        'prompt': 'red hair',
+        'center': {'x': 0.25, 'y': 0.75},
+      },
+    ]);
+    expect(body['use_coords'], true);
+  });
+
+  test('ikun V5 Medium 图生图使用 img2img operation 和规范原生别名', () async {
+    final directory = await Directory.systemTemp.createTemp('nai_medium_i2i_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    final service = _service();
+
+    final result = await service.generateImage(
+      _task(
+        model: 'nai-diffusion-5-full-medium',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        img2imgSourceImagePath: source.path,
+        img2imgStrength: 0.55,
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(
+      body,
+      model: 'nai-diffusion-5-full-medium',
+      operation: 'img2img',
+    );
+    expect(body['novelai_operation'], 'img2img');
+    expect(body['image'], base64Encode(const [1, 2, 3]));
+    expect(body['strength'], 0.55);
+    expect(body['noise'], 0.0);
+  });
+
+  test('ikun V5 Medium 局部重绘使用原生重绘别名和正向角色提示', () async {
+    final directory = await Directory.systemTemp.createTemp('nai_medium_inp_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    final mask = File('${directory.path}/mask.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    await mask.writeAsBytes(const [4, 5, 6]);
+    final service = _service();
+
+    final result = await service.inpaintImage(
+      _task(
+        model: 'nai-diffusion-5-full-medium-inpainting',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        sourceImagePath: source.path,
+        maskImagePath: mask.path,
+        characters: const [CharacterSpec(prompt: 'red hair', uc: 'blue hair')],
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(
+      body,
+      model: 'nai-diffusion-5-full-medium-inpainting',
+      operation: 'inpainting',
+    );
+    expect(body['image'], base64Encode(const [1, 2, 3]));
+    expect(body['mask'], base64Encode(const [4, 5, 6]));
+    expect(body['characterPrompts'], [
+      {'prompt': 'red hair'},
+    ]);
+  });
+
+  test('7877 V5 Medium 文生图将 canonical 模型别名规范化', () async {
+    final service = _service();
+
+    final result = await service.generateImage(
+      _task(
+        model: 'nai-v5-full-medium',
+        negativePrompt: 'custom negative',
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(body, model: 'nai-diffusion-5-full-medium');
+  });
+
+  test('7877 V5 Medium 图生图展平参数并标记 img2img operation', () async {
+    final directory = await Directory.systemTemp.createTemp('7877_medium_i2i_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    final service = _service();
+
+    final result = await service.generateImage(
+      _task(
+        model: 'nai-v5-full-medium',
+        img2imgSourceImagePath: source.path,
+        img2imgStrength: 0.55,
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(
+      body,
+      model: 'nai-diffusion-5-full-medium',
+      operation: 'img2img',
+    );
+    expect(body['image'], base64Encode(const [1, 2, 3]));
+    expect(body['strength'], 0.55);
+    expect(body['noise'], 0.0);
+  });
+
+  test('7877 V5 Medium 局部重绘规范 inpaint 别名并展平字段', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('7877_medium_inpaint_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.png');
+    final mask = File('${directory.path}/mask.png');
+    await source.writeAsBytes(const [1, 2, 3]);
+    await mask.writeAsBytes(const [4, 5, 6]);
+    final service = _service();
+
+    final result = await service.inpaintImage(
+      _task(
+        model: 'nai-v5-inpaint-medium',
+        sourceImagePath: source.path,
+        maskImagePath: mask.path,
+      ),
+      'key',
+      baseUri.toString(),
+    );
+    if (result.imagePath != null) await File(result.imagePath!).delete();
+
+    final body = _body(requests.single);
+    expect(requests.single.path, ApiConstants.imageGenerations);
+    _expectV5MediumFields(
+      body,
+      model: 'nai-diffusion-5-full-medium-inpainting',
+      operation: 'inpainting',
+    );
+    expect(body['image'], base64Encode(const [1, 2, 3]));
+    expect(body['mask'], base64Encode(const [4, 5, 6]));
+  });
+
+  test('V5 Medium 明确拒绝 Vibe 和精密参照，不发起网关请求', () async {
+    final service = _service();
+    final tasks = [
+      _task(
+        model: 'nai-v5-full-medium',
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+        vibeReferences: const [
+          CharacterReferenceImage(path: '', encodedVibe: 'encoded-vibe'),
+        ],
+      ),
+      _task(
+        model: 'nai-diffusion-5-full-medium',
+        preciseReferences: const [PreciseReferenceImage(path: '')],
+      ),
+    ];
+
+    for (final task in tasks) {
+      await expectLater(
+        service.generateImage(task, 'key', baseUri.toString()),
+        throwsA(isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'V5_MEDIUM_REFERENCES_UNSUPPORTED',
+        )),
+      );
+    }
+    expect(requests, isEmpty);
+  });
+
+  test('V5 Medium 拒绝非 64 倍数或超像素限制尺寸', () async {
+    final service = _service();
+    final invalidTasks = [
+      _task(model: 'nai-v5-full-medium', width: 800),
+      _task(
+        model: 'nai-v5-full-medium',
+        width: 1088,
+        height: 1024,
+      ),
+    ];
+
+    for (final task in invalidTasks) {
+      await expectLater(
+        service.generateImage(task, 'key', baseUri.toString()),
+        throwsA(isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'V5_MEDIUM_DIMENSIONS_UNSUPPORTED',
+        )),
+      );
+    }
+    expect(requests, isEmpty);
+  });
+
   test('ikun 局部重绘始终请求 b64_json 结果', () async {
     final directory =
         await Directory.systemTemp.createTemp('nai_inpaint_format_');
@@ -839,6 +1074,28 @@ NovelAiApiService _service() {
 Map<String, dynamic> _body(_CapturedRequest request) =>
     jsonDecode(request.body) as Map<String, dynamic>;
 
+void _expectV5MediumFields(
+  Map<String, dynamic> body, {
+  required String model,
+  String? operation,
+}) {
+  expect(body['model'], model);
+  if (operation != null) {
+    expect(body['novelai_operation'], operation);
+  } else {
+    expect(body, isNot(contains('novelai_operation')));
+  }
+  expect(body['steps'], 14);
+  expect(body['sampler'], 'k_euler_ancestral');
+  expect(body['n'], 1);
+  expect(body['ucPreset'], 0);
+  expect(body['tag_hint_uc_preset'], 2);
+  expect(body, isNot(contains('params')));
+  expect(body, isNot(contains('cfg_rescale')));
+  expect(body, isNot(contains('negative_prompt')));
+  expect(body, isNot(contains('v4_negative_prompt')));
+}
+
 GenerationTask _task({
   String model = 'nai-v4.5-full',
   String protocol = AppConstants.novelAiChatCompletionsProtocol,
@@ -856,6 +1113,9 @@ GenerationTask _task({
   String? endpointId,
   String noiseSchedule = 'polyexponential',
   String? responseFormat,
+  int width = 832,
+  int height = 1216,
+  String? negativePrompt,
 }) =>
     GenerationTask(
       taskId: 'task',
@@ -863,8 +1123,8 @@ GenerationTask _task({
       protocol: protocol,
       endpointId: endpointId,
       prompt: '1girl',
-      width: 832,
-      height: 1216,
+      width: width,
+      height: height,
       scale: 5,
       cfgRescale: 0,
       sampler: sampler,
@@ -876,6 +1136,7 @@ GenerationTask _task({
       createdAt: DateTime(2026),
       img2imgSourceImagePath: img2imgSourceImagePath,
       img2imgStrength: img2imgStrength,
+      negativePrompt: negativePrompt,
       sourceImagePath: sourceImagePath,
       maskImagePath: maskImagePath,
       disabledOriginalImage: disabledOriginalImage,

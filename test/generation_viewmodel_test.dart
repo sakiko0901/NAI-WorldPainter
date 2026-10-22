@@ -1277,6 +1277,382 @@ void main() {
     expect(viewModel.maskImagePath, isNull);
   });
 
+  const effortChannels = <({String name, String endpointId, String protocol})>[
+    (
+      name: 'official',
+      endpointId: AppConstants.novelAiOfficialEndpointId,
+      protocol: AppConstants.novelAiOfficialProtocol,
+    ),
+    (
+      name: 'ikun',
+      endpointId: AppConstants.novelAiImageGenerationsEndpointId,
+      protocol: AppConstants.novelAiImageGenerationsProtocol,
+    ),
+    (
+      name: '7877',
+      endpointId: AppConstants.novelAiChatCompletionsEndpointId,
+      protocol: AppConstants.novelAiChatCompletionsProtocol,
+    ),
+  ];
+  const canonicalEffortModels = <({
+    String name,
+    String highModel,
+    String mediumModel,
+    GenerationMode mode,
+  })>[
+    (
+      name: 'full',
+      highModel: 'nai-diffusion-5-full',
+      mediumModel: 'nai-diffusion-5-full-medium',
+      mode: GenerationMode.textToImage,
+    ),
+    (
+      name: 'inpainting',
+      highModel: 'nai-diffusion-5-full-inpainting',
+      mediumModel: 'nai-diffusion-5-full-medium-inpainting',
+      mode: GenerationMode.inpainting,
+    ),
+  ];
+  for (final channel in effortChannels) {
+    for (final model in canonicalEffortModels) {
+      test(
+        '${channel.name} V5 Full ${model.name} submits Medium constraints and returns to High',
+        () => _expectEffortSubmissionCycle(
+          endpointId: channel.endpointId,
+          protocol: channel.protocol,
+          actualModel: model.highModel,
+          expectedHighModel: model.highModel,
+          expectedMediumModel: model.mediumModel,
+          mode: model.mode,
+        ),
+      );
+    }
+  }
+
+  const gatewayAliasEffortModels = <({
+    String name,
+    String aliasHighModel,
+    String aliasMediumModel,
+    GenerationMode mode,
+  })>[
+    (
+      name: 'full',
+      aliasHighModel: 'nai-v5-full',
+      aliasMediumModel: 'nai-v5-full-medium',
+      mode: GenerationMode.textToImage,
+    ),
+    (
+      name: 'inpainting',
+      aliasHighModel: 'nai-v5-inpaint',
+      aliasMediumModel: 'nai-v5-inpaint-medium',
+      mode: GenerationMode.inpainting,
+    ),
+  ];
+  for (final channel in effortChannels.skip(1)) {
+    for (final model in gatewayAliasEffortModels) {
+      test(
+        '${channel.name} ${model.name} Effort preserves its model naming contract',
+        () => _expectEffortSubmissionCycle(
+          endpointId: channel.endpointId,
+          protocol: channel.protocol,
+          actualModel: model.aliasHighModel,
+          expectedHighModel: model.aliasHighModel,
+          expectedMediumModel: model.aliasMediumModel,
+          mode: model.mode,
+        ),
+      );
+    }
+  }
+
+  test(
+      '7877 V5 limit High model round-trips through regular Medium model',
+      () => _expectEffortSubmissionCycle(
+            endpointId: AppConstants.novelAiChatCompletionsEndpointId,
+            protocol: AppConstants.novelAiChatCompletionsProtocol,
+            actualModel: 'nai-v5-full-limit',
+            expectedHighModel: 'nai-v5-full-limit',
+            expectedMediumModel: 'nai-v5-full-medium',
+            mode: GenerationMode.textToImage,
+          ));
+
+  test('selecting a Medium model sets Effort and refresh keeps High override',
+      () async {
+    final settings = _SettingsRepository()
+      ..novelAiEndpoints = const [
+        ApiEndpoint(
+          id: AppConstants.novelAiChatCompletionsEndpointId,
+          name: '7877',
+          baseUrl: 'https://7877.example',
+          apiKey: 'key',
+          models: [
+            'nai-diffusion-5-full',
+            'nai-diffusion-5-full-medium',
+          ],
+          protocol: AppConstants.novelAiChatCompletionsProtocol,
+        ),
+      ];
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    await viewModel.loadModels();
+    await viewModel.updateSelectedModel('nai:7877:nai-diffusion-5-full');
+    viewModel.prompt = 'a quiet forest';
+    viewModel.steps = 23;
+    viewModel.selectedSampler = 'k_dpmpp_2m';
+    viewModel.cfgRescale = 0.35;
+
+    const mediumModelId = 'nai:7877:nai-diffusion-5-full-medium';
+    await viewModel.updateSelectedModel(mediumModelId);
+    expect(viewModel.supportsEffortToggle, isTrue);
+    expect(viewModel.effort, GenerationEffort.medium);
+    await viewModel.generate();
+    expect(repository.submitted.single.model, 'nai-diffusion-5-full-medium');
+    expect(repository.submitted.single.steps, 14);
+
+    await viewModel.updateEffort(GenerationEffort.high);
+    expect(viewModel.effort, GenerationEffort.high);
+    await viewModel.loadModels();
+    expect(viewModel.selectedModel, mediumModelId);
+    expect(viewModel.effort, GenerationEffort.high);
+    await viewModel.generate();
+
+    expect(repository.submitted, hasLength(2));
+    expect(repository.submitted.last.model, 'nai-diffusion-5-full');
+    expect(repository.submitted.last.steps, 23);
+    expect(repository.submitted.last.sampler, 'k_dpmpp_2m');
+    expect(repository.submitted.last.cfgRescale, 0.35);
+
+    await viewModel.updateSelectedModel(mediumModelId);
+    expect(viewModel.steps, 14);
+    await viewModel.updateSelectedModel('nai:7877:nai-diffusion-5-full');
+    expect(viewModel.effort, GenerationEffort.high);
+    expect(viewModel.steps, 23);
+    expect(viewModel.selectedSampler, 'k_dpmpp_2m');
+    expect(viewModel.cfgRescale, 0.35);
+  });
+
+  test('V5 Medium drops third-party negative inputs without erasing drafts',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:ikun:nai-diffusion-5-full',
+        displayName: 'ikun V5 Full',
+        actualModel: 'nai-diffusion-5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: AppConstants.novelAiImageGenerationsEndpointId,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    viewModel.selectedModel = 'nai:ikun:nai-diffusion-5-full';
+    viewModel.prompt = 'a quiet forest';
+    viewModel.negativePrompt = 'low quality';
+    viewModel.characters = const [
+      CharacterSpec(prompt: '1girl', uc: 'bad hands'),
+    ];
+    viewModel.referenceMode = ReferenceMode.vibe;
+    viewModel.vibeReferences = const [
+      CharacterReferenceImage(path: 'vibe-reference.png'),
+    ];
+
+    expect(viewModel.supportsEffortToggle, isTrue);
+    await viewModel.updateEffort(GenerationEffort.medium);
+    await viewModel.generate();
+
+    final mediumTask = repository.submitted.single;
+    expect(mediumTask.model, 'nai-diffusion-5-full-medium');
+    expect(mediumTask.negativePrompt, isNull);
+    expect(mediumTask.vibeReferences, isEmpty);
+    expect(mediumTask.characters!.single.uc, isNull);
+    expect(viewModel.negativePrompt, 'low quality');
+    expect(viewModel.vibeReferences, hasLength(1));
+    expect(viewModel.characters.single.uc, 'bad hands');
+
+    expect(viewModel.supportsVibeReferences, isFalse);
+    expect(viewModel.supportsPreciseReferences, isFalse);
+    final referenceDirectory =
+        await Directory.systemTemp.createTemp('vm_effort_reference_');
+    addTearDown(() => referenceDirectory.delete(recursive: true));
+    final preciseReference = await _writeTestPng(
+      referenceDirectory,
+      'precise-reference.png',
+      1,
+      1,
+    );
+    viewModel.referenceMode = ReferenceMode.precise;
+    viewModel.preciseReferences = [
+      PreciseReferenceImage(path: preciseReference.path),
+    ];
+    await viewModel.generate();
+    expect(repository.submitted, hasLength(2));
+    expect(repository.submitted.last.preciseReferences, isEmpty);
+
+    await viewModel.updateEffort(GenerationEffort.high);
+    await viewModel.generate();
+
+    final highTask = repository.submitted.last;
+    expect(highTask.model, 'nai-diffusion-5-full');
+    expect(highTask.negativePrompt, 'low quality');
+    expect(viewModel.supportsVibeReferences, isTrue);
+    expect(viewModel.supportsPreciseReferences, isTrue);
+    expect(highTask.preciseReferences, hasLength(1));
+    expect(highTask.characters!.single.uc, 'bad hands');
+  });
+
+  test('V5 Medium History restores its matching channel model and regenerates',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository('unused');
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:7877:nai-diffusion-5-full',
+        displayName: '7877 V5 Full',
+        actualModel: 'nai-diffusion-5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: AppConstants.novelAiChatCompletionsEndpointId,
+        protocol: AppConstants.novelAiChatCompletionsProtocol,
+      ),
+    ];
+    final mediumHistoryTask = GenerationTask(
+      taskId: 'history-v5-medium',
+      model: 'nai-diffusion-5-full-medium',
+      endpointId: AppConstants.novelAiChatCompletionsEndpointId,
+      protocol: AppConstants.novelAiChatCompletionsProtocol,
+      prompt: 'history prompt',
+      width: 832,
+      height: 1216,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler_ancestral',
+      noiseSchedule: 'native',
+      steps: 14,
+      status: 'success',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+
+    await viewModel.loadFromHistory(mediumHistoryTask);
+
+    expect(viewModel.selectedModel, 'nai:7877:nai-diffusion-5-full');
+    expect(viewModel.supportsEffortToggle, isTrue);
+    expect(viewModel.effort, GenerationEffort.medium);
+    expect(viewModel.isMediumEffort, isTrue);
+    await viewModel.generate();
+
+    final regenerated = repository.submitted.single;
+    expect(regenerated.model, 'nai-diffusion-5-full-medium');
+    expect(regenerated.steps, 14);
+    expect(regenerated.sampler, 'k_euler_ancestral');
+    expect(regenerated.cfgRescale, 0);
+    await viewModel.updateEffort(GenerationEffort.high);
+    expect(viewModel.steps, 28);
+
+    // The same model on another channel must not take over a history task.
+    viewModel.imageModelOptions = const [
+      ImageModelOption(
+        modelId: 'nai:ikun:nai-diffusion-5-full',
+        displayName: 'ikun V5 Full',
+        actualModel: 'nai-diffusion-5-full',
+        provider: ImageProviderType.novelAi,
+        endpointId: AppConstants.novelAiImageGenerationsEndpointId,
+        protocol: AppConstants.novelAiImageGenerationsProtocol,
+      ),
+    ];
+    await viewModel.loadFromHistory(mediumHistoryTask);
+    expect(viewModel.selectedModel, 'nai:7877:nai-diffusion-5-full-medium');
+    await viewModel.generate();
+    expect(repository.submitted.last.endpointId,
+        AppConstants.novelAiChatCompletionsEndpointId);
+    expect(repository.submitted.last.model, 'nai-diffusion-5-full-medium');
+  });
+
+  test('Effort stays unavailable for older, curated, GPT and Nano models',
+      () async {
+    final unsupportedOptions = [
+      for (final channel in effortChannels)
+        for (final model in const [
+          'nai-diffusion-4-5-full',
+          'nai-diffusion-5-curated',
+        ])
+          (
+            name: '${channel.name} $model',
+            option: _novelAiEffortOption(channel, model),
+          ),
+      (
+        name: 'GPT',
+        option: const ImageModelOption(
+          modelId: 'gpt:gpt-image-1',
+          displayName: 'GPT Image',
+          actualModel: 'gpt-image-1',
+          provider: ImageProviderType.gpt,
+        ),
+      ),
+      (
+        name: 'Nano',
+        option: const ImageModelOption(
+          modelId: 'nano:gemini-2.5-flash-image',
+          displayName: 'Nano Banana',
+          actualModel: 'gemini-2.5-flash-image',
+          provider: ImageProviderType.nanoBanana,
+        ),
+      ),
+    ];
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _SuccessfulGenerationRepository('unused'),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    await Future<void>.delayed(Duration.zero);
+
+    for (final candidate in unsupportedOptions) {
+      viewModel.imageModelOptions = [candidate.option];
+      viewModel.selectedModel = candidate.option.modelId;
+
+      expect(viewModel.supportsEffortToggle, isFalse, reason: candidate.name);
+      await viewModel.updateEffort(GenerationEffort.medium);
+      expect(viewModel.isMediumEffort, isFalse, reason: candidate.name);
+      expect(viewModel.steps, 28, reason: candidate.name);
+      expect(viewModel.selectedSampler, 'k_euler', reason: candidate.name);
+    }
+  });
+
   test('7877 V5 禁用 Vibe 并限制步数画幅，但保留角色提示词', () async {
     final settings = _SettingsRepository();
     final history = _MemoryHistoryRepository();
@@ -1644,6 +2020,159 @@ void main() {
     await viewModel.generate();
     expect(generatedRuns, 2);
   });
+}
+
+ImageModelOption _novelAiEffortOption(
+  ({String name, String endpointId, String protocol}) channel,
+  String model,
+) =>
+    ImageModelOption(
+      modelId: 'nai:${channel.endpointId}:$model',
+      displayName: model,
+      actualModel: model,
+      provider: ImageProviderType.novelAi,
+      endpointId: channel.endpointId,
+      protocol: channel.protocol,
+    );
+
+Future<void> _expectEffortSubmissionCycle({
+  required String endpointId,
+  required String protocol,
+  required String actualModel,
+  required String expectedHighModel,
+  required String expectedMediumModel,
+  required GenerationMode mode,
+}) async {
+  final history = _MemoryHistoryRepository();
+  final repository = _CapturingGenerationRepository('unused');
+  final queue = GenerationQueue(repository, history);
+  addTearDown(queue.dispose);
+  final viewModel = _createGenerationViewModel(
+    generateImage: GenerateImageUseCase(history),
+    manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+    saveImage: SaveImageUseCase(history),
+    queue: queue,
+  );
+  addTearDown(viewModel.dispose);
+  await Future<void>.delayed(Duration.zero);
+
+  final modelId = 'nai:$endpointId:$actualModel';
+  viewModel.imageModelOptions = [
+    ImageModelOption(
+      modelId: modelId,
+      displayName: actualModel,
+      actualModel: actualModel,
+      provider: ImageProviderType.novelAi,
+      endpointId: endpointId,
+      protocol: protocol,
+    ),
+  ];
+  viewModel.selectedModel = modelId;
+  viewModel.generationMode = mode;
+  if (mode == GenerationMode.textToImage) {
+    viewModel.prompt = 'a quiet forest';
+    viewModel.negativePrompt = 'low quality';
+    viewModel.characters = [
+      CharacterSpec(
+        prompt: '1girl',
+        uc: 'bad hands',
+        centerX: 0.5,
+        centerY: 0.5,
+        referenceImages:
+            endpointId == AppConstants.novelAiImageGenerationsEndpointId
+                ? const [CharacterReferenceImage(path: 'role-reference.png')]
+                : const [],
+      ),
+    ];
+    if (endpointId == AppConstants.novelAiImageGenerationsEndpointId) {
+      viewModel.referenceMode = ReferenceMode.vibe;
+      viewModel.vibeReferences = const [
+        CharacterReferenceImage(path: 'vibe-reference.png'),
+      ];
+    }
+  } else {
+    viewModel.inpaintPrompt = 'repair the cloudy sky';
+    viewModel.inpaintNegativePrompt = 'low quality';
+  }
+  viewModel.steps = 23;
+  viewModel.selectedSampler = 'k_euler';
+  viewModel.cfgRescale = 0.35;
+
+  expect(viewModel.supportsEffortToggle, isTrue);
+  await viewModel.updateEffort(GenerationEffort.medium);
+  await _submitEffortTestTask(viewModel, queue, mode);
+
+  final mediumTask = repository.submitted.single;
+  expect(mediumTask.model, expectedMediumModel);
+  expect(mediumTask.steps, 14);
+  expect(mediumTask.sampler, 'k_euler_ancestral');
+  expect(mediumTask.cfgRescale, 0);
+  expect(mediumTask.mode, mode);
+  final isThirdParty = endpointId != AppConstants.novelAiOfficialEndpointId;
+  if (mode == GenerationMode.textToImage) {
+    expect(mediumTask.negativePrompt, isThirdParty ? isNull : 'low quality');
+    expect(mediumTask.characters, hasLength(1));
+    expect(mediumTask.characters!.single.prompt, '1girl');
+    expect(
+        mediumTask.characters!.single.uc, isThirdParty ? isNull : 'bad hands');
+    if (endpointId == AppConstants.novelAiImageGenerationsEndpointId) {
+      expect(mediumTask.characters!.single.referenceImages, isEmpty);
+      expect(viewModel.characters.single.referenceImages, hasLength(1));
+    }
+    if (endpointId == AppConstants.novelAiImageGenerationsEndpointId) {
+      expect(mediumTask.vibeReferences, isEmpty);
+      expect(viewModel.vibeReferences, hasLength(1));
+    }
+  } else {
+    expect(mediumTask.sourceImagePath, 'source.png');
+    expect(mediumTask.maskImagePath, 'mask.png');
+    expect(mediumTask.negativePrompt, isThirdParty ? isNull : 'low quality');
+  }
+
+  await viewModel.updateEffort(GenerationEffort.high);
+  await _submitEffortTestTask(viewModel, queue, mode);
+
+  expect(repository.submitted, hasLength(2));
+  final highTask = repository.submitted.last;
+  expect(highTask.model, expectedHighModel);
+  expect(highTask.steps, 23);
+  expect(highTask.sampler, 'k_euler');
+  expect(highTask.cfgRescale, 0.35);
+  if (mode == GenerationMode.textToImage) {
+    expect(highTask.negativePrompt, 'low quality');
+    expect(highTask.characters!.single.uc, 'bad hands');
+    if (endpointId == AppConstants.novelAiImageGenerationsEndpointId) {
+      expect(highTask.characters!.single.referenceImages, hasLength(1));
+    }
+    if (endpointId == AppConstants.novelAiImageGenerationsEndpointId) {
+      expect(highTask.vibeReferences, hasLength(1));
+    }
+  } else {
+    expect(highTask.sourceImagePath, 'source.png');
+    expect(highTask.maskImagePath, 'mask.png');
+    expect(highTask.negativePrompt, 'low quality');
+  }
+}
+
+Future<void> _submitEffortTestTask(
+  GenerationViewModel viewModel,
+  GenerationQueue queue,
+  GenerationMode mode,
+) async {
+  if (mode == GenerationMode.textToImage) {
+    await viewModel.generate();
+    return;
+  }
+  final task = viewModel.buildInpaintTask(
+    sourcePath: 'source.png',
+    maskPath: 'mask.png',
+    prompt: viewModel.inpaintPrompt,
+    negativePrompt: viewModel.inpaintNegativePrompt,
+    strength: 0.72,
+    disabledOriginalImage: false,
+    colorCorrect: true,
+  );
+  await queue.enqueueTransientAndWait(task);
 }
 
 GenerationViewModel _createGenerationViewModel({

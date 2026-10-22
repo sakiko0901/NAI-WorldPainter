@@ -32,7 +32,7 @@ class GenerationResultCard extends StatefulWidget {
   /// the stage grows with the available window height and remains capped.
   final double? workspaceHeight;
 
-  /// V5 官方渠道 Effort 等级（High/Medium），为 null 时不显示切换按钮。
+  /// V5 Full Effort 等级（High/Medium），为 null 时不显示切换按钮。
   final GenerationEffort? effort;
   final ValueChanged<GenerationEffort>? onEffortChanged;
 
