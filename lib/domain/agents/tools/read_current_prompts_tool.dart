@@ -14,7 +14,7 @@ class ReadCurrentPromptsTool extends AgentTool {
   String get description =>
       '读取用户当前提示词框内容。4 个框：positive（正向主提示词）、negative（负向主提示词）、'
       'inpaint_positive（局部重绘正向）、inpaint_negative（局部重绘负向）。'
-      '角色列表会回显每个角色当前的 position:{x,y}，未指定时为 null。'
+      '角色列表会回显每个角色当前的 position:{x,y}，未指定时为 null，表示由绘图模型自动布局，无需补坐标。'
       '返回 version 字段表示当前版本号，可用于检测后续是否被修改。'
       '\n\n【重要】inpaint_positive 和 inpaint_negative 是"局部重绘"专用框，'
       '只有在局部重绘模式下才有意义；常规文生图模式下这两个框是上次遗留的、不会被使用，'
@@ -100,7 +100,7 @@ class ReadCurrentPromptsTool extends AgentTool {
             '    position：(${c.centerX!.toStringAsFixed(3)}, ${c.centerY!.toStringAsFixed(3)})',
           );
         } else {
-          buf.writeln('    position：未指定');
+          buf.writeln('    position：未指定（由绘图模型自动布局）');
         }
         if (c.uc != null && c.uc!.isNotEmpty) {
           buf.writeln('    uc：${c.uc}');
