@@ -12,7 +12,6 @@ import 'package:nai_huishi/presentation/pages/director_tools_page.dart';
 import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
 import 'package:nai_huishi/presentation/pages/official_upscale_page.dart';
 import 'package:nai_huishi/presentation/pages/online_gallery_page.dart';
-import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
 import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
@@ -212,16 +211,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     onTap: () => Navigator.of(context).push(
                       CupertinoPageRoute(
                         builder: (_) => const ArtistPromptManagerPage(),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.book,
-                    title: '提示词记忆',
-                    subtitle: '管理可复用的触发词与内容',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const PromptMemoryPage(),
                       ),
                     ),
                   ),
