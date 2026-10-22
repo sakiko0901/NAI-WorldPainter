@@ -4,14 +4,14 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
+import 'package:nai_huishi/presentation/controllers/inpaint_mask_controller.dart';
 
 /// Draws the local image edits and the merged inpaint mask.
 ///
-/// The workspace supplies a cached mask path, including an empty path when all
-/// mask content was erased. During a gesture, [previewMaskPath] is the
-/// incrementally updated union/difference of that path and only the new input
-/// segment, so paint overlaps remain flat and erasers do not affect content
-/// behind this CustomPaint.
+/// The workspace supplies [maskController] to reuse committed geometry and
+/// append live input without boolean path operations or page rebuilds. Mask
+/// erasers are isolated from the source image and result layers. Optional path
+/// caches remain available for standalone painter callers.
 class InpaintCanvasPainter extends CustomPainter {
   final InpaintTransform transform;
 
@@ -19,18 +19,22 @@ class InpaintCanvasPainter extends CustomPainter {
   /// in standalone painter callers that do not supply [maskPath].
   final List<InpaintStroke> strokes;
   final bool showMask;
+  final bool showImageStrokes;
   final ui.Path? maskPath;
   final ui.Path? previewMaskPath;
   final ValueListenable<ui.Path?>? previewMaskPathListenable;
+  final InpaintMaskController? maskController;
 
   InpaintCanvasPainter({
     required this.transform,
     required this.strokes,
     this.showMask = true,
+    this.showImageStrokes = true,
     this.maskPath,
     this.previewMaskPath,
     this.previewMaskPathListenable,
-  }) : super(repaint: previewMaskPathListenable);
+    this.maskController,
+  }) : super(repaint: maskController ?? previewMaskPathListenable);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -38,8 +42,16 @@ class InpaintCanvasPainter extends CustomPainter {
     canvas.save();
     canvas.clipRect(bounds);
 
-    if (showMask) _paintMask(canvas);
-    _paintImageStrokes(canvas, bounds);
+    final controller = maskController;
+    if (controller == null) {
+      if (showMask) _paintMask(canvas);
+      if (showImageStrokes) _paintImageStrokes(canvas, bounds);
+    } else {
+      if (showMask) controller.paintMask(canvas, bounds, transform);
+      if (showImageStrokes) {
+        controller.paintImageStrokes(canvas, bounds, transform);
+      }
+    }
 
     canvas.restore();
   }
@@ -328,6 +340,8 @@ class InpaintCanvasPainter extends CustomPainter {
       oldDelegate.transform != transform ||
       oldDelegate.strokes != strokes ||
       oldDelegate.showMask != showMask ||
+      oldDelegate.showImageStrokes != showImageStrokes ||
+      oldDelegate.maskController != maskController ||
       oldDelegate.maskPath != maskPath ||
       oldDelegate.previewMaskPath != previewMaskPath ||
       oldDelegate.previewMaskPathListenable != previewMaskPathListenable;

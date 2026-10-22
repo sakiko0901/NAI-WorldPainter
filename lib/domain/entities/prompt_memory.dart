@@ -1,9 +1,10 @@
 import 'package:equatable/equatable.dart';
 
-/// 记忆类型。前 4 个为提示词领域专用，后 4 个为 agent 化预留。
+/// 提示词领域记忆和通用事实。标准穿搭保留自然语言细节，不按 tag 清洗。
 enum PromptMemoryType {
   characterName,
   characterFeature,
+  characterOutfit,
   style,
   other,
   fact,

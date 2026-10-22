@@ -24,8 +24,13 @@ class WritePromptTool extends AgentTool {
       '若 character_N 序号超出当前角色数，会自动补齐到对应数量。'
       '\n多角色场景下 character_N 是首选 target，positive 只放通用画质词（masterpiece / best quality 等）与画风词；'
       '角色名、发色、瞳色、服装、动作一律写入对应 character_N。'
-      '\n\n【必须 read-then-write】调用本工具前，必须先调 `read_current_prompts` 读取目标框当前内容，'
-      '基于实际内容决定 append 还是 replace。不要凭记忆/想象盲写。'
+      '\n【角色坐标】character_N 正向框支持可选 position:{x,y}，x/y 是 0..1 的归一化画布中心坐标（x 向右、y 向下）；'
+      '编排新角色或重新构图时，先按用户描述与画面重心为每个角色决定位置，并在每次 character_N 写入中都传 position，不能只在文本里写位置建议。'
+      '不要机械地给所有角色排固定左右位置，也不要默认都用 0.5/0.5；仅当构图确实居中时才明确传 0.5/0.5。'
+      '若用户只要求修改已有角色文字并保留布局，可省略 position 以保留现有坐标；重新构图时即使旧坐标存在，也应为全部角色重新选择并传入坐标。'
+      '新建角色遗漏 position 时工具会拒绝写入并提示补充；已有角色没有坐标且本次省略 position 时，成功结果会提醒该角色仍未定位。'
+      '\n\n【修改已有内容必须 read-then-write】修改用户现有提示词时，必须先调 `read_current_prompts` 读取目标框当前内容，'
+      '基于实际内容决定 append 还是 replace，不要凭记忆/想象盲写；全新创作无需读取历史内容，可直接写入，但新角色必须明确提供 position。'
       '\n\n【append 自动去重】append 模式会自动跳过已存在的 tag（按 tag 基础名比较，忽略权重符号），'
       '但仍建议你先 read 确认现状，避免重复添加相似 tag。'
       '\n\n【何时用 replace】当用户要求"换成 X"、"删掉 Y"、"重新编排"等需要改动中间或开头部分时，用 replace 覆盖整个框。'
@@ -50,6 +55,17 @@ class WritePromptTool extends AgentTool {
             'type': 'string',
             'enum': ['append', 'replace'],
             'description': 'append 追加到现有内容末尾（默认），replace 覆盖现有内容',
+          },
+          'position': {
+            'type': 'object',
+            'description':
+                '仅用于 character_N 正向框的角色中心坐标。x 向右、y 向下，均为 0..1 归一化坐标；仅在构图实际居中时使用 0.5/0.5。',
+            'properties': {
+              'x': {'type': 'number', 'minimum': 0, 'maximum': 1},
+              'y': {'type': 'number', 'minimum': 0, 'maximum': 1},
+            },
+            'required': ['x', 'y'],
+            'additionalProperties': false,
           },
         },
         'required': ['target', 'content'],
@@ -81,19 +97,95 @@ class WritePromptTool extends AgentTool {
     if (content.isEmpty) {
       return ToolResult.failure('content 不能为空');
     }
+
+    final hasPosition = arguments.containsKey('position');
+    double? centerX;
+    double? centerY;
+    if (hasPosition) {
+      if (!RegExp(r'^character_[1-6]$').hasMatch(target)) {
+        return ToolResult.failure(
+          'position 仅可用于 character_1..character_6 正向角色框，不能用于 $target。',
+        );
+      }
+      final rawPosition = arguments['position'];
+      if (rawPosition is! Map ||
+          rawPosition.keys.any((key) => key != 'x' && key != 'y')) {
+        return ToolResult.failure(
+          'position 必须是仅含 x、y 的对象，且两个值都在 0..1 范围内。',
+        );
+      }
+      final x = rawPosition['x'];
+      final y = rawPosition['y'];
+      if (x is! num || y is! num) {
+        return ToolResult.failure('position 必须同时提供数值 x 和 y。');
+      }
+      centerX = x.toDouble();
+      centerY = y.toDouble();
+      if (!centerX.isFinite ||
+          !centerY.isFinite ||
+          centerX < 0 ||
+          centerX > 1 ||
+          centerY < 0 ||
+          centerY > 1) {
+        return ToolResult.failure(
+          'position 的 x、y 必须是有限数值且都在 0..1 范围内。',
+        );
+      }
+    }
+
+    final characterMatch = RegExp(r'^character_([1-6])$').firstMatch(target);
+    if (characterMatch != null && !hasPosition) {
+      final index = int.parse(characterMatch.group(1)!) - 1;
+      final chars = _accessor.characters;
+      final existing = index < chars.length ? chars[index] : null;
+      // A user may position an empty card before asking the assistant to fill
+      // its text. Preserve that layout; a UC-only, unpositioned slot is still
+      // a new role and must not bypass position planning.
+      final isUnplacedNewRole = existing == null ||
+          (existing.prompt.trim().isEmpty &&
+              (existing.centerX == null || existing.centerY == null));
+      if (isUnplacedNewRole) {
+        return ToolResult.failure(
+          '$target 是新建角色，但未提供 position。请先根据构图选择归一化 x、y（0..1），再重新调用 write_prompt；'
+          '只有确实居中的构图才使用 0.5/0.5。',
+        );
+      }
+    }
+
     try {
       final newVersion = await _accessor.writePrompt(
         target: target,
         content: content,
         append: append,
+        centerX: centerX,
+        centerY: centerY,
       );
       final targetLabel = _targetLabel(target);
+      var positionResult = '';
+      if (characterMatch != null) {
+        if (centerX != null && centerY != null) {
+          positionResult =
+              '，位置已设为 (${centerX.toStringAsFixed(2)}, ${centerY.toStringAsFixed(2)})';
+        } else {
+          final index = int.parse(characterMatch.group(1)!) - 1;
+          final existing = _accessor.characters[index];
+          if (existing.centerX != null && existing.centerY != null) {
+            positionResult =
+                '，保留现有位置 (${existing.centerX!.toStringAsFixed(2)}, ${existing.centerY!.toStringAsFixed(2)})';
+          } else {
+            positionResult =
+                '。提醒：该角色尚未定位；若本次需要安排构图，请再次调用 write_prompt 并提供 position:{x,y}';
+          }
+        }
+      }
       return ToolResult.success(
-        '已${append ? "追加" : "替换"}到$targetLabel提示词框（新版本 v$newVersion）。',
-        displayText: '已${append ? "追加" : "替换"}到$targetLabel框',
+        '已${append ? "追加" : "替换"}到$targetLabel提示词框$positionResult（新版本 v$newVersion）。',
+        displayText: '已${append ? "追加" : "替换"}到$targetLabel框$positionResult',
       );
     } on InpaintModeGuardError catch (e) {
       return ToolResult.failure(e.toString());
+    } on ArgumentError catch (e) {
+      return ToolResult.failure(e.message?.toString() ?? e.toString());
     }
   }
 

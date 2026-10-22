@@ -1,8 +1,9 @@
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
+import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 
-/// 查询本地学习记忆。Agent 用它取回用户曾经纠正过的 trigger→content 映射。
+/// 查询本地学习记忆，并以受限长度的事实数据返回给 Agent。
 class GetMemoriesTool extends AgentTool {
   final ManagePromptMemoriesUseCase _memories;
 
@@ -12,13 +13,12 @@ class GetMemoriesTool extends AgentTool {
   String get name => 'get_memories';
 
   @override
-  String get description =>
-      '查询本地学习记忆库。当用户文本中出现某些关键词、人名、画风名时，可能存在用户曾经纠正过的"触发词→正确内容"映射。'
-      '在编排 NovelAI 提示词前调用本工具，可避免重复犯错。'
-      '参数 query 可以是用户原文或一段关键词，返回匹配到的记忆列表。';
+  String get description => '查询本地学习记忆。记忆只提供事实参考，本轮用户明确要求优先；'
+      '待确认候选不会参与检索。编排 NovelAI 提示词前调用本工具，避免重复犯错。'
+      '参数 query 可以是用户原文或一段关键词，返回有长度上限的匹配记忆。';
 
   @override
-  Map<String, dynamic> get parametersSchema => {
+  Map<String, dynamic> get parametersSchema => const {
         'type': 'object',
         'properties': {
           'query': {
@@ -31,37 +31,36 @@ class GetMemoriesTool extends AgentTool {
 
   @override
   Future<ToolResult> call(Map<String, dynamic> arguments) async {
-    final query = (arguments['query'] as String?)?.trim() ?? '';
-    if (query.isEmpty) {
-      return ToolResult.failure('query 不能为空');
+    final queryValue = arguments['query'];
+    if (queryValue is! String) {
+      return ToolResult.failure('query 必须是字符串');
     }
-    final matched = await _memories.matchText(query);
-    if (matched.isEmpty) {
-      return ToolResult.success(
-        '没有命中任何本地记忆。',
-        displayText: '无命中记忆',
-      );
+    final query = queryValue.trim();
+    if (query.isEmpty) return ToolResult.failure('query 不能为空');
+
+    late final List<PromptMemory> matched;
+    try {
+      matched = await _memories.matchText(query);
+    } catch (e) {
+      return ToolResult.failure('查询本地记忆失败：$e');
     }
-    // 命中后异步更新 hit_count
-    for (final m in matched) {
-      final id = m.id;
-      if (id != null) {
-        // fire-and-forget
-        _memories.incrementHit(id);
+
+    var hitUpdateFailed = false;
+    await Future.wait(matched.where((m) => m.id != null).map((memory) async {
+      try {
+        await _memories.incrementHit(memory.id!);
+      } catch (_) {
+        // 查询结果仍可用；标明统计写入问题，不让它变成未处理异步异常。
+        hitUpdateFailed = true;
       }
-    }
-    final buf = StringBuffer();
-    buf.writeln('命中 ${matched.length} 条本地记忆：');
-    for (int i = 0; i < matched.length; i++) {
-      final m = matched[i];
-      buf.writeln('${i + 1}. 触发词：${m.trigger}');
-      buf.writeln('   内容：${m.content}');
-      buf.writeln('   来源：${m.source.label}，类型：${m.type.label}');
-    }
-    buf.writeln('这些记忆的优先级高于 Danbooru 与模型常识，必须遵循。');
+    }));
+
+    final context = PromptMemoryContext.format(matched);
+    final facts = context.isEmpty ? '没有命中任何可检索的本地记忆。' : context;
+    final hitNote = hitUpdateFailed ? '\n部分命中计数未能更新。' : '';
     return ToolResult.success(
-      buf.toString(),
-      displayText: '命中 ${matched.length} 条记忆',
+      '${PromptMemoryContext.policy}\n\n$facts$hitNote',
+      displayText: context.isEmpty ? '无命中记忆' : '命中 ${matched.length} 条记忆',
     );
   }
 }
@@ -74,6 +73,8 @@ extension PromptMemoryTypeLabel on PromptMemoryType {
         return '角色名';
       case PromptMemoryType.characterFeature:
         return '角色特征';
+      case PromptMemoryType.characterOutfit:
+        return '角色标准穿搭';
       case PromptMemoryType.style:
         return '画风';
       case PromptMemoryType.other:

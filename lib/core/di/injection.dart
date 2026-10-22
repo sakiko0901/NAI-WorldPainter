@@ -94,6 +94,14 @@ import 'package:nai_huishi/presentation/viewmodels/super_resolution_viewmodel.da
 import 'package:nai_huishi/presentation/viewmodels/image_tag_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
+import 'package:nai_huishi/domain/entities/online_gallery.dart';
+import 'package:nai_huishi/domain/repositories/online_gallery_repository.dart';
+import 'package:nai_huishi/data/repositories/online_gallery_repository_impl.dart';
+import 'package:nai_huishi/data/datasources/local/online_gallery_local_store.dart';
+import 'package:nai_huishi/data/datasources/local/online_gallery_media_store.dart';
+import 'package:nai_huishi/data/datasources/remote/gallery/gallery_http.dart';
+import 'package:nai_huishi/data/datasources/remote/gallery/gallery_api_adapter.dart';
+import 'package:nai_huishi/data/datasources/remote/gallery/gallery_catalog_adapter.dart';
 
 // Pixiv
 import 'package:nai_huishi/core/services/pixiv_upload_queue_service.dart';
@@ -208,6 +216,28 @@ Future<void> configureDependencies() async {
       ManageSettingsUseCase(sl<SettingsRepository>()));
   sl.registerSingleton<ManageStylePresetsUseCase>(
       ManageStylePresetsUseCase(sl<StylePresetRepository>()));
+  sl.registerLazySingleton<GalleryHttp>(
+      () => GalleryHttp(GalleryHttp.createDio()),
+      dispose: (client) => client.dio.close(force: true));
+  sl.registerLazySingleton<OnlineGalleryRepository>(() {
+    final http = sl<GalleryHttp>();
+    final credentials = OnlineGalleryCredentialStore();
+    final api = GalleryApiAdapter(http, gelbooruCredentials: credentials.read);
+    final catalogs = GalleryCatalogAdapter(http);
+    return OnlineGalleryRepositoryImpl(
+      adapters: {
+        for (final source in OnlineGallerySource.values)
+          source: source == OnlineGallerySource.quickTag ||
+                  source == OnlineGallerySource.tagsGallery
+              ? catalogs
+              : api,
+      },
+      local: OnlineGalleryLocalStore(sl<SharedPreferences>()),
+      credentials: credentials,
+      media: OnlineGalleryMediaStore(http),
+      styles: sl<ManageStylePresetsUseCase>(),
+    );
+  });
   sl.registerSingleton<ManageVibeEncodingsUseCase>(
       ManageVibeEncodingsUseCase(sl<VibeEncodingRepository>()));
   sl.registerSingleton<ManageComicProjectsUseCase>(

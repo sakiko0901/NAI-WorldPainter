@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
+import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 import 'package:nai_huishi/presentation/viewmodels/prompt_memory_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
@@ -38,11 +39,23 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
   }
 
   Future<void> _showEditor([PromptMemory? memory]) async {
-    final triggerController =
-        TextEditingController(text: memory?.trigger ?? '');
+    final triggerParts = memory == null
+        ? const <String>[]
+        : PromptMemoryTriggers.parse(memory.trigger);
+    final triggerController = TextEditingController(
+        text: triggerParts.isEmpty ? '' : triggerParts.first);
+    final aliasesController = TextEditingController(
+        text: triggerParts.length < 2 ? '' : triggerParts.skip(1).join(' | '));
     final contentController =
         TextEditingController(text: memory?.content ?? '');
     var type = memory?.type ?? PromptMemoryType.other;
+    final legacyOversizedTrigger = memory != null &&
+        PromptMemoryTriggers.encode(
+              PromptMemoryTriggers.parse(memory.trigger),
+            ).runes.length >
+            512;
+    final legacyOversizedContent =
+        memory != null && memory.content.runes.length > 6000;
 
     await showCupertinoDialog<void>(
       context: context,
@@ -51,51 +64,93 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
           title: Text(memory == null ? '新增记忆' : '编辑记忆'),
           content: Material(
             color: Colors.transparent,
-            child: Column(
-              children: [
-                SizedBox(height: 12),
-                TextField(
-                  controller: triggerController,
-                  decoration: const InputDecoration(labelText: '触发词'),
-                ),
-                TextField(
-                  controller: contentController,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(labelText: '正确内容'),
-                ),
-                SizedBox(height: 8),
-                DropdownButton<PromptMemoryType>(
-                  value: type,
-                  isExpanded: true,
-                  items: const [
-                    DropdownMenuItem(
-                        value: PromptMemoryType.characterName,
-                        child: Text('人名')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.characterFeature,
-                        child: Text('人物特征')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.style, child: Text('画风')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.fact, child: Text('事实(agent)')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.preference,
-                        child: Text('偏好(agent)')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.observation,
-                        child: Text('观察(agent)')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.decision,
-                        child: Text('决策(agent)')),
-                    DropdownMenuItem(
-                        value: PromptMemoryType.other, child: Text('其他')),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: (MediaQuery.sizeOf(ctx).height -
+                        MediaQuery.viewInsetsOf(ctx).bottom -
+                        180)
+                    .clamp(160, 560)
+                    .toDouble(),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(height: 12),
+                    TextField(
+                      controller: triggerController,
+                      maxLength: legacyOversizedTrigger ? null : 512,
+                      decoration: const InputDecoration(labelText: '角色名/主要触发词'),
+                    ),
+                    TextField(
+                      controller: aliasesController,
+                      maxLength: legacyOversizedTrigger ? null : 512,
+                      decoration: const InputDecoration(
+                        labelText: '别名（多个用 | 分隔）',
+                        hintText: '例如：纳西妲 | Nahida',
+                        helperText: '触发词与全部别名合计最多 512 个字符',
+                      ),
+                    ),
+                    TextField(
+                      controller: contentController,
+                      maxLength: legacyOversizedContent ? null : 6000,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        labelText: type == PromptMemoryType.characterOutfit
+                            ? '标准穿搭描述'
+                            : '正确内容',
+                        hintText: type == PromptMemoryType.characterOutfit
+                            ? '可用自然语言，也可填写参考图识别出的服装描述'
+                            : null,
+                      ),
+                    ),
+                    if (type == PromptMemoryType.characterOutfit)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Text(
+                          '仅在用户明确要求记住或更新标准穿搭时保存。临时换装不覆盖标准穿搭；参考图中看不清的细节请标为不确定。',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    SizedBox(height: 8),
+                    DropdownButton<PromptMemoryType>(
+                      value: type,
+                      isExpanded: true,
+                      items: const [
+                        DropdownMenuItem(
+                            value: PromptMemoryType.characterName,
+                            child: Text('人名')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.characterFeature,
+                            child: Text('人物特征')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.characterOutfit,
+                            child: Text('角色标准穿搭')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.style, child: Text('画风')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.fact,
+                            child: Text('事实(agent)')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.preference,
+                            child: Text('偏好(agent)')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.observation,
+                            child: Text('观察(agent)')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.decision,
+                            child: Text('决策(agent)')),
+                        DropdownMenuItem(
+                            value: PromptMemoryType.other, child: Text('其他')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setDialogState(() => type = v);
+                      },
+                    ),
                   ],
-                  onChanged: (v) {
-                    if (v != null) setDialogState(() => type = v);
-                  },
                 ),
-              ],
+              ),
             ),
           ),
           actions: [
@@ -108,24 +163,43 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                 final trigger = triggerController.text.trim();
                 final content = contentController.text.trim();
                 if (trigger.isEmpty || content.isEmpty) return;
-                final conflicts = await _vm.saveOrFindConflicts(
-                  id: memory?.id,
-                  trigger: trigger,
-                  content: content,
-                  type: type,
-                );
-                if (ctx.mounted) Navigator.pop(ctx);
-                if (conflicts.isNotEmpty && mounted) {
-                  _showConflictDialog(
-                    conflicts.first,
-                    PromptMemory(
-                      trigger: trigger,
-                      content: content,
-                      type: type,
-                      source: PromptMemorySource.manual,
-                      createdAt: DateTime.now(),
-                      updatedAt: DateTime.now(),
-                    ),
+                final combinedTrigger = PromptMemoryTriggers.encode([
+                  trigger,
+                  ...PromptMemoryTriggers.parse(aliasesController.text),
+                ]);
+                try {
+                  final conflicts = await _vm.saveOrFindConflicts(
+                    id: memory?.id,
+                    trigger: combinedTrigger,
+                    content: content,
+                    type: type,
+                    supersededBy: memory?.supersededBy,
+                  );
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (conflicts.isNotEmpty && mounted) {
+                    _showConflictDialog(
+                      conflicts.first,
+                      PromptMemory(
+                        trigger: combinedTrigger,
+                        content: content,
+                        type: type,
+                        source: PromptMemorySource.manual,
+                        supersededBy: memory?.supersededBy,
+                        createdAt: DateTime.now(),
+                        updatedAt: DateTime.now(),
+                      ),
+                    );
+                  }
+                } catch (error) {
+                  if (!ctx.mounted) return;
+                  final message =
+                      error is ArgumentError ? error.message?.toString() : null;
+                  showFloatingToast(
+                    ctx,
+                    message == null || message.isEmpty
+                        ? '保存失败，请检查输入后重试。'
+                        : '保存失败：$message',
+                    icon: CupertinoIcons.exclamationmark_circle,
                   );
                 }
               },
@@ -137,6 +211,7 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
     );
 
     triggerController.dispose();
+    aliasesController.dispose();
     contentController.dispose();
   }
 
@@ -146,6 +221,8 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
         return '人名';
       case PromptMemoryType.characterFeature:
         return '人物特征';
+      case PromptMemoryType.characterOutfit:
+        return '角色标准穿搭';
       case PromptMemoryType.style:
         return '画风';
       case PromptMemoryType.fact:
@@ -242,7 +319,11 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
 
   /// 候选编辑后晋升
   Future<void> _editAndPromotePending(PromptMemory memory) async {
-    final triggerController = TextEditingController(text: memory.trigger);
+    final triggerParts = PromptMemoryTriggers.parse(memory.trigger);
+    final triggerController = TextEditingController(
+        text: triggerParts.isEmpty ? '' : triggerParts.first);
+    final aliasesController = TextEditingController(
+        text: triggerParts.length < 2 ? '' : triggerParts.skip(1).join(' | '));
     final contentController = TextEditingController(text: memory.content);
     var type = memory.type;
 
@@ -258,14 +339,36 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                 SizedBox(height: 12),
                 TextField(
                   controller: triggerController,
-                  decoration: const InputDecoration(labelText: '触发词'),
+                  decoration: const InputDecoration(labelText: '角色名/主要触发词'),
+                ),
+                TextField(
+                  controller: aliasesController,
+                  decoration: const InputDecoration(
+                    labelText: '别名（多个用 | 分隔）',
+                    hintText: '例如：纳西妲 | Nahida',
+                  ),
                 ),
                 TextField(
                   controller: contentController,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: const InputDecoration(labelText: '正确内容'),
+                  decoration: InputDecoration(
+                    labelText: type == PromptMemoryType.characterOutfit
+                        ? '标准穿搭描述'
+                        : '正确内容',
+                    hintText: type == PromptMemoryType.characterOutfit
+                        ? '自然语言或参考图识别到的服装描述'
+                        : null,
+                  ),
                 ),
+                if (type == PromptMemoryType.characterOutfit)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      '确认后会替换同一角色的旧标准穿搭；临时换装不应作为标准穿搭保存。',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
                 SizedBox(height: 8),
                 DropdownButton<PromptMemoryType>(
                   value: type,
@@ -277,6 +380,9 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                     DropdownMenuItem(
                         value: PromptMemoryType.characterFeature,
                         child: Text('人物特征')),
+                    DropdownMenuItem(
+                        value: PromptMemoryType.characterOutfit,
+                        child: Text('角色标准穿搭')),
                     DropdownMenuItem(
                         value: PromptMemoryType.style, child: Text('画风')),
                     DropdownMenuItem(
@@ -298,13 +404,17 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
               onPressed: () async {
                 final ok = await _vm.promotePending(
                   memory.id!,
-                  newTrigger: triggerController.text,
+                  newTrigger: PromptMemoryTriggers.encode([
+                    triggerController.text,
+                    ...PromptMemoryTriggers.parse(aliasesController.text),
+                  ]),
                   newContent: contentController.text,
                   newType: type,
                 );
                 if (!ctx.mounted) return;
                 if (ok) {
                   Navigator.pop(ctx);
+                  if (!mounted) return;
                   showFloatingToast(
                     context,
                     '候选记忆已确认',
@@ -325,6 +435,7 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
       ),
     );
     triggerController.dispose();
+    aliasesController.dispose();
     contentController.dispose();
   }
 
@@ -534,6 +645,14 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
                 ),
               ),
             ],
+          ),
+          SizedBox(height: 8),
+          Text(
+            '候选确认前不会参与检索。确认标准穿搭会替换同一角色的旧标准穿搭，其他类型记忆会保留。',
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
           SizedBox(height: 8),
           ..._vm.pendingMemories.map((m) {

@@ -268,6 +268,196 @@ void main() {
     expect(layer.getPixel(10, 8).a, 0);
   });
 
+  test('缩放透明图层时以预乘 alpha 插值，不在白底上产生灰边', () {
+    final base = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(base, color: img.ColorRgba8(255, 255, 255, 255));
+    final layer = img.Image(width: 4, height: 4, numChannels: 4);
+    img.fill(layer, color: img.ColorRgba8(255, 255, 255, 255));
+    for (var y = 0; y < layer.height; y++) {
+      layer.setPixelRgba(3, y, 0, 0, 0, 0);
+    }
+
+    final composite = rasterizer.composeLayers(
+      source: base,
+      strokes: const [],
+      layers: [
+        InpaintRasterLayer(
+          image: layer,
+          worldRect: const InpaintViewport(x: 4, y: 4, width: 3, height: 3),
+        ),
+      ],
+    );
+
+    for (var y = 0; y < composite.height; y++) {
+      for (var x = 0; x < composite.width; x++) {
+        final pixel = composite.getPixel(x, y);
+        expect(pixel.r, 255, reason: 'x=$x y=$y');
+        expect(pixel.g, 255, reason: 'x=$x y=$y');
+        expect(pixel.b, 255, reason: 'x=$x y=$y');
+        expect(pixel.a, 255, reason: 'x=$x y=$y');
+      }
+    }
+    expect(base.getPixel(6, 5).r, 255);
+  });
+
+  test('有底图时羽化遮罩内外边缘并平滑触及请求框的边界', () {
+    final base = source();
+    final original = img.Image.from(base);
+    final generated = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(generated, color: img.ColorRgba8(255, 0, 0, 255));
+    final mask = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(mask, color: img.ColorRgba8(0, 0, 0, 0));
+    for (var y = 0; y < mask.height; y++) {
+      for (var x = 0; x < 8; x++) {
+        mask.setPixelRgba(x, y, 255, 255, 255, 255);
+      }
+    }
+
+    final layer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: base,
+    );
+
+    final frameEdgeAlpha = layer.getPixel(0, 8).a.toInt();
+    final maskEdgeAlpha = layer.getPixel(7, 8).a.toInt();
+    final outsideAlpha = layer.getPixel(8, 8).a.toInt();
+    expect(frameEdgeAlpha, lessThanOrEqualTo(32));
+    expect(maskEdgeAlpha, inInclusiveRange(180, 240));
+    expect(outsideAlpha, inInclusiveRange(180, 240));
+    final boundaryProfile = [
+      for (var x = 4; x <= 12; x++) layer.getPixel(x, 8).a.toInt(),
+    ];
+    for (var index = 1; index < boundaryProfile.length; index++) {
+      expect(
+        boundaryProfile[index],
+        lessThanOrEqualTo(boundaryProfile[index - 1]),
+        reason: '跨遮罩边界应单调淡出: $boundaryProfile',
+      );
+    }
+    expect(layer.getPixel(4, 8).a, 255);
+    expect(img.encodePng(base), orderedEquals(img.encodePng(original)));
+  });
+
+  test('遮罩外羽化触及请求框时同样平滑淡出', () {
+    final base = source();
+    final generated = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(generated, color: img.ColorRgba8(255, 0, 0, 255));
+    final mask = img.Image(width: 16, height: 16, numChannels: 4);
+    for (var y = 4; y < 12; y++) {
+      for (var x = 1; x < 8; x++) {
+        mask.setPixelRgba(x, y, 255, 255, 255, 255);
+      }
+    }
+
+    final layer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: base,
+    );
+
+    expect(layer.getPixel(0, 8).a, lessThanOrEqualTo(32));
+    expect(layer.getPixel(4, 8).a, 255);
+  });
+
+  test('全白遮罩触及请求框时边框淡出且中心完整保留', () {
+    final base = source();
+    final generated = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(generated, color: img.ColorRgba8(255, 0, 0, 255));
+    final mask = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(mask, color: img.ColorRgba8(255, 255, 255, 255));
+
+    final layer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: base,
+    );
+
+    expect(layer.getPixel(0, 8).a, lessThanOrEqualTo(32));
+    expect(layer.getPixel(8, 0).a, lessThanOrEqualTo(32));
+    expect(layer.getPixel(8, 8).a, 255);
+  });
+
+  test('零羽化保持二值且透明扩图区不被内侧羽化淡掉', () {
+    final generated = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(generated, color: img.ColorRgba8(255, 0, 0, 255));
+    final mask = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(mask, color: img.ColorRgba8(0, 0, 0, 0));
+    for (var y = 0; y < mask.height; y++) {
+      for (var x = 0; x < 8; x++) {
+        mask.setPixelRgba(x, y, 255, 255, 255, 255);
+      }
+    }
+    final transparentBase = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(transparentBase, color: img.ColorRgba8(0, 0, 0, 0));
+
+    final hardLayer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 0,
+      base: source(),
+    );
+    expect(hardLayer.getPixel(0, 8).a, 255);
+    expect(hardLayer.getPixel(7, 8).a, 255);
+    expect(hardLayer.getPixel(8, 8).a, 0);
+
+    final expandedLayer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: transparentBase,
+    );
+    expect(expandedLayer.getPixel(0, 8).a, 255);
+    expect(expandedLayer.getPixel(7, 8).a, 255);
+  });
+
+  test('内侧羽化不会抹掉单像素选区的生成结果', () {
+    final base = source();
+    final originalPixel = base.getPixel(8, 8);
+    final generated = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(generated, color: img.ColorRgba8(255, 0, 0, 255));
+    final mask = img.Image(width: 16, height: 16, numChannels: 4);
+    img.fill(mask, color: img.ColorRgba8(0, 0, 0, 0));
+    mask.setPixelRgba(8, 8, 255, 255, 255, 255);
+
+    final layer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: base,
+    );
+    final composite = img.Image.from(base);
+    img.compositeImage(composite, layer);
+
+    expect(layer.getPixel(8, 8).a, greaterThan(0));
+    expect(composite.getPixel(8, 8).r, greaterThan(originalPixel.r));
+    expect(base.getPixel(8, 8).r, originalPixel.r);
+  });
+
+  test('窄小请求框自适应内侧羽化并保留生成像素', () {
+    final base = img.Image(width: 1, height: 1, numChannels: 4);
+    base.setPixelRgba(0, 0, 20, 40, 60, 255);
+    final generated = img.Image(width: 1, height: 1, numChannels: 4);
+    generated.setPixelRgba(0, 0, 255, 0, 0, 255);
+    final mask = img.Image(width: 1, height: 1, numChannels: 4);
+    mask.setPixelRgba(0, 0, 255, 255, 255, 255);
+
+    final layer = rasterizer.maskGeneratedLayer(
+      generated: generated,
+      mask: mask,
+      outwardFeatherPixels: 8,
+      base: base,
+    );
+    final composite = img.Image.from(base);
+    img.compositeImage(composite, layer);
+
+    expect(layer.getPixel(0, 0).a, greaterThan(0));
+    expect(composite.getPixel(0, 0).r, greaterThan(20));
+  });
+
   test('结果图层可越出原图合成且不修改锁定底图', () {
     final base = source();
     final layer = img.Image(width: 4, height: 4, numChannels: 4);

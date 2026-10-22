@@ -4,6 +4,8 @@
 
 ### 面向 Android 的 NovelAI 一站式创作客户端
 
+> 当前功能分支为 `feat/mobile-preview-v5`。本分支的前端和 AI 记忆改动请按[分支安装包构建说明](docs/android_apk_testing.md)验证；下方 Releases 下载入口属于历史发布版本，不能代表本分支最新源码。
+
 从自然语言提示词、精密参照与图像生成，到超分、打标和 Pixiv 发布，在一个应用中完成完整工作流。
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#系统要求)

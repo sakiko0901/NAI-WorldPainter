@@ -74,6 +74,7 @@ class NovelAiApiService {
       final is7877 = route.isGateway7877;
       final isIkun = route.isIkun;
       final usesGatewayImages = is7877 || isIkun;
+      final usesV5Medium = usesGatewayImages && _isV5MediumModel(task.model);
       final usesPreciseReference = isIkun && task.preciseReferences.isNotEmpty;
       final usesImg2Img = task.img2imgSourceImagePath != null;
       final requestPath = usesGatewayImages
@@ -83,15 +84,21 @@ class NovelAiApiService {
         receiveTimeout: const Duration(minutes: 5),
         sendTimeout: const Duration(minutes: 1),
       );
-      final requestBody = usesImg2Img
-          ? await _buildImg2ImgBody(task, isIkun: isIkun)
-          : usesPreciseReference
-              ? await _buildPreciseReferenceBody(task)
-              : is7877
-                  ? await _build7877ImageGenerationsBody(task)
-                  : isIkun
-                      ? await _buildImageGenerationsBody(task)
-                      : _buildChatCompletionsBody(task);
+      final requestBody = usesV5Medium
+          ? await _buildV5MediumImageGenerationsBody(
+              task,
+              is7877: is7877,
+              operation: usesImg2Img ? 'img2img' : null,
+            )
+          : usesImg2Img
+              ? await _buildImg2ImgBody(task, isIkun: isIkun)
+              : usesPreciseReference
+                  ? await _buildPreciseReferenceBody(task)
+                  : is7877
+                      ? await _build7877ImageGenerationsBody(task)
+                      : isIkun
+                          ? await _buildImageGenerationsBody(task)
+                          : _buildChatCompletionsBody(task);
       final response = await _dio.post(
         requestPath,
         data: requestBody,
@@ -672,9 +679,20 @@ class NovelAiApiService {
       model.trim().toLowerCase().contains('diffusion-5') ||
       model.trim().toLowerCase().contains('v5');
 
+  bool _isV5MediumModel(String model) => const {
+        'nai-v5-full-medium',
+        'nai-v5-inpaint-medium',
+        'nai-diffusion-5-full-medium',
+        'nai-diffusion-5-full-medium-inpainting',
+      }.contains(model.trim().toLowerCase());
+
   String _normalize7877Model(String model) {
     final normalized = model.trim().toLowerCase();
     return switch (normalized) {
+      'nai-v5-full' => 'nai-diffusion-5-full',
+      'nai-v5-full-medium' => 'nai-diffusion-5-full-medium',
+      'nai-v5-inpaint' => 'nai-diffusion-5-full-inpainting',
+      'nai-v5-inpaint-medium' => 'nai-diffusion-5-full-medium-inpainting',
       'nai-v4.5-full' || 'nai-v4-5-full' => 'nai-diffusion-4-5-full',
       'nai-v4.5-curated' || 'nai-v4-5-curated' => 'nai-diffusion-4-5-curated',
       'nai-v4-full' => 'nai-diffusion-4-full',
@@ -683,6 +701,121 @@ class NovelAiApiService {
       'nai-v3-furry' || 'nai-v3-furry-limit' => 'nai-diffusion-3-furry',
       _ => model,
     };
+  }
+
+  String _v5MediumRequestModel(
+    String model, {
+    required bool is7877,
+    required bool inpainting,
+  }) {
+    final normalized = model.trim().toLowerCase();
+    if (is7877) {
+      final gatewayModel = _normalize7877Model(normalized);
+      return inpainting ? _nativeInpaintingModel(gatewayModel) : gatewayModel;
+    }
+    if (!inpainting) return normalized;
+    return switch (normalized) {
+      'nai-v5-full-medium' => 'nai-v5-inpaint-medium',
+      'nai-diffusion-5-full-medium' => 'nai-diffusion-5-full-medium-inpainting',
+      _ => normalized,
+    };
+  }
+
+  void _rejectV5MediumReferences(GenerationTask task) {
+    if (task.vibeReferences.isEmpty && task.preciseReferences.isEmpty) return;
+    throw ApiException(
+      message: 'V5 Medium 当前不支持 Vibe 或精密参照，请先移除参考图',
+      code: 'V5_MEDIUM_REFERENCES_UNSUPPORTED',
+    );
+  }
+
+  Future<Map<String, dynamic>> _buildV5MediumImageGenerationsBody(
+    GenerationTask task, {
+    required bool is7877,
+    String? operation,
+  }) async {
+    _rejectV5MediumReferences(task);
+    if (task.width <= 0 ||
+        task.height <= 0 ||
+        task.width % 64 != 0 ||
+        task.height % 64 != 0 ||
+        task.width * task.height > 1048576) {
+      throw ApiException(
+        message: 'V5 Medium 要求宽高为正数、64 的倍数，且总像素不超过 1048576',
+        code: 'V5_MEDIUM_DIMENSIONS_UNSUPPORTED',
+      );
+    }
+
+    final characters = _buildIkunCharacterPrompts(_enabledCharacters(task));
+    final body = <String, dynamic>{
+      if (operation != null) 'novelai_operation': operation,
+      'model': _v5MediumRequestModel(
+        task.model,
+        is7877: is7877,
+        inpainting: operation == 'inpainting',
+      ),
+      'prompt': task.prompt,
+      'n': 1,
+      'size': '${task.width}x${task.height}',
+      'width': task.width,
+      'height': task.height,
+      'steps': 14,
+      'scale': task.scale,
+      'sampler': 'k_euler_ancestral',
+      'noise_schedule': is7877
+          ? _normalizeImageGenerationsNoiseSchedule(task.noiseSchedule)
+          : _normalizeIkunNoiseSchedule(task.noiseSchedule),
+      if (task.seed != null) 'seed': task.seed,
+      'ucPreset': 0,
+      'tag_hint_uc_preset': 2,
+      if (characters.isNotEmpty) 'characterPrompts': characters,
+      if (characters.isNotEmpty) 'use_coords': task.useCoords,
+      'response_format': 'b64_json',
+    };
+
+    if (operation == 'img2img') {
+      final sourcePath = task.img2imgSourceImagePath;
+      if (sourcePath == null || sourcePath.isEmpty) {
+        throw ApiException(message: '图生图缺少源图');
+      }
+      final source = File(sourcePath);
+      if (!await source.exists()) {
+        throw ApiException(message: '图生图源图不可用，请重新选择');
+      }
+      body.addAll({
+        'image': base64Encode(await source.readAsBytes()),
+        'strength': task.img2imgStrength ?? 0.7,
+        'noise': 0.0,
+        'color_correct': task.colorCorrect,
+      });
+    } else if (operation == 'inpainting') {
+      final sourcePath = task.sourceImagePath;
+      final maskPath = task.maskImagePath;
+      if (sourcePath == null || sourcePath.isEmpty) {
+        throw ApiException(message: '局部重绘缺少原图');
+      }
+      if (maskPath == null || maskPath.isEmpty) {
+        throw ApiException(message: '局部重绘缺少遮罩图');
+      }
+      final source = File(sourcePath);
+      final mask = File(maskPath);
+      if (!await source.exists()) {
+        throw ApiException(message: '局部重绘原图不可用，请重新选择');
+      }
+      if (!await mask.exists()) {
+        throw ApiException(message: '局部重绘遮罩图不可用，请重新绘制');
+      }
+      body.addAll({
+        'image': base64Encode(await source.readAsBytes()),
+        'mask': base64Encode(await mask.readAsBytes()),
+        'strength': task.inpaintStrength ?? 1.0,
+        'noise': 0.0,
+        'add_original_image': !task.disabledOriginalImage,
+        'color_correct': task.colorCorrect,
+      });
+    }
+
+    return body;
   }
 
   Future<Map<String, dynamic>> _buildImg2ImgBody(
@@ -1143,6 +1276,13 @@ class NovelAiApiService {
 
     final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
     final is7877 = route.isGateway7877;
+    if ((is7877 || route.isIkun) && _isV5MediumModel(task.model)) {
+      return _buildV5MediumImageGenerationsBody(
+        task,
+        is7877: is7877,
+        operation: 'inpainting',
+      );
+    }
     if (route.isIkun && _enabledCharacters(task).isNotEmpty) {
       throw ApiException(
         message: 'ikun 网关当前不支持局部重绘与多角色控制同时使用，请先移除角色控制',

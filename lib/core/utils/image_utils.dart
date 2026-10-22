@@ -300,6 +300,13 @@ class ImageUtils {
   /// 这样可对齐 NovelAI V4 latent 网格，并匹配成熟客户端（Aedial、ComfyUI_NAIDGenerator 等）
   /// 发送的单通道掩码格式，避免服务端把 RGBA alpha 解读成额外掩码导致灰块。
   static typed_data.Uint8List encodeNovelAiMask(img.Image rgbaMask) {
+    return typed_data.Uint8List.fromList(
+      img.encodePng(alignNovelAiMask(rgbaMask)),
+    );
+  }
+
+  /// Shares the exact latent alignment with previews without a PNG round trip.
+  static img.Image alignNovelAiMask(img.Image rgbaMask) {
     if (rgbaMask.width <= 0 || rgbaMask.height <= 0) {
       throw ArgumentError('遮罩尺寸必须大于 0');
     }
@@ -359,8 +366,7 @@ class ImageUtils {
       }
     }
 
-    // 4) 编码为单通道灰度 PNG。
-    return typed_data.Uint8List.fromList(img.encodePng(aligned));
+    return aligned;
   }
 
   /// 保存 base64 图片到本地

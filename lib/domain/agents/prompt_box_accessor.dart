@@ -8,8 +8,8 @@ abstract class PromptBoxAccessor {
   String get inpaintPositive;
   String get inpaintNegative;
 
-  /// 多角色列表（最多 6 个）。每个角色含 prompt/uc/enabled。
-  /// agent 读写角色框时通过此列表 + writeCharacterPrompt 实现。
+  /// 多角色列表（最多 6 个）。每个角色含 prompt/uc/enabled/centerX/centerY。
+  /// agent 读写角色框时通过此列表 + writePrompt 实现。
   List<CharacterSpec> get characters;
 
   /// 当前提示词框版本号。每次用户手改或工具写入后递增，便于 LLM 检测变化。
@@ -23,6 +23,7 @@ abstract class PromptBoxAccessor {
   /// - positive / negative / inpaint_positive / inpaint_negative（4 个主框）
   /// - character_1 / character_2 / ... / character_6（多角色 prompt 框）
   /// - character_1_uc / character_2_uc / ...（多角色负向框）
+  /// centerX/centerY 同时提供时写入角色位置；省略时保留现有位置，新角色保持未指定。
   /// append=true 追加，false 替换。返回新版本号。
   /// 若 target 是 inpaint_* 但当前不是局部重绘模式，会抛出 [InpaintModeGuardError]。
   /// 若 target 是 character_N 但 N 超出当前角色数，会自动补齐到 N 个角色（中间补空角色）。
@@ -30,6 +31,8 @@ abstract class PromptBoxAccessor {
     required String target,
     required String content,
     required bool append,
+    double? centerX,
+    double? centerY,
   });
 }
 

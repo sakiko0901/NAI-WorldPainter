@@ -53,7 +53,7 @@ class ImageModelOption {
   });
 }
 
-/// V5 思考（Effort）等级。官方 API 通过切换 model 字段实现。
+/// V5 思考（Effort）等级，通过切换 model 字段实现。
 enum GenerationEffort {
   /// nai-diffusion-5-full（默认）
   high,
@@ -67,6 +67,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 每个生成任务在结果区有自己的占位卡，帧只在对应占位卡上显示。
   final Map<String, Uint8List> streamPreviews = {};
   final Map<String, int> streamPreviewSteps = {};
+
   /// 旧字段保留供页面兼容（当前选中占位的帧）。
   Uint8List? get streamPreviewBytes =>
       _previewTaskId == null ? null : streamPreviews[_previewTaskId];
@@ -108,9 +109,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String inpaintPrompt = '';
   String inpaintNegativePrompt = '';
 
-  /// V5 官方渠道思考等级：High = nai-diffusion-5-full，
+  /// V5 思考等级：High = nai-diffusion-5-full，
   /// Medium = nai-diffusion-5-full-medium（固定 14 steps、k_euler_ancestral、无 rescale）。
   GenerationEffort effort = GenerationEffort.high;
+  ({int steps, String sampler, double cfgRescale})? _highEffortSampling;
 
   /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
   /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
@@ -133,12 +135,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       .where((option) => option.modelId == selectedModel)
       .firstOrNull;
 
-  NovelAiRoute? get _currentNovelAiRoute {
+  String? get _selectedNovelAiEndpointId {
     final option = currentModelOption;
     if (option != null && option.provider != ImageProviderType.novelAi) {
       return null;
     }
-
     String? endpointId = option?.endpointId;
     if (endpointId == null || endpointId.isEmpty) {
       if (selectedModel.startsWith('nai:ikun:')) {
@@ -149,6 +150,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         endpointId = AppConstants.novelAiOfficialEndpointId;
       }
     }
+    return endpointId;
+  }
+
+  NovelAiRoute? get _currentNovelAiRoute {
+    final option = currentModelOption;
+    if (option != null && option.provider != ImageProviderType.novelAi) {
+      return null;
+    }
+    final endpointId = _selectedNovelAiEndpointId;
     final protocol = option?.protocol;
     if ((endpointId == null || endpointId.isEmpty) &&
         (protocol == null || protocol.isEmpty)) {
@@ -170,22 +180,29 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     return normalized.contains('nai-diffusion-5') || normalized.contains('v5');
   }
 
-  /// 官方渠道 V5 Full 模型才支持 Effort 切换（High/Medium）。
+  /// 官方、ikun、7877 的 V5 Full 模型支持 Effort 切换（High/Medium）。
   bool get supportsEffortToggle {
-    if (!isOfficialEndpoint) return false;
+    if (_currentNovelAiRoute == null) return false;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
-    final normalized = model.trim().toLowerCase();
-    return normalized == 'nai-diffusion-5-full' ||
-        normalized == 'nai-diffusion-5-full-inpainting';
+    return _v5EffortModels(model) != null;
   }
 
   /// Medium 等级生效中（决定 steps/sampler/rescale 强制约束）。
   bool get isMediumEffort =>
       supportsEffortToggle && effort == GenerationEffort.medium;
 
+  bool get _isGatewayMediumEffort => isMediumEffort && !isOfficialEndpoint;
+
   Future<void> updateEffort(GenerationEffort value) async {
-    if (effort == value) return;
+    if (!supportsEffortToggle || effort == value) return;
+    if (value == GenerationEffort.medium) {
+      _highEffortSampling = (
+        steps: steps,
+        sampler: selectedSampler,
+        cfgRescale: cfgRescale,
+      );
+    }
     effort = value;
     if (isMediumEffort) {
       // Medium 强制约束：14 steps、k_euler_ancestral、无 rescale
@@ -195,13 +212,34 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       await _manageSettings.setSelectedSamplerDraft(selectedSampler);
       cfgRescale = 0.0;
       await _manageSettings.setCfgRescaleDraft(cfgRescale);
+    } else {
+      await _restoreHighEffortSampling();
     }
     notifyListeners();
+  }
+
+  Future<void> _restoreHighEffortSampling() async {
+    final sampling = _highEffortSampling ??
+        (
+          steps: ApiConstants.defaultSteps,
+          sampler: ApiConstants.defaultSampler,
+          cfgRescale: 0.0,
+        );
+    steps = sampling.steps;
+    selectedSampler = sampling.sampler;
+    cfgRescale = sampling.cfgRescale;
+    await Future.wait([
+      _manageSettings.setStepsDraft(steps),
+      _manageSettings.setSelectedSamplerDraft(selectedSampler),
+      _manageSettings.setCfgRescaleDraft(cfgRescale),
+    ]);
+    _highEffortSampling = null;
   }
 
   bool get supportsCharacterPrompts => true;
 
   bool get supportsVibeReferences {
+    if (_isGatewayMediumEffort) return false;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     if (_isLimitModel(model)) return false;
@@ -213,6 +251,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       : AppConstants.maxVibeReferences;
 
   bool get supportsPreciseReferences {
+    if (_isGatewayMediumEffort) return false;
     if (!isIkunEndpoint && !isOfficialEndpoint) return false;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
@@ -464,6 +503,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     await _normalizeReferenceDrafts();
     batchCount = await _manageSettings.getBatchCount();
     await _loadCustomResolutions();
+    _syncEffortFromSelectedModel();
 
     notifyListeners();
   }
@@ -544,8 +584,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           }
           _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
-          final existingIndex =
-              sessionResults.indexWhere((result) => result.taskId == task.taskId);
+          final existingIndex = sessionResults
+              .indexWhere((result) => result.taskId == task.taskId);
           if (existingIndex >= 0) {
             // 占位卡升级为完成结果（原位替换，不打乱顺序）
             final updated = [...sessionResults];
@@ -597,6 +637,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> loadModels() async {
+    final previousSelectedModel = selectedModel;
     final options = <ImageModelOption>[];
 
     // NovelAI — 聚合全部固定槽位，每个选项保留 endpoint、协议和真实模型。
@@ -722,6 +763,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       selectedModel = options.first.modelId;
       await _manageSettings.setSelectedModelDraft(selectedModel);
     }
+    if (selectedModel != previousSelectedModel) {
+      _syncEffortFromSelectedModel();
+    }
     await _ensureResolutionForCurrentProvider();
     await _ensureSamplingForCurrentProvider();
     // Nano Banana 不支持局部重绘，自动回退至文生图
@@ -787,8 +831,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     required String target,
     required String content,
     required bool append,
+    double? centerX,
+    double? centerY,
   }) async {
     final trimmed = content.trim();
+    final charMatch = RegExp(r'^character_(\d+)(_uc)?$').firstMatch(target);
+    final hasPosition = centerX != null || centerY != null;
+    if (hasPosition && (centerX == null || centerY == null)) {
+      throw ArgumentError('角色 position 必须同时提供 centerX 和 centerY');
+    }
+    if (hasPosition) {
+      if (!RegExp(r'^character_[1-6]$').hasMatch(target)) {
+        throw ArgumentError('角色 position 仅能写入 character_N 正向角色框');
+      }
+      final x = centerX!;
+      final y = centerY!;
+      if (!x.isFinite || !y.isFinite || x < 0 || x > 1 || y < 0 || y > 1) {
+        throw ArgumentError('角色 position 的 centerX、centerY 必须在 0..1 范围内');
+      }
+    }
+
     // 局部重绘框守卫：非重绘模式下禁止写入 inpaint 框
     if ((target == 'inpaint_positive' || target == 'inpaint_negative') &&
         !isInpaintingMode) {
@@ -796,7 +858,6 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
 
     // 多角色框：character_N（prompt）或 character_N_uc（负向）
-    final charMatch = RegExp(r'^character_(\d+)(_uc)?$').firstMatch(target);
     if (charMatch != null) {
       final idx = int.parse(charMatch.group(1)!) - 1; // 用户视角 1-based
       final isUc = charMatch.group(2) == '_uc';
@@ -807,26 +868,35 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       while (_characters.length <= idx) {
         _characters = [
           ..._characters,
-          const CharacterSpec(
-            prompt: '',
-            uc: null,
-            centerX: 0.5,
-            centerY: 0.5,
-          )
+          const CharacterSpec(prompt: ''),
         ];
       }
+      final currentCharacter = _characters[idx];
       if (isUc) {
-        final current = _characters[idx].uc ?? '';
+        final current = currentCharacter.uc ?? '';
         final newUc = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        replaceCharacterNegative(idx, newUc);
+        _characters = [
+          for (int i = 0; i < _characters.length; i++)
+            i == idx ? currentCharacter.copyWith(uc: newUc) : _characters[i],
+        ];
       } else {
-        final current = _characters[idx].prompt;
+        final current = currentCharacter.prompt;
         final newPrompt = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        replaceCharacterPrompt(idx, newPrompt);
+        _characters = [
+          for (int i = 0; i < _characters.length; i++)
+            if (i == idx)
+              currentCharacter.copyWith(
+                prompt: newPrompt,
+                centerX: centerX,
+                centerY: centerY,
+              )
+            else
+              _characters[i],
+        ];
       }
       _promptVersion++;
       await _saveCharactersDraft();
@@ -919,12 +989,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     while (characters.length <= index) {
       characters = [
         ...characters,
-        const CharacterSpec(
-          prompt: '',
-          uc: null,
-          centerX: 0.5,
-          centerY: 0.5,
-        )
+        const CharacterSpec(prompt: ''),
       ];
     }
     updateCharacter(index, characters[index].copyWith(prompt: value.trim()));
@@ -936,12 +1001,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     while (characters.length <= index) {
       characters = [
         ...characters,
-        const CharacterSpec(
-          prompt: '',
-          uc: null,
-          centerX: 0.5,
-          centerY: 0.5,
-        )
+        const CharacterSpec(prompt: ''),
       ];
     }
     updateCharacter(index, characters[index].copyWith(uc: value.trim()));
@@ -970,6 +1030,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     List<String>? characterPrompts,
     List<String>? characterNegatives,
   }) async {
+    final previousCharacters = _characters;
     await clearAllPrompts();
     if (positive != null && positive.trim().isNotEmpty) {
       if (generationMode == GenerationMode.inpainting) {
@@ -992,11 +1053,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         final uc = (characterNegatives != null && i < characterNegatives.length)
             ? characterNegatives[i].trim()
             : '';
+        final previous =
+            i < previousCharacters.length ? previousCharacters[i] : null;
+        final hasPreviousPosition =
+            previous?.centerX != null && previous?.centerY != null;
         newChars.add(CharacterSpec(
           prompt: p,
           uc: uc.isEmpty ? null : uc,
-          centerX: 0.5,
-          centerY: 0.5,
+          centerX: hasPreviousPosition ? previous?.centerX : null,
+          centerY: hasPreviousPosition ? previous?.centerY : null,
         ));
       }
       characters = newChars;
@@ -1063,7 +1128,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedModel(String value) async {
+    final wasMediumEffort = isMediumEffort;
+    final previousHighSampling = supportsEffortToggle && !isMediumEffort
+        ? (steps: steps, sampler: selectedSampler, cfgRescale: cfgRescale)
+        : _highEffortSampling;
     selectedModel = value;
+    _syncEffortFromSelectedModel();
+    if (isMediumEffort) _highEffortSampling = previousHighSampling;
+    if (wasMediumEffort && supportsEffortToggle && !isMediumEffort) {
+      _highEffortSampling = previousHighSampling;
+      await _restoreHighEffortSampling();
+    }
     await _manageSettings.setSelectedModelDraft(value);
     // 切换到选中模型对应的 endpoint，提交时 _resolveCreds 会读 active endpoint
     final opt = imageModelOptions.where((o) => o.modelId == value).toList();
@@ -1112,9 +1187,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         : ApiConstants.supportedNoiseSchedules;
     final normalizedSampler = selectedSampler.trim().toLowerCase();
     final normalizedNoiseSchedule = selectedNoiseSchedule.trim().toLowerCase();
-    final nextSampler = samplers.contains(normalizedSampler)
-        ? normalizedSampler
-        : ApiConstants.defaultSampler;
+    final nextSampler = isMediumEffort
+        ? 'k_euler_ancestral'
+        : samplers.contains(normalizedSampler)
+            ? normalizedSampler
+            : ApiConstants.defaultSampler;
     final nextNoiseSchedule = noiseSchedules.contains(normalizedNoiseSchedule)
         ? normalizedNoiseSchedule
         : ApiConstants.defaultNoiseSchedule;
@@ -1126,6 +1203,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     if (selectedNoiseSchedule != nextNoiseSchedule) {
       selectedNoiseSchedule = nextNoiseSchedule;
       await _manageSettings.setSelectedNoiseScheduleDraft(nextNoiseSchedule);
+    }
+    if (isMediumEffort) {
+      steps = 14;
+      cfgRescale = 0;
+      await Future.wait([
+        _manageSettings.setStepsDraft(steps),
+        _manageSettings.setCfgRescaleDraft(cfgRescale),
+      ]);
     }
   }
 
@@ -1173,7 +1258,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedSampler(String value) async {
-    selectedSampler = value;
+    selectedSampler = isMediumEffort ? 'k_euler_ancestral' : value;
     notifyListeners();
     await _manageSettings.setSelectedSamplerDraft(selectedSampler);
   }
@@ -1191,24 +1276,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateCfgRescale(double value) async {
-    cfgRescale = value;
-    await _manageSettings.setCfgRescaleDraft(value);
+    cfgRescale = isMediumEffort ? 0 : value;
+    await _manageSettings.setCfgRescaleDraft(cfgRescale);
     notifyListeners();
   }
 
   Future<void> updateSteps(int value) async {
-    steps = isV5Model
-        ? value.clamp(1, 28)
-        : isIkunEndpoint && isStepsLocked
-            ? ApiConstants.defaultSteps
-            : value.clamp(1, 50);
+    steps = isMediumEffort
+        ? 14
+        : isV5Model
+            ? value.clamp(1, 28)
+            : isIkunEndpoint && isStepsLocked
+                ? ApiConstants.defaultSteps
+                : value.clamp(1, 50);
     await _manageSettings.setStepsDraft(steps);
     notifyListeners();
   }
 
   Future<void> toggleStepsLock() async {
     isStepsLocked = !isStepsLocked;
-    if (isStepsLocked && isIkunEndpoint) {
+    if (isStepsLocked && isIkunEndpoint && !isMediumEffort) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
@@ -1533,23 +1620,26 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final resolutionParts = selectedResolution.split('x');
     final width = int.tryParse(resolutionParts.first) ?? 832;
     final height = int.tryParse(resolutionParts.last) ?? 1216;
-    final actualModel = option?.actualModel ?? selectedModel;
+    final actualModel = _applyEffortToModel(
+      option?.actualModel ?? _resolveActualModelId(selectedModel),
+    );
     return GenerationTask(
       taskId: taskId ?? const Uuid().v4(),
       model: actualModel,
-      endpointId: option?.endpointId,
+      endpointId: option?.endpointId ?? _selectedNovelAiEndpointId,
       protocol: option?.protocol,
       prompt: prompt.trim(),
-      negativePrompt:
-          negativePrompt.trim().isEmpty ? null : negativePrompt.trim(),
+      negativePrompt: _isGatewayMediumEffort || negativePrompt.trim().isEmpty
+          ? null
+          : negativePrompt.trim(),
       width: width,
       height: height,
       size: selectedResolution,
       scale: scale,
-      cfgRescale: cfgRescale,
-      sampler: selectedSampler,
+      cfgRescale: isMediumEffort ? 0 : cfgRescale,
+      sampler: isMediumEffort ? 'k_euler_ancestral' : selectedSampler,
       noiseSchedule: selectedNoiseSchedule,
-      steps: steps,
+      steps: isMediumEffort ? 14 : steps,
       seed: seed,
       status: AppConstants.taskPending,
       createdAt: DateTime.now(),
@@ -1668,7 +1758,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return;
     }
     final enabledCharacters = supportsCharacterPrompts
-        ? characters.where((c) => c.enabled).toList()
+        ? characters
+            .where((c) => c.enabled)
+            .map((c) => _isGatewayMediumEffort
+                ? c.copyWith(clearUc: true, referenceImages: const [])
+                : c)
+            .toList()
         : const <CharacterSpec>[];
     final supportsImg2Img =
         is7877Endpoint || isIkunEndpoint || isOfficialEndpoint;
@@ -1784,11 +1879,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final task = GenerationTask(
       taskId: const Uuid().v4(),
       model: actualModelId,
-      endpointId: selectedOption?.endpointId,
+      endpointId: selectedOption?.endpointId ?? _selectedNovelAiEndpointId,
       protocol: selectedOption?.protocol,
       prompt: effectivePrompt,
       negativePrompt: (provider == ImageProviderType.gpt ||
               provider == ImageProviderType.nanoBanana ||
+              _isGatewayMediumEffort ||
               effectiveNegativePrompt.isEmpty)
           ? null
           : effectiveNegativePrompt,
@@ -1926,7 +2022,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     sessionResults = [];
     selectedResultTaskId = null;
     _userPickedResult = false;
-    _cancelTiled = false;    errorMessage = null;
+    _cancelTiled = false;
+    errorMessage = null;
     await BackgroundKeepAliveService.instance.acquire(
       notificationText: '准备分块重绘…',
     );
@@ -2367,11 +2464,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
     characters = [
       ...characters,
-      const CharacterSpec(
-        prompt: '',
-        centerX: 0.5,
-        centerY: 0.5,
-      )
+      const CharacterSpec(prompt: ''),
     ];
     errorMessage = null;
     _saveCharactersDraft();
@@ -2437,24 +2530,38 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> loadFromHistory(GenerationTask task) async {
+    final taskEffortModels = task.providerType == ImageProviderType.novelAi
+        ? _v5EffortModels(task.model)
+        : null;
     // 历史任务保存了 endpointId 时，必须先恢复同一渠道，避免同名模型落到另一个 NovelAI 协议。
     final candidates = imageModelOptions.where(
       (option) =>
           option.provider == task.providerType &&
-          option.actualModel == task.model,
+          (option.actualModel == task.model ||
+              (taskEffortModels != null &&
+                  _v5EffortModels(option.actualModel) == taskEffortModels)),
     );
     final matched = task.endpointId == null
         ? candidates.firstOrNull
         : candidates
                 .where((option) => option.endpointId == task.endpointId)
                 .firstOrNull ??
-            candidates.firstOrNull;
+            (taskEffortModels == null ? candidates.firstOrNull : null);
     selectedModel = matched?.modelId ??
         switch (task.providerType) {
           ImageProviderType.gpt => 'gpt:${task.model}',
           ImageProviderType.nanoBanana => 'nano:${task.model}',
-          ImageProviderType.novelAi => task.model,
+          ImageProviderType.novelAi =>
+            taskEffortModels != null && task.endpointId != null
+                ? 'nai:${task.endpointId}:${task.model}'
+                : task.model,
         };
+    if (taskEffortModels != null) {
+      _highEffortSampling = null;
+      effort = task.model.trim().toLowerCase() == taskEffortModels.medium
+          ? GenerationEffort.medium
+          : GenerationEffort.high;
+    }
     if (matched?.endpointId != null) {
       await _manageSettings.setActiveEndpointId(
         matched!.provider,
@@ -2466,6 +2573,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     cfgRescale = task.cfgRescale;
     selectedSampler = task.sampler;
     selectedNoiseSchedule = task.noiseSchedule;
+    if (taskEffortModels != null) {
+      steps = task.steps;
+      await _manageSettings.setStepsDraft(steps);
+    }
     seed = task.seed;
     appliedSeed = task.seed;
     sourceImagePath =
@@ -2587,18 +2698,56 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         normalized.contains('nai-diffusion-4.');
   }
 
-  /// Effort=Medium 时把官方 V5 Full 模型切换为对应 medium 蒸馏版
-  /// （inpainting 模型映射到 nai-diffusion-5-full-medium-inpainting）。
+  /// 官方原生名称与网关别名分别成对切换，保留渠道的模型命名方式。
+  static ({String high, String medium})? _v5EffortModels(String model) =>
+      switch (model.trim().toLowerCase()) {
+        'nai-diffusion-5-full' || 'nai-diffusion-5-full-medium' => (
+            high: 'nai-diffusion-5-full',
+            medium: 'nai-diffusion-5-full-medium',
+          ),
+        'nai-diffusion-5-full-inpainting' ||
+        'nai-diffusion-5-full-medium-inpainting' =>
+          (
+            high: 'nai-diffusion-5-full-inpainting',
+            medium: 'nai-diffusion-5-full-medium-inpainting',
+          ),
+        'nai-v5-full' || 'nai-v5-full-medium' => (
+            high: 'nai-v5-full',
+            medium: 'nai-v5-full-medium',
+          ),
+        'nai-v5-inpaint' || 'nai-v5-inpaint-medium' => (
+            high: 'nai-v5-inpaint',
+            medium: 'nai-v5-inpaint-medium',
+          ),
+        'nai-v5-full-limit' => (
+            high: 'nai-v5-full-limit',
+            medium: 'nai-v5-full-medium',
+          ),
+        'nai-v5-inpaint-limit' => (
+            high: 'nai-v5-inpaint-limit',
+            medium: 'nai-v5-inpaint-medium',
+          ),
+        _ => null,
+      };
+
+  bool get _selectedModelIsMediumEffort {
+    final model =
+        currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
+    return model.trim().toLowerCase() == _v5EffortModels(model)?.medium;
+  }
+
+  void _syncEffortFromSelectedModel() {
+    _highEffortSampling = null;
+    effort = _selectedModelIsMediumEffort
+        ? GenerationEffort.medium
+        : GenerationEffort.high;
+  }
+
   String _applyEffortToModel(String model) {
-    if (!isMediumEffort) return model;
-    final normalized = model.trim();
-    if (normalized == 'nai-diffusion-5-full-inpainting') {
-      return 'nai-diffusion-5-full-medium-inpainting';
-    }
-    if (normalized == 'nai-diffusion-5-full') {
-      return 'nai-diffusion-5-full-medium';
-    }
-    return model;
+    if (!supportsEffortToggle) return model;
+    final models = _v5EffortModels(model);
+    if (models == null) return model;
+    return isMediumEffort ? models.medium : models.high;
   }
 
   String _resolveActualModelId(String selectedModelId) {
@@ -2633,7 +2782,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       final parts = selectedModelId.split(':');
       if (parts.length >= 3 &&
           (parts[1] == AppConstants.novelAiImageGenerationsEndpointId ||
-              parts[1] == AppConstants.novelAiChatCompletionsEndpointId)) {
+              parts[1] == AppConstants.novelAiChatCompletionsEndpointId ||
+              parts[1] == AppConstants.novelAiOfficialEndpointId)) {
         return parts.sublist(2).join(':');
       }
     }
