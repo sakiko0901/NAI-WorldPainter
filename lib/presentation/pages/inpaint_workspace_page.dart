@@ -18,6 +18,7 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
+import 'package:nai_huishi/presentation/widgets/character_position_editor.dart';
 import 'package:nai_huishi/presentation/controllers/inpaint_preview_scheduler.dart';
 import 'package:nai_huishi/presentation/controllers/inpaint_mask_controller.dart';
 
@@ -341,6 +342,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   late final SaveImageUseCase _saveImage;
   final _promptController = TextEditingController();
   final _negativeController = TextEditingController();
+  List<CharacterSpec> _characterSnapshot = const [];
 
   String? _sourcePath;
 
@@ -373,6 +375,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   bool _disabledOriginalImage = false;
   bool _colorCorrect = true;
   bool _promptExpanded = true;
+  bool _charactersExpanded = false;
+  final Set<int> _expandedInpaintCharacters = {};
   bool _paramsExpanded = false;
   bool _busy = false;
   InpaintStroke? _draft;
@@ -422,6 +426,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _generation.addListener(_onVmChanged);
     _promptController.text = _generation.inpaintPrompt;
     _negativeController.text = _generation.inpaintNegativePrompt;
+    _characterSnapshot = List.of(_generation.characters);
+    _charactersExpanded = _characterSnapshot.isNotEmpty;
+    if (_characterSnapshot.isNotEmpty) _expandedInpaintCharacters.add(0);
     _inpaintStrength = _generation.inpaintStrength;
     _disabledOriginalImage = _generation.disabledOriginalImage;
     _colorCorrect = _generation.colorCorrect;
@@ -435,6 +442,32 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   /// 忽略工作区自己写回的 session 产物（base/mask），避免把方框裁剪图
   /// 误当新图加载造成"图片被裁切"。
   void _onVmChanged() {
+    final prompt = _generation.inpaintPrompt;
+    if (_promptController.text != prompt) {
+      _promptController.value = TextEditingValue(
+        text: prompt,
+        selection: TextSelection.collapsed(offset: prompt.length),
+      );
+    }
+    final negativePrompt = _generation.inpaintNegativePrompt;
+    if (_negativeController.text != negativePrompt) {
+      _negativeController.value = TextEditingValue(
+        text: negativePrompt,
+        selection: TextSelection.collapsed(offset: negativePrompt.length),
+      );
+    }
+    final characters = _generation.characters;
+    if (!listEquals(_characterSnapshot, characters)) {
+      _characterSnapshot = List.of(characters);
+      _charactersExpanded = characters.isNotEmpty;
+      if (characters.isEmpty) {
+        _expandedInpaintCharacters.clear();
+      } else if (_expandedInpaintCharacters.isEmpty) {
+        _expandedInpaintCharacters.add(0);
+      }
+      if (mounted) setState(() {});
+    }
+
     final path = _generation.sourceImagePath;
     if (path == null ||
         path == _sourcePath ||
@@ -1090,6 +1123,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
 
   /// 页面底部生成按钮触发：在工作区内完成本轮局部重绘生成。
   Future<bool> _prepareGeneration() async {
+    if (_generation.isProcessingImage) return false;
     final box = _box;
     final sourcePng = _sourcePngBytes;
     if (sourcePng == null ||
@@ -1215,6 +1249,16 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           await File(comparisonPath)
               .writeAsBytes(candidateImages.comparisonPng, flush: true);
           if (!mounted || revision != _activeRevision) return false;
+          // 工作区的成功候选也进入生成结果区，便于继续保存、查看或复用。
+          // comparisonPath 是保留未遮罩区域的完整合成图；generatedPath 仅是模型输出。
+          _generation.addCompletedWorkspaceResult(
+            completed.copyWith(
+              clearId: true,
+              clearImageUrl: true,
+              imagePath: comparisonPath,
+              isInternal: false,
+            ),
+          );
           setState(() {
             if (!receivedCandidate) {
               _candidates.clear();
@@ -1496,6 +1540,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
             child: Column(children: [
               _buildPromptField(
+                key: const ValueKey('inpaint-positive-prompt'),
                 controller: _promptController,
                 label: '正向提示词',
                 hint: '描述希望在框选区域生成的内容',
@@ -1503,12 +1548,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
               ),
               const SizedBox(height: 8),
               _buildPromptField(
+                key: const ValueKey('inpaint-negative-prompt'),
                 controller: _negativeController,
                 label: '负向提示词',
                 hint: '描述希望排除的内容',
                 onChanged: (value) =>
                     _generation.updateInpaintNegativePrompt(value),
               ),
+              const SizedBox(height: 10),
+              _buildCharacterPrompts(colors),
               if (_paramsExpanded) ...[
                 const SizedBox(height: 6),
                 _buildParams(),
@@ -1538,12 +1586,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   }
 
   Widget _buildPromptField({
+    Key? key,
     required TextEditingController controller,
     required String label,
     required String hint,
     required ValueChanged<String> onChanged,
   }) {
     return TextField(
+      key: key,
       controller: controller,
       enabled: !_busy,
       minLines: 3,
@@ -1559,6 +1609,187 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       ),
       onChanged: onChanged,
     );
+  }
+
+  Widget _buildCharacterPrompts(ColorScheme colors) {
+    final characters = _generation.characters;
+    final enabledCount =
+        characters.where((character) => character.enabled).length;
+    return Container(
+      key: const ValueKey('inpaint-character-prompts'),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.24),
+        borderRadius: BorderRadius.circular(12),
+        border:
+            Border.all(color: colors.outlineVariant.withValues(alpha: 0.65)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Row(
+              children: [
+                Icon(CupertinoIcons.person_3, size: 16, color: colors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(
+                        () => _charactersExpanded = !_charactersExpanded),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Row(children: [
+                        const Text(
+                          '角色提示词',
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                        if (characters.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '$enabledCount/${characters.length}',
+                            style: TextStyle(
+                                fontSize: 10, color: colors.onSurfaceVariant),
+                          ),
+                        ],
+                      ]),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey('inpaint-add-character'),
+                  tooltip: '添加角色',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _busy || characters.length >= 6
+                      ? null
+                      : _addInpaintCharacter,
+                  icon: const Icon(CupertinoIcons.add, size: 18),
+                ),
+                IconButton(
+                  tooltip: _charactersExpanded ? '收起角色' : '展开角色',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(
+                      () => _charactersExpanded = !_charactersExpanded),
+                  icon: Icon(
+                    _charactersExpanded
+                        ? CupertinoIcons.chevron_up
+                        : CupertinoIcons.chevron_down,
+                    size: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 180),
+            crossFadeState: _charactersExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: characters.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                      child: Text(
+                        '为每个角色分别填写正向与负向提示词。新角色默认由 V5 自动安排位置。',
+                        style: TextStyle(
+                            fontSize: 11, color: colors.onSurfaceVariant),
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        for (final entry in characters.asMap().entries)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: _InpaintCharacterPromptCard(
+                              key: ValueKey('inpaint-character-${entry.key}'),
+                              character: entry.value,
+                              roleNumber: entry.key + 1,
+                              expanded: _expandedInpaintCharacters
+                                  .contains(entry.key),
+                              enabled: !_busy,
+                              continuous: _generation.isV5Model,
+                              aspectRatio: _resolution.$1 / _resolution.$2,
+                              onToggleExpanded: () => setState(() {
+                                if (_expandedInpaintCharacters
+                                    .contains(entry.key)) {
+                                  _expandedInpaintCharacters.remove(entry.key);
+                                } else {
+                                  _expandedInpaintCharacters.add(entry.key);
+                                }
+                              }),
+                              onMoveUp: entry.key == 0 || _busy
+                                  ? null
+                                  : () => _moveInpaintCharacter(entry.key, -1),
+                              onMoveDown: entry.key == characters.length - 1 ||
+                                      _busy
+                                  ? null
+                                  : () => _moveInpaintCharacter(entry.key, 1),
+                              onDelete: _busy
+                                  ? null
+                                  : () => _removeInpaintCharacter(entry.key),
+                              onChanged: (character) => _generation
+                                  .updateCharacter(entry.key, character),
+                              onAutoPosition: () => _generation
+                                  .setCharacterPositionAuto(entry.key),
+                              onPositionGestureChanged: (active) =>
+                                  InpaintWorkspaceCard.gestureActive.value =
+                                      active,
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addInpaintCharacter() {
+    if (_busy || _generation.characters.length >= 6) return;
+    _generation.addCharacter();
+    final index = _generation.characters.length - 1;
+    setState(() {
+      _charactersExpanded = true;
+      _expandedInpaintCharacters.add(index);
+    });
+  }
+
+  void _removeInpaintCharacter(int index) {
+    final oldLength = _generation.characters.length;
+    _generation.removeCharacter(index);
+    setState(() {
+      final updated = <int>{};
+      for (final expanded in _expandedInpaintCharacters) {
+        if (expanded < index) updated.add(expanded);
+        if (expanded > index) updated.add(expanded - 1);
+      }
+      _expandedInpaintCharacters
+        ..clear()
+        ..addAll(updated);
+      if (oldLength <= 1) _charactersExpanded = false;
+    });
+  }
+
+  void _moveInpaintCharacter(int index, int delta) {
+    final target = index + delta;
+    if (index < 0 || target < 0 || target >= _generation.characters.length) {
+      return;
+    }
+    final expandedIndex = _expandedInpaintCharacters.contains(index);
+    final expandedTarget = _expandedInpaintCharacters.contains(target);
+    if (delta < 0) {
+      _generation.moveCharacterUp(index);
+    } else {
+      _generation.moveCharacterDown(index);
+    }
+    setState(() {
+      _expandedInpaintCharacters.remove(index);
+      _expandedInpaintCharacters.remove(target);
+      if (expandedIndex) _expandedInpaintCharacters.add(target);
+      if (expandedTarget) _expandedInpaintCharacters.add(index);
+    });
   }
 
   Widget _resolutionButton(ColorScheme colors) {
@@ -2638,6 +2869,248 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _maskPreviewBytes = bytes;
       });
     });
+  }
+}
+
+/// 局部重绘中的单个角色提示词编辑卡片。
+class _InpaintCharacterPromptCard extends StatefulWidget {
+  final CharacterSpec character;
+  final int roleNumber;
+  final bool expanded;
+  final bool enabled;
+  final bool continuous;
+  final double aspectRatio;
+  final VoidCallback onToggleExpanded;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+  final VoidCallback? onDelete;
+  final ValueChanged<CharacterSpec> onChanged;
+  final VoidCallback onAutoPosition;
+  final ValueChanged<bool> onPositionGestureChanged;
+
+  const _InpaintCharacterPromptCard({
+    super.key,
+    required this.character,
+    required this.roleNumber,
+    required this.expanded,
+    required this.enabled,
+    required this.continuous,
+    required this.aspectRatio,
+    required this.onToggleExpanded,
+    required this.onMoveUp,
+    required this.onMoveDown,
+    required this.onDelete,
+    required this.onChanged,
+    required this.onAutoPosition,
+    required this.onPositionGestureChanged,
+  });
+
+  @override
+  State<_InpaintCharacterPromptCard> createState() =>
+      _InpaintCharacterPromptCardState();
+}
+
+class _InpaintCharacterPromptCardState
+    extends State<_InpaintCharacterPromptCard> {
+  late final TextEditingController _promptController;
+  late final TextEditingController _negativeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _promptController = TextEditingController(text: widget.character.prompt);
+    _negativeController =
+        TextEditingController(text: widget.character.uc ?? '');
+  }
+
+  @override
+  void didUpdateWidget(covariant _InpaintCharacterPromptCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncController(_promptController, widget.character.prompt);
+    _syncController(_negativeController, widget.character.uc ?? '');
+  }
+
+  void _syncController(TextEditingController controller, String value) {
+    if (controller.text == value) return;
+    controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _negativeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final character = widget.character;
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: colors.outlineVariant.withValues(alpha: 0.55)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 2, 2, 2),
+            child: Row(
+              children: [
+                Icon(CupertinoIcons.person_crop_circle,
+                    size: 17, color: colors.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: InkWell(
+                    key: ValueKey(
+                        'inpaint-character-header-${widget.roleNumber}'),
+                    onTap: widget.onToggleExpanded,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        '角色 ${widget.roleNumber}',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+                if (!character.enabled)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Text('已停用',
+                        style: TextStyle(
+                            fontSize: 10, color: colors.onSurfaceVariant)),
+                  ),
+                Transform.scale(
+                  scale: 0.8,
+                  child: Switch.adaptive(
+                    key: ValueKey(
+                        'inpaint-character-enabled-${widget.roleNumber}'),
+                    value: character.enabled,
+                    onChanged: widget.enabled
+                        ? (value) =>
+                            widget.onChanged(character.copyWith(enabled: value))
+                        : null,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '角色上移',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onMoveUp,
+                  icon: const Icon(CupertinoIcons.arrow_up, size: 15),
+                ),
+                IconButton(
+                  tooltip: '角色下移',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onMoveDown,
+                  icon: const Icon(CupertinoIcons.arrow_down, size: 15),
+                ),
+                IconButton(
+                  key:
+                      ValueKey('inpaint-remove-character-${widget.roleNumber}'),
+                  tooltip: '删除角色',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onDelete,
+                  icon: Icon(CupertinoIcons.delete,
+                      size: 15, color: colors.error),
+                ),
+                Icon(
+                  widget.expanded
+                      ? CupertinoIcons.chevron_up
+                      : CupertinoIcons.chevron_down,
+                  size: 13,
+                  color: colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+              ],
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 160),
+            crossFadeState: widget.expanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: IgnorePointer(
+              ignoring: !widget.enabled,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      key: ValueKey(
+                          'inpaint-character-prompt-${widget.roleNumber}'),
+                      controller: _promptController,
+                      enabled: widget.enabled,
+                      minLines: 3,
+                      maxLines: 6,
+                      textInputAction: TextInputAction.newline,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: '角色 ${widget.roleNumber} 正向提示词',
+                        hintText: '描述该角色的特征',
+                        alignLabelWithHint: true,
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) =>
+                          widget.onChanged(character.copyWith(prompt: value)),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: ValueKey(
+                          'inpaint-character-negative-${widget.roleNumber}'),
+                      controller: _negativeController,
+                      enabled: widget.enabled,
+                      minLines: 2,
+                      maxLines: 5,
+                      textInputAction: TextInputAction.newline,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: '角色 ${widget.roleNumber} 负向提示词',
+                        hintText: '描述该角色要排除的特征',
+                        alignLabelWithHint: true,
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => widget.onChanged(
+                        character.copyWith(
+                          uc: value.isEmpty ? null : value,
+                          clearUc: value.isEmpty,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    CharacterPositionEditor(
+                      aspectRatio: widget.aspectRatio,
+                      continuous: widget.continuous,
+                      roleNumber: widget.roleNumber,
+                      x: character.centerX,
+                      y: character.centerY,
+                      onAuto: widget.onAutoPosition,
+                      onGestureActive: widget.onPositionGestureChanged,
+                      onChanged: (point) => widget.onChanged(
+                        character.copyWith(
+                          centerX: point.dx,
+                          centerY: point.dy,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

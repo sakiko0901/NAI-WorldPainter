@@ -91,6 +91,10 @@ class ManageSettingsUseCase {
       _repo.getCharactersDraft();
   Future<void> setCharactersDraft(List<CharacterSpec> value) =>
       _repo.setCharactersDraft(value);
+  Future<List<CharacterSpec>> getInpaintCharactersDraft() =>
+      _repo.getInpaintCharactersDraft();
+  Future<void> setInpaintCharactersDraft(List<CharacterSpec> value) =>
+      _repo.setInpaintCharactersDraft(value);
   Future<List<CharacterReferenceImage>> getVibeReferencesDraft() =>
       _repo.getVibeReferencesDraft();
   Future<void> setVibeReferencesDraft(List<CharacterReferenceImage> value) =>

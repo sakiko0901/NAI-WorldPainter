@@ -42,6 +42,7 @@ class AppConstants {
   static const String keyStepsDraft = 'steps_draft';
   static const String keyStepsLocked = 'steps_locked';
   static const String keyCharactersDraft = 'characters_draft';
+  static const String keyInpaintCharactersDraft = 'inpaint_characters_draft';
   static const String keyVibeReferencesDraft = 'vibe_references_draft';
   static const String keyPreciseReferencesDraft = 'precise_references_draft';
   static const String keyReferenceModeDraft = 'reference_mode_draft';

@@ -549,34 +549,148 @@ void main() {
     expect(_body(requests.single)['response_format'], 'b64_json');
   });
 
-  test('ikun 局部重绘拒绝 gateway 无法消费的多角色控制', () async {
-    final directory =
-        await Directory.systemTemp.createTemp('nai_ikun_inpaint_chars_');
-    addTearDown(() => directory.delete(recursive: true));
-    final source = File('${directory.path}/source.png');
-    final mask = File('${directory.path}/mask.png');
-    await source.writeAsBytes(const [1, 2, 3]);
-    await mask.writeAsBytes(const [4, 5, 6]);
-    final service = _service();
-
-    await expectLater(
-      service.inpaintImage(
-        _task(
-          protocol: AppConstants.novelAiImageGenerationsProtocol,
-          sourceImagePath: source.path,
-          maskImagePath: mask.path,
-          characters: const [CharacterSpec(prompt: 'red hair')],
+  test('ikun 高模型局部重绘发送自动布局角色与角色负向提示', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: true,
+      useCoords: false,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(prompt: 'red hair', uc: 'bad hair'),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          enabled: false,
         ),
-        'key',
-        baseUri.toString(),
-      ),
-      throwsA(isA<ApiException>().having(
-        (error) => error.code,
-        'code',
-        'IKUN_CHARACTERS_INPAINTING_UNSUPPORTED',
-      )),
+      ],
     );
-    expect(requests, isEmpty);
+
+    final body = _body(request);
+    expect(request.path, ApiConstants.imageGenerations);
+    expect(body['characterPrompts'], [
+      {'prompt': 'red hair'},
+    ]);
+    expect(body['use_coords'], false);
+    expect(body['v4_negative_prompt'], {
+      'caption': {
+        'base_caption': 'global negative',
+        'char_captions': [
+          {'char_caption': 'bad hair', 'centers': <Map<String, double>>[]},
+        ],
+      },
+      'legacy_uc': false,
+    });
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+    expect(body, isNot(contains('params')));
+  });
+
+  test('ikun 高模型局部重绘保留角色手动坐标和负向坐标', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: true,
+      useCoords: true,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(
+          prompt: 'red hair',
+          uc: 'bad hair',
+          centerX: 0.23,
+          centerY: 0.37,
+        ),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          centerX: 0.8,
+          centerY: 0.7,
+          enabled: false,
+        ),
+      ],
+    );
+
+    final body = _body(request);
+    expect(body['characterPrompts'], [
+      {
+        'prompt': 'red hair',
+        'center': {'x': 0.23, 'y': 0.37},
+      },
+    ]);
+    expect(body['use_coords'], true);
+    expect(body['v4_negative_prompt']['caption']['char_captions'], [
+      {
+        'char_caption': 'bad hair',
+        'centers': [
+          {'x': 0.23, 'y': 0.37},
+        ],
+      },
+    ]);
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+  });
+
+  test('7877 高模型局部重绘发送自动布局角色正负向并忽略禁用角色', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: false,
+      useCoords: false,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(prompt: 'red hair', uc: 'bad hair'),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          enabled: false,
+        ),
+      ],
+    );
+
+    final body = _body(request);
+    final params = _asMap(body['params']);
+    expect(request.path, ApiConstants.imageGenerations);
+    expect(params['characters'], [
+      {'prompt': 'red hair', 'uc': 'bad hair'},
+    ]);
+    expect(params['use_coords'], false);
+    expect(params['negative_prompt'], 'global negative');
+    expect(body, isNot(contains('characterPrompts')));
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+  });
+
+  test('7877 高模型局部重绘保留角色手动坐标', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: false,
+      useCoords: true,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(
+          prompt: 'red hair',
+          uc: 'bad hair',
+          centerX: 0.23,
+          centerY: 0.37,
+        ),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          centerX: 0.8,
+          centerY: 0.7,
+          enabled: false,
+        ),
+      ],
+    );
+
+    final params = _asMap(_body(request)['params']);
+    expect(params['characters'], [
+      {
+        'prompt': 'red hair',
+        'uc': 'bad hair',
+        'center': {'x': 0.23, 'y': 0.37},
+      },
+    ]);
+    expect(params['use_coords'], true);
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
   });
 
   test('ikun 局部重绘通过 NewAPI 统一入口发送顶层参数', () async {
@@ -1128,6 +1242,41 @@ Future<_CapturedRequest> _captureCharacterRequest(
     );
     await _deleteIfPresent(result.imagePath);
   }
+
+  expect(requests, hasLength(1));
+  return requests.single;
+}
+
+Future<_CapturedRequest> _captureInpaintCharacterRequest({
+  required bool isIkun,
+  required bool useCoords,
+  required List<CharacterSpec> characters,
+  required Uri baseUri,
+  required List<_CapturedRequest> requests,
+}) async {
+  final directory =
+      await Directory.systemTemp.createTemp('nai_inpaint_characters_');
+  addTearDown(() => directory.delete(recursive: true));
+  final source = File('${directory.path}/source.png');
+  final mask = File('${directory.path}/mask.png');
+  await source.writeAsBytes(const [1, 2, 3]);
+  await mask.writeAsBytes(const [4, 5, 6]);
+  final result = await _service().inpaintImage(
+    _task(
+      model: 'nai-diffusion-5-full',
+      protocol: isIkun
+          ? AppConstants.novelAiImageGenerationsProtocol
+          : AppConstants.novelAiChatCompletionsProtocol,
+      sourceImagePath: source.path,
+      maskImagePath: mask.path,
+      useCoords: useCoords,
+      characters: characters,
+      negativePrompt: 'global negative',
+    ),
+    'key',
+    baseUri.toString(),
+  );
+  await _deleteIfPresent(result.imagePath);
 
   expect(requests, hasLength(1));
   return requests.single;

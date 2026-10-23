@@ -23,6 +23,42 @@ void main() {
   });
 
   testWidgets(
+      'blocks generation settings and generation during image processing',
+      (tester) async {
+    vm.processingImage = true;
+    vm.imageProcessingLabel = '官方 Enhance';
+    vm.imageProcessingStatus = '上传原图…';
+
+    await tester.pumpWidget(_host(const GeneratePage()));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('generate-primary-button')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (widget) => widget is IconButton && widget.tooltip == '生成参数',
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(find.byKey(const ValueKey('result-processing-global-status')),
+        findsOneWidget);
+    expect(find.textContaining('官方 Enhance'), findsOneWidget);
+    expect(find.textContaining('上传原图…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
     'settings are a full page and edits preserve the creation draft and scroll',
     (tester) async {
       tester.view.devicePixelRatio = 1;

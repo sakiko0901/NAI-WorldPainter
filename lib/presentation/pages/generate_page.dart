@@ -180,6 +180,8 @@ class _GeneratePageState extends State<GeneratePage> {
       _negativeFocusNode.hasFocus ||
       _inpaintPromptFocusNode.hasFocus ||
       _inpaintNegativeFocusNode.hasFocus;
+
+  bool get _isImageOperationBusy => _vm.isGenerating || _vm.isProcessingImage;
   bool _isChatDrawerOpen = false;
 
   void _showToast(String message) {
@@ -225,7 +227,7 @@ class _GeneratePageState extends State<GeneratePage> {
           IconButton(
             tooltip: '生成参数',
             icon: const Icon(Icons.tune),
-            onPressed: _vm.isGenerating ? null : _openGenerationSettings,
+            onPressed: _isImageOperationBusy ? null : _openGenerationSettings,
           ),
         ],
       ),
@@ -382,7 +384,7 @@ class _GeneratePageState extends State<GeneratePage> {
                 ),
               },
               onValueChanged: (value) {
-                if (value != null && !_vm.isGenerating) {
+                if (value != null && !_isImageOperationBusy) {
                   FocusManager.instance.primaryFocus?.unfocus();
                   _characterPositionLocked = false;
                   _vm.setGenerationMode(value);
@@ -1328,26 +1330,22 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   /// 工作台上方的官方超分按钮：点击弹出倍率选择（2x / 4x）。
-  /// 结果区的"局部重绘"按钮：把该图与当前正负提示词导入工作区并跳转。
-  Future<void> _importResultToInpaint() async {
-    final displayTask = _vm.selectedResult ?? _vm.lastCompletedTask;
-    final path = displayTask?.imagePath;
+  /// 结果区的"局部重绘"按钮：把图片与完整提示词快照导入工作区并跳转。
+  Future<void> _importResultToInpaint(GenerationTask displayTask) async {
+    final path = displayTask.imagePath;
     if (path == null || !File(path).existsSync()) {
       _showToast('当前图片不可用');
       return;
     }
-    _vm.setGenerationMode(GenerationMode.inpainting);
-    _vm.setSourceImagePath(path);
-    _vm.setMaskImagePath(null);
-    // 把当前正负提示词带入局部重绘（保留重绘区已有内容，追加原始提示词）
-    final positive = displayTask?.prompt ?? '';
-    final negative = displayTask?.negativePrompt ?? '';
-    if (positive.isNotEmpty) {
-      await _vm.updateInpaintPrompt(positive);
+    try {
+      await _vm.importTaskToInpaint(displayTask);
+    } catch (error) {
+      if (mounted) {
+        _showToast(error.toString().replaceFirst('Bad state: ', ''));
+      }
+      return;
     }
-    if (negative.isNotEmpty) {
-      await _vm.updateInpaintNegativePrompt(negative);
-    }
+    if (!mounted) return;
     _showToast('已导入局部重绘');
     await Future.delayed(const Duration(milliseconds: 60));
     if (!mounted) return;
@@ -1486,8 +1484,8 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   /// 工作台的官方 Enhance 按钮：按提示词重绘放大（仅官方渠道显示）。
-  Future<void> _showEnhanceSheet() async {
-    final sourceId = (_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId;
+  Future<void> _showEnhanceSheet({required GenerationTask sourceTask}) async {
+    final sourceId = sourceTask.taskId;
     double magnitude = 0.3;
     double noise = 0.1;
     bool useMax = false;
@@ -1614,17 +1612,20 @@ class _GeneratePageState extends State<GeneratePage> {
       strength: magnitude,
       noise: noise,
       max: useMax,
+      sourceTask: sourceTask,
     );
     if (!mounted) return;
     if (ok) {
       _showToast('Enhance 完成，已加入本次结果');
-    } else if (_vm.errorMessage != null) {
-      _showToast(_vm.errorMessage!);
+    } else {
+      _showToast(_vm.errorMessage ?? '无法开始 Enhance，请稍后重试');
     }
   }
 
-  Future<void> _showOfficialUpscaleSheet() async {
-    final sourceId = (_vm.selectedResult ?? _vm.lastCompletedTask)?.taskId;
+  Future<void> _showOfficialUpscaleSheet({
+    required GenerationTask sourceTask,
+  }) async {
+    final sourceId = sourceTask.taskId;
     final scale = await showModalBottomSheet<int>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1688,12 +1689,12 @@ class _GeneratePageState extends State<GeneratePage> {
       _showToast('当前结果已变化，请重新选择要放大的图片');
       return;
     }
-    final ok = await _vm.upscaleWithOfficial(scale);
+    final ok = await _vm.upscaleWithOfficial(scale, sourceTask: sourceTask);
     if (!mounted) return;
     if (ok) {
       _showToast('超分完成，已加入本次结果');
-    } else if (_vm.errorMessage != null) {
-      _showToast(_vm.errorMessage!);
+    } else {
+      _showToast(_vm.errorMessage ?? '无法开始超分，请稍后重试');
     }
   }
 
@@ -1712,13 +1713,20 @@ class _GeneratePageState extends State<GeneratePage> {
       task: task,
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
+      processing: _vm.isProcessingImage,
+      processingSourceTaskId: _vm.imageProcessingSourceTaskId,
+      processingLabel: _vm.imageProcessingLabel,
+      processingStatus: _vm.imageProcessingStatus,
       error: _vm.errorMessage,
       streamPreviewBytes: taskStreamBytes,
       streamPreviewStep: taskStreamStep,
-      effort: _vm.supportsEffortToggle ? _vm.effort : null,
-      onEffortChanged:
-          _vm.supportsEffortToggle ? (value) => _vm.updateEffort(value) : null,
-      onImport: _vm.isGenerating || _isImportingWorkspaceImage
+      effort: _vm.supportsEffortToggle && !_isImageOperationBusy
+          ? _vm.effort
+          : null,
+      onEffortChanged: _vm.supportsEffortToggle && !_isImageOperationBusy
+          ? (value) => _vm.updateEffort(value)
+          : null,
+      onImport: _isImageOperationBusy || _isImportingWorkspaceImage
           ? null
           : _importWorkspaceImage,
       onSelect: (result) => _vm.selectResult(result.taskId),
@@ -1729,31 +1737,35 @@ class _GeneratePageState extends State<GeneratePage> {
                 imagePath: task.imagePath,
                 imageUrl: task.imageUrl,
               ),
-      onSave: task == null
+      onSave: task == null || _isImageOperationBusy
           ? null
           : () async {
               final path = await _vm.saveImage(task);
               if (mounted && path != null) _showToast('已保存到相册');
             },
-      onInpaint: hasLocalImage && !_vm.isNonNovelAiProvider
+      onInpaint:
+          hasLocalImage && !_vm.isNonNovelAiProvider && !_isImageOperationBusy
+              ? (result) {
+                  _vm.selectResult(result.taskId);
+                  return _importResultToInpaint(result);
+                }
+              : null,
+      onUpscale: hasLocalImage && !_isImageOperationBusy
           ? (result) {
               _vm.selectResult(result.taskId);
-              return _importResultToInpaint();
+              return _showOfficialUpscaleSheet(sourceTask: result);
             }
           : null,
-      onUpscale: hasLocalImage
-          ? (result) {
-              _vm.selectResult(result.taskId);
-              return _showOfficialUpscaleSheet();
-            }
-          : null,
-      onEnhance: hasLocalImage && _vm.isOfficialEndpoint
-          ? (result) {
-              _vm.selectResult(result.taskId);
-              return _showEnhanceSheet();
-            }
-          : null,
-      onDelete: task == null ? null : (result) => _confirmDeleteResult(result),
+      onEnhance:
+          hasLocalImage && _vm.isOfficialEndpoint && !_isImageOperationBusy
+              ? (result) {
+                  _vm.selectResult(result.taskId);
+                  return _showEnhanceSheet(sourceTask: result);
+                }
+              : null,
+      onDelete: task == null || _isImageOperationBusy
+          ? null
+          : (result) => _confirmDeleteResult(result),
     );
   }
 
@@ -1777,7 +1789,7 @@ class _GeneratePageState extends State<GeneratePage> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    if (_vm.isGenerating) {
+    if (_isImageOperationBusy) {
       _showToast('生成中请稍后删除');
       return;
     }
@@ -1796,7 +1808,7 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Future<void> _importWorkspaceImage() async {
-    if (_vm.isGenerating || _isImportingWorkspaceImage) return;
+    if (_isImageOperationBusy || _isImportingWorkspaceImage) return;
     setState(() => _isImportingWorkspaceImage = true);
     try {
       final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
@@ -1854,7 +1866,9 @@ class _GeneratePageState extends State<GeneratePage> {
                     vertical: 12,
                   ),
                 ),
-                onPressed: cancelling || _isImportingWorkspaceImage
+                onPressed: cancelling ||
+                        _isImportingWorkspaceImage ||
+                        _vm.isProcessingImage
                     ? null
                     : () {
                         FocusManager.instance.primaryFocus?.unfocus();
@@ -1866,19 +1880,28 @@ class _GeneratePageState extends State<GeneratePage> {
                           _vm.generate();
                         }
                       },
-                icon: Icon(
-                  _vm.isGenerating
-                      ? Icons.stop_circle_outlined
-                      : Icons.auto_awesome,
-                ),
+                icon: _vm.isProcessingImage
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _vm.isGenerating
+                            ? Icons.stop_circle_outlined
+                            : Icons.auto_awesome,
+                      ),
                 label: Text(
                   _isImportingWorkspaceImage
                       ? '正在导入图片…'
-                      : _vm.isGenerating
-                          ? (cancelling ? '正在停止后续任务…' : '停止后续生成 · $progress')
-                          : (_vm.batchCount > 1
-                              ? '生成 ${_vm.batchCount} 张图片'
-                              : '生成图片'),
+                      : _vm.isProcessingImage
+                          ? '正在处理图片…'
+                          : _vm.isGenerating
+                              ? (cancelling
+                                  ? '正在停止后续任务…'
+                                  : '停止后续生成 · $progress')
+                              : (_vm.batchCount > 1
+                                  ? '生成 ${_vm.batchCount} 张图片'
+                                  : '生成图片'),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -1902,7 +1925,7 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Future<void> _openGenerationSettings() async {
-    if (_isGenerationSettingsOpen || _vm.isGenerating) return;
+    if (_isGenerationSettingsOpen || _isImageOperationBusy) return;
     _isGenerationSettingsOpen = true;
     FocusManager.instance.primaryFocus?.unfocus();
     final reduceMotion = MediaQuery.disableAnimationsOf(context);

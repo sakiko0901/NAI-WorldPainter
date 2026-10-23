@@ -20,6 +20,10 @@ class GenerationResultCard extends StatefulWidget {
   final List<GenerationTask> results;
   final String? error;
   final bool generating;
+  final bool processing;
+  final String? processingSourceTaskId;
+  final String? processingLabel;
+  final String? processingStatus;
   final ValueChanged<GenerationTask> onSelect;
   final VoidCallback? onPreview;
   final VoidCallback? onImport;
@@ -49,6 +53,10 @@ class GenerationResultCard extends StatefulWidget {
     this.results = const [],
     this.error,
     this.generating = false,
+    this.processing = false,
+    this.processingSourceTaskId,
+    this.processingLabel,
+    this.processingStatus,
     required this.onSelect,
     this.onPreview,
     this.onImport,
@@ -140,6 +148,12 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             const SizedBox(height: 8),
             _buildError(theme),
           ],
+          if (widget.processing &&
+              (widget.processingSourceTaskId == null ||
+                  widget.processingSourceTaskId != current?.taskId)) ...[
+            const SizedBox(height: 8),
+            _buildProcessingNotice(context, theme),
+          ],
           const SizedBox(height: 8),
           if (current == null)
             _buildEmptyState(context, theme, workspaceHeight)
@@ -172,6 +186,57 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
             _buildActions(context, current),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildProcessingNotice(BuildContext context, ThemeData theme) {
+    final status = widget.processingStatus?.trim();
+    final label = widget.processingLabel?.trim();
+    return Semantics(
+      key: const ValueKey('result-processing-global-status'),
+      liveRegion: true,
+      label: [
+        if (label != null && label.isNotEmpty) label,
+        if (status != null && status.isNotEmpty) status,
+      ].join('，'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: 15,
+              child: CircularProgressIndicator(
+                key: const ValueKey('result-processing-indicator'),
+                strokeWidth: 1.8,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                [
+                  if (label != null && label.isNotEmpty) label,
+                  if (status != null && status.isNotEmpty) status,
+                  if ((label == null || label.isEmpty) &&
+                      (status == null || status.isEmpty))
+                    '图片处理中…',
+                ].join(' · '),
+                key: const ValueKey('result-processing-status-text'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -481,6 +546,85 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                         const SizedBox(width: 7),
                         Text('正在生成', style: theme.textTheme.labelSmall),
                       ],
+                    ),
+                  ),
+                ),
+              if (widget.processing &&
+                  widget.processingSourceTaskId == current.taskId)
+                Positioned.fill(
+                  child: Semantics(
+                    key: const ValueKey('result-processing-overlay'),
+                    liveRegion: true,
+                    label: [
+                      widget.processingLabel,
+                      widget.processingStatus,
+                    ]
+                        .whereType<String>()
+                        .where((value) => value.trim().isNotEmpty)
+                        .join('，'),
+                    child: IgnorePointer(
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.34),
+                        child: Center(
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            margin: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface
+                                  .withValues(alpha: 0.92),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: theme.colorScheme.outlineVariant
+                                    .withValues(alpha: 0.7),
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox.square(
+                                  dimension: 24,
+                                  child: CircularProgressIndicator(
+                                    key: const ValueKey(
+                                        'result-processing-overlay-indicator'),
+                                    strokeWidth: 2.4,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  widget.processingLabel?.trim().isNotEmpty ==
+                                          true
+                                      ? widget.processingLabel!.trim()
+                                      : '图片处理中…',
+                                  textAlign: TextAlign.center,
+                                  style: theme.textTheme.labelLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                if (widget.processingStatus
+                                        ?.trim()
+                                        .isNotEmpty ==
+                                    true) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.processingStatus!.trim(),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),

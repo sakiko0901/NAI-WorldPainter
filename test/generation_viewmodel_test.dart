@@ -28,6 +28,238 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+      'inpaint import replaces all prompts and isolates persistent role drafts',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('inpaint_drafts_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = await _writeTestPng(directory, 'source.png', 16, 16);
+    final history = _MemoryHistoryRepository();
+    final settings = _SettingsRepository();
+    final queue =
+        GenerationQueue(_CapturingGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.characters = const [
+      CharacterSpec(prompt: 'untouched text-to-image role')
+    ];
+    vm.inpaintPrompt = 'stale';
+    vm.inpaintNegativePrompt = 'stale negative';
+    vm.inpaintCharacters = const [CharacterSpec(prompt: 'stale role')];
+    final task = GenerationTask(
+      taskId: 'source',
+      model: 'nai-diffusion-5-full',
+      prompt: '2girls, beach',
+      negativePrompt: 'bad quality',
+      width: 16,
+      height: 16,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_dpmpp_2m',
+      noiseSchedule: 'native',
+      status: 'success',
+      createdAt: DateTime(2026),
+      imagePath: source.path,
+      characters: const [
+        CharacterSpec(prompt: 'blue hair', uc: 'hat'),
+        CharacterSpec(
+            prompt: 'red hair', uc: 'glasses', centerX: .7, centerY: .4),
+        CharacterSpec(prompt: 'disabled role', enabled: false),
+      ],
+    );
+    await vm.importTaskToInpaint(task);
+    expect(vm.generationMode, GenerationMode.inpainting);
+    expect(vm.inpaintPrompt, task.prompt);
+    expect(vm.inpaintNegativePrompt, 'bad quality');
+    expect(vm.characters, task.characters);
+    expect(settings.savedInpaintCharacters, task.characters);
+    expect(vm.sourceImagePath, source.path);
+    expect(vm.maskImagePath, isNull);
+    expect(vm.selectedSampler, 'k_euler');
+
+    final built = vm.buildInpaintTask(
+      sourcePath: source.path,
+      maskPath: source.path,
+      prompt: vm.inpaintPrompt,
+      negativePrompt: vm.inpaintNegativePrompt,
+      strength: .7,
+      disabledOriginalImage: false,
+      colorCorrect: true,
+    );
+    expect(built.characters, hasLength(2));
+    expect(built.characters!.first.uc, 'hat');
+    expect(built.characters!.first.centerX, isNull);
+    expect(built.characters!.last.centerX, .7);
+    expect(built.useCoords, isTrue);
+    vm.setCharacterPositionAuto(1);
+    final automatic = vm.buildInpaintTask(
+      sourcePath: source.path,
+      maskPath: source.path,
+      prompt: vm.inpaintPrompt,
+      negativePrompt: vm.inpaintNegativePrompt,
+      strength: .7,
+      disabledOriginalImage: false,
+      colorCorrect: true,
+    );
+    expect(automatic.useCoords, isFalse);
+    expect(
+        automatic.characters!
+            .every((c) => c.centerX == null && c.centerY == null),
+        isTrue);
+    final written = await WritePromptTool(vm).call({
+      'target': 'character_1',
+      'content': 'green hair',
+      'mode': 'replace',
+    });
+    expect(written.success, isTrue);
+    expect(vm.inpaintCharacters.first.centerX, isNull);
+    expect(vm.inpaintCharacters.first.prompt, 'green hair');
+    expect(built.characters!.first.prompt, 'blue hair');
+    final read = await ReadCurrentPromptsTool(vm).call(const {});
+    expect(read.followUpHint, contains('green hair'));
+    vm.setGenerationMode(GenerationMode.textToImage);
+    expect(vm.characters.single.prompt, 'untouched text-to-image role');
+    await vm.importTaskToInpaint(GenerationTask(
+      taskId: 'empty',
+      model: task.model,
+      prompt: '',
+      width: 16,
+      height: 16,
+      scale: 5,
+      cfgRescale: 0,
+      sampler: 'k_euler',
+      noiseSchedule: 'native',
+      status: 'success',
+      createdAt: DateTime(2026),
+      imagePath: source.path,
+    ));
+    expect(vm.inpaintPrompt, isEmpty);
+    expect(vm.inpaintNegativePrompt, isEmpty);
+    expect(vm.inpaintCharacters, isEmpty);
+    expect(settings.savedInpaintCharacters, isEmpty);
+  });
+
+  for (final enhance in [false, true]) {
+    test(
+        '${enhance ? 'Enhance' : 'Upscale'} binds history input and adds a distinct workspace result',
+        () async {
+      final directory =
+          await Directory.systemTemp.createTemp('processed_result_');
+      addTearDown(() => directory.delete(recursive: true));
+      final source = await _writeTestPng(directory, 'source.png', 16, 16);
+      final output = await _writeTestPng(directory, 'output.png', 32, 32);
+      final gate = Completer<void>();
+      final service = _TestOfficialNovelAiApiService(
+        upscaleOutputPath: output.path,
+        enhanceOutputPath: output.path,
+        processingGate: gate,
+      );
+      final history = _MemoryHistoryRepository();
+      final queue =
+          GenerationQueue(_CapturingGenerationRepository('unused'), history);
+      addTearDown(queue.dispose);
+      final vm = _createGenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+        officialApi: service,
+        officialTokenStore: _TestOfficialNovelAiTokenStore('test'),
+      );
+      addTearDown(vm.dispose);
+      await Future<void>.delayed(Duration.zero);
+      final task = GenerationTask(
+        id: 18,
+        taskId: 'history',
+        model: 'nai-diffusion-5-full',
+        prompt: 'original prompt',
+        width: 16,
+        height: 16,
+        scale: 5,
+        cfgRescale: 0,
+        sampler: 'k_euler',
+        noiseSchedule: 'native',
+        status: 'success',
+        createdAt: DateTime(2026),
+        imagePath: source.path,
+        imageUrl: 'https://example.test/original.png',
+      );
+      final old = task.copyWith(taskId: 'old-workspace');
+      vm.displayImportedImage(old);
+      GenerationTask? receipt;
+      final pending = enhance
+          ? vm.enhanceWithOfficial(
+              scale: 1.5,
+              strength: .3,
+              sourceTask: task,
+              onCompleted: (result) => receipt = result)
+          : vm.upscaleWithOfficial(2, sourceTask: task);
+      expect(vm.isProcessingImage, isTrue);
+      expect(vm.imageProcessingSourceTaskId, 'history');
+      expect(vm.imageProcessingLabel, enhance ? 'Enhance' : 'Upscale');
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.imageProcessingStatus, contains('test processing'));
+      expect(await vm.upscaleWithOfficial(2), isFalse);
+      await vm.generate();
+      expect(vm.sessionResults, [old]);
+      gate.complete();
+      expect(await pending, isTrue);
+      expect(vm.isProcessingImage, isFalse);
+      expect(vm.imageProcessingSourceTaskId, isNull);
+      expect(vm.imageProcessingStatus, isNull);
+      final result = vm.selectedResult!;
+      expect(vm.sessionResults, hasLength(2));
+      expect(result.imagePath, output.path);
+      expect(result.width, 32);
+      expect(result.prompt, 'original prompt');
+      expect(result.taskId, isNot(task.taskId));
+      expect(result.id, isNull);
+      expect(result.imageUrl, isNull);
+      if (enhance) expect(receipt, same(result));
+      expect(task.imagePath, source.path);
+    });
+  }
+
+  test('standalone upscale adds its output and clears busy state after failure',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('standalone_upscale_');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = await _writeTestPng(directory, 'source.png', 16, 16);
+    final output = await _writeTestPng(directory, 'output.png', 32, 32);
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_CapturingGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+      officialApi:
+          _TestOfficialNovelAiApiService(upscaleOutputPath: output.path),
+      officialTokenStore: _TestOfficialNovelAiTokenStore('test'),
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    await vm.upscaleFileWithOfficial(source.path, 2);
+    expect(vm.sessionResults.single.imagePath, output.path);
+    expect(vm.selectedResult!.model, 'imported-image');
+    await output.delete();
+    await expectLater(vm.upscaleFileWithOfficial(source.path, 2),
+        throwsA(isA<ApiException>()));
+    expect(vm.isProcessingImage, isFalse);
+    expect(vm.imageProcessingStatus, isNull);
+    expect(vm.sessionResults, hasLength(1));
+  });
+
   for (final automaticLayout in [true, false]) {
     test(
         'agent character ${automaticLayout ? 'automatic layout' : 'manual positions'} reaches the generation task',
@@ -1562,7 +1794,7 @@ void main() {
 
     await viewModel.loadFromHistory(mediumHistoryTask);
 
-    expect(viewModel.selectedModel, 'nai:7877:nai-diffusion-5-full');
+    expect(viewModel.selectedModel, 'nai:7877:nai-diffusion-5-full-medium');
     expect(viewModel.supportsEffortToggle, isTrue);
     expect(viewModel.effort, GenerationEffort.medium);
     expect(viewModel.isMediumEffort, isTrue);
@@ -2093,6 +2325,9 @@ Future<void> _expectEffortSubmissionCycle({
   } else {
     viewModel.inpaintPrompt = 'repair the cloudy sky';
     viewModel.inpaintNegativePrompt = 'low quality';
+    viewModel.inpaintCharacters = const [
+      CharacterSpec(prompt: 'blue hair', uc: 'hat'),
+    ];
   }
   viewModel.steps = 23;
   viewModel.selectedSampler = 'k_euler';
@@ -2127,6 +2362,10 @@ Future<void> _expectEffortSubmissionCycle({
     expect(mediumTask.sourceImagePath, 'source.png');
     expect(mediumTask.maskImagePath, 'mask.png');
     expect(mediumTask.negativePrompt, isThirdParty ? isNull : 'low quality');
+    expect(mediumTask.characters!.single.prompt, 'blue hair');
+    expect(mediumTask.characters!.single.uc, isThirdParty ? isNull : 'hat');
+    expect(mediumTask.useCoords, isFalse);
+    expect(viewModel.inpaintCharacters.single.uc, 'hat');
   }
 
   await viewModel.updateEffort(GenerationEffort.high);
@@ -2150,6 +2389,8 @@ Future<void> _expectEffortSubmissionCycle({
   } else {
     expect(highTask.sourceImagePath, 'source.png');
     expect(highTask.maskImagePath, 'mask.png');
+    expect(highTask.characters!.single.uc, 'hat');
+    expect(highTask.useCoords, isFalse);
     expect(highTask.negativePrompt, 'low quality');
   }
 }
@@ -2198,10 +2439,12 @@ class _TestOfficialNovelAiApiService extends OfficialNovelAiApiService {
   _TestOfficialNovelAiApiService({
     this.upscaleOutputPath,
     this.enhanceOutputPath,
+    this.processingGate,
   });
 
   final String? upscaleOutputPath;
   final String? enhanceOutputPath;
+  final Completer<void>? processingGate;
   final upscaleRequests = <({String imagePath, String token, int scale})>[];
   final enhanceRequests = <({
     String imagePath,
@@ -2228,6 +2471,8 @@ class _TestOfficialNovelAiApiService extends OfficialNovelAiApiService {
     void Function(String status)? onStatus,
   }) async {
     upscaleRequests.add((imagePath: imagePath, token: token, scale: scale));
+    onStatus?.call('test processing Upscale');
+    if (processingGate != null) await processingGate!.future;
     final outputPath = upscaleOutputPath;
     if (outputPath == null) {
       throw StateError('No upscale output was configured for this test');
@@ -2260,6 +2505,8 @@ class _TestOfficialNovelAiApiService extends OfficialNovelAiApiService {
       scale: scale,
       scaleValue: scaleValue,
     ));
+    onStatus?.call('test processing Enhance');
+    if (processingGate != null) await processingGate!.future;
     final outputPath = enhanceOutputPath;
     if (outputPath == null) {
       throw StateError('No enhance output was configured for this test');
@@ -2470,6 +2717,7 @@ class _SettingsRepository implements SettingsRepository {
   List<PreciseReferenceImage> savedPreciseReferences = const [];
   ReferenceMode savedReferenceMode = ReferenceMode.vibe;
   List<CharacterSpec> savedCharacters = const [];
+  List<CharacterSpec> savedInpaintCharacters = const [];
   List<ApiEndpoint> novelAiEndpoints = const [];
   String? activeNovelAiEndpointId;
   String? activeNovelAiModel;
@@ -2533,6 +2781,15 @@ class _SettingsRepository implements SettingsRepository {
   Future<void> setCharactersDraft(List<CharacterSpec> value) async {
     savedCharacters = [...value];
   }
+
+  @override
+  Future<void> setInpaintCharactersDraft(List<CharacterSpec> value) async {
+    savedInpaintCharacters = [...value];
+  }
+
+  @override
+  Future<List<CharacterSpec>> getInpaintCharactersDraft() async =>
+      savedInpaintCharacters;
 
   @override
   Future<String?> getSelectedModelDraft() async => 'model';

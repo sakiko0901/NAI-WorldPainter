@@ -8,6 +8,27 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('inpaint role drafts persist separately from text generation roles',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final datasource = SettingsLocalDatasource(prefs);
+    const original = [CharacterSpec(prompt: 'original')];
+    const inpaint = [
+      CharacterSpec(prompt: 'blue hair', uc: 'hat'),
+      CharacterSpec(
+          prompt: 'red hair', uc: 'glasses', centerX: .7, centerY: .4),
+    ];
+    await datasource.setCharactersDraft(original);
+    await datasource.setInpaintCharactersDraft(inpaint);
+    final reopened = SettingsLocalDatasource(prefs);
+    expect(reopened.getCharactersDraft(), original);
+    expect(reopened.getInpaintCharactersDraft(), inpaint);
+    await reopened.setInpaintCharactersDraft(const []);
+    expect(reopened.getInpaintCharactersDraft(), isEmpty);
+    expect(reopened.getCharactersDraft(), original);
+  });
+
   test('NovelAI 旧活动端点迁移到固定 7877 槽位', () async {
     SharedPreferences.setMockInitialValues({
       AppConstants.keyImageProviderNovelAiEndpoints: jsonEncode([
