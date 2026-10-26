@@ -229,6 +229,15 @@ Clean Architecture 分层，每层职责清晰：
 - 兼容 v3 与 v4 多角色格式（`v4_prompt.caption.char_captions`）
 - 可还原 prompt、negative prompt、seed、steps、sampler、scale、cfg_rescale、noise_schedule、宽高
 
+**原图数据编辑与清除：**
+- 工具 → 图片解析 → 选择图片后，点击「修改原图数据」或「抹去原图数据」，直接带入当前图片。
+- 编辑基础正负提示词、软件、来源及生成参数；数字字段留空可移除，角色与其他参数可展开 JSON 编辑。基础提示词会同步到 Description、Comment 和 v4 基础 caption。
+- 清除模式移除文本、EXIF 及已识别的 alpha/RGB 隐写元数据，不写入假提示词。读取兼容 tEXt、zTXt、iTXt 及 NovelAI stealth 格式；修改结果用标准 UTF-8 iTXt 保存，支持中文及小图。
+- 输出以 PNG 原字节保存到相册，不经 JPEG 转码；始终另存副本，保留源文件。数据编辑不会重新生成画面；清除已识别隐写时，仅处理承载数据的最低位。
+- 支持不超过 16 Mi 像素的静态 PNG；超限、损坏文件和 APNG 会提示错误，不输出可能残留旧数据或丢失动画的文件。带隐写数据的 16 位 PNG 暂不支持重写。
+
+格式依据：[W3C PNG 规范](https://www.w3.org/TR/png-3/)、[NovelAI 元数据格式说明](https://github.com/NovelAI/novelai-image-metadata)。
+
 **WD-Tagger：**
 
 | 项目 | 详情 |

@@ -80,6 +80,18 @@ class _ImageTagPageState extends State<ImageTagPage> {
     }
   }
 
+  void _openMetadataEditor({bool strip = false}) {
+    if (_vm.isAnalyzing) return;
+    Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => ImageMetadataEditorPage(
+          initialImagePath: _vm.imagePath,
+          initialStripMetadata: strip,
+        ),
+      ),
+    );
+  }
+
   Future<void> _copySelected() async {
     final r = _vm.result;
     if (r == null) return;
@@ -153,13 +165,9 @@ class _ImageTagPageState extends State<ImageTagPage> {
         title: const Text('图片解析'),
         actions: [
           IconButton(
-            tooltip: '修改图片标签',
+            tooltip: '修改原图数据',
             icon: const Icon(CupertinoIcons.pencil_circle, size: 22),
-            onPressed: () => Navigator.of(context).push(
-              CupertinoPageRoute(
-                builder: (_) => const ImageMetadataEditorPage(),
-              ),
-            ),
+            onPressed: _vm.isAnalyzing ? null : _openMetadataEditor,
           ),
         ],
       ),
@@ -168,6 +176,10 @@ class _ImageTagPageState extends State<ImageTagPage> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           children: [
             _buildPreview(isDark),
+            if (_vm.imagePath != null) ...[
+              const SizedBox(height: 12),
+              _buildMetadataActions(),
+            ],
             const SizedBox(height: 18),
             _buildModeSelector(isDark),
             if (_vm.mode == TagAnalysisMode.wdTagger) ...[
@@ -191,6 +203,37 @@ class _ImageTagPageState extends State<ImageTagPage> {
   }
 
   // ── 图片预览 ──
+  Widget _buildMetadataActions() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey('image-tag-edit-metadata'),
+              onPressed: _vm.isAnalyzing ? null : _openMetadataEditor,
+              icon: const Icon(CupertinoIcons.pencil),
+              label: const Text('修改原图数据'),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('image-tag-strip-metadata'),
+              onPressed: _vm.isAnalyzing
+                  ? null
+                  : () => _openMetadataEditor(strip: true),
+              icon: const Icon(Icons.cleaning_services_outlined),
+              label: const Text('抹去原图数据'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        const Text('编辑 PNG 内的提示词等数据，另存副本并保留原文件。',
+            style: TextStyle(fontSize: 12, height: 1.4)),
+      ],
+    );
+  }
+
   Widget _buildPreview(bool isDark) {
     final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
     final imagePath = _vm.imagePath;
