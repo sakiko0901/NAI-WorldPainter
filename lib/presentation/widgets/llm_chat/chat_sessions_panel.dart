@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 
@@ -110,6 +111,7 @@ class _SessionsPanelState extends State<_SessionsPanel> {
     final isDark = theme.brightness == Brightness.dark;
 
     return BackdropFilter(
+      enabled: FrostedTheme.of(context).blurEnabled,
       filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
       child: Container(
         margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),

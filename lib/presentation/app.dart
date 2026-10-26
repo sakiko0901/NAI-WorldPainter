@@ -12,7 +12,9 @@ class NaiHuishiApp extends StatefulWidget {
 
 class _NaiHuishiAppState extends State<NaiHuishiApp> {
   static const _appearanceKey = 'appearance_mode';
+  static const _frostedGlassKey = 'frosted_glass_enabled';
   AppearanceMode _appearanceMode = AppearanceMode.dark;
+  bool _frostedGlassEnabled = true;
 
   @override
   void initState() {
@@ -23,7 +25,12 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
   Future<void> _loadAppearance() async {
     final prefs = await SharedPreferences.getInstance();
     final mode = AppearanceMode.parse(prefs.getString(_appearanceKey));
-    if (mounted) setState(() => _appearanceMode = mode);
+    if (mounted) {
+      setState(() {
+        _appearanceMode = mode;
+        _frostedGlassEnabled = prefs.getBool(_frostedGlassKey) ?? true;
+      });
+    }
   }
 
   Future<void> _setAppearance(AppearanceMode mode) async {
@@ -33,16 +40,27 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
     await prefs.setString(_appearanceKey, mode.name);
   }
 
+  Future<void> _setFrostedGlass(bool enabled) async {
+    setState(() => _frostedGlassEnabled = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_frostedGlassKey, enabled);
+  }
+
   @override
   Widget build(BuildContext context) {
     final brightness = _appearanceMode.brightness;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'nai 绘世',
-      theme: buildNaiHuishiTheme(brightness),
+      theme: buildNaiHuishiTheme(
+        brightness,
+        frostedGlassEnabled: _frostedGlassEnabled,
+      ),
       home: HomePage(
         appearanceMode: _appearanceMode,
         onAppearanceChanged: _setAppearance,
+        frostedGlassEnabled: _frostedGlassEnabled,
+        onFrostedGlassChanged: _setFrostedGlass,
       ),
     );
   }

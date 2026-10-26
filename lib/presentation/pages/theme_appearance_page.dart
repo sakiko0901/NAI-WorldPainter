@@ -6,11 +6,15 @@ import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 class ThemeAppearancePage extends StatefulWidget {
   final AppearanceMode appearanceMode;
   final ValueChanged<AppearanceMode> onAppearanceChanged;
+  final bool frostedGlassEnabled;
+  final ValueChanged<bool>? onFrostedGlassChanged;
 
   const ThemeAppearancePage({
     super.key,
     required this.appearanceMode,
     required this.onAppearanceChanged,
+    this.frostedGlassEnabled = true,
+    this.onFrostedGlassChanged,
   });
 
   @override
@@ -19,11 +23,13 @@ class ThemeAppearancePage extends StatefulWidget {
 
 class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
   late AppearanceMode _selectedMode;
+  late bool _frostedGlassEnabled;
 
   @override
   void initState() {
     super.initState();
     _selectedMode = widget.appearanceMode;
+    _frostedGlassEnabled = widget.frostedGlassEnabled;
   }
 
   void _select(AppearanceMode mode) {
@@ -82,6 +88,25 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Material(
+              color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+              child: SwitchListTile.adaptive(
+                key: const ValueKey('frosted-glass-switch'),
+                title: const Text('毛玻璃效果'),
+                subtitle: const Text('关闭后停用界面模糊与图片氛围背景，保留配色和布局'),
+                value: _frostedGlassEnabled,
+                onChanged: widget.onFrostedGlassChanged == null
+                    ? null
+                    : (enabled) {
+                        setState(() => _frostedGlassEnabled = enabled);
+                        widget.onFrostedGlassChanged!(enabled);
+                      },
               ),
             ),
           ),

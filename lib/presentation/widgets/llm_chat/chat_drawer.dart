@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
@@ -313,6 +314,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                 bottomLeft: Radius.circular(28),
               ),
               child: BackdropFilter(
+                enabled: FrostedTheme.of(context).blurEnabled,
                 filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
                 child: Container(
                   decoration: BoxDecoration(

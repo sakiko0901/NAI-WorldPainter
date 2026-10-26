@@ -38,6 +38,7 @@ class FrostedSurface extends StatelessWidget {
       child: blur <= 0 || highContrast
           ? content
           : BackdropFilter.grouped(
+              enabled: glass.blurEnabled,
               filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
               child: content),
     );
