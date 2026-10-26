@@ -1,3 +1,4 @@
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
 
@@ -24,13 +25,10 @@ class WritePromptTool extends AgentTool {
       '若 character_N 序号超出当前角色数，会自动补齐到对应数量。'
       '\n多角色场景下 character_N 是首选 target，positive 只放通用画质词（masterpiece / best quality 等）与画风词；'
       '角色名、发色、瞳色、服装、动作一律写入对应 character_N。'
-      '\n【角色坐标】character_N 正向框支持可选 position:{x,y}，x/y 是 0..1 的归一化画布中心坐标（x 向右、y 向下）；'
-      '编排新角色或重新构图时，先按用户描述与画面重心为每个角色决定位置，并在每次 character_N 写入中都传 position，不能只在文本里写位置建议。'
-      '不要机械地给所有角色排固定左右位置，也不要默认都用 0.5/0.5；仅当构图确实居中时才明确传 0.5/0.5。'
-      '若用户只要求修改已有角色文字并保留布局，可省略 position 以保留现有坐标；重新构图时即使旧坐标存在，也应为全部角色重新选择并传入坐标。'
-      '新建角色遗漏 position 时工具会拒绝写入并提示补充；已有角色没有坐标且本次省略 position 时，成功结果会提醒该角色仍未定位。'
+      '\n【角色坐标】${AppConstants.assistantCharacterPositionPolicy}'
+      'character_N 正向框支持可选 position:{x,y}，x/y 是 0..1 的归一化画布中心坐标（x 向右、y 向下）。'
       '\n\n【修改已有内容必须 read-then-write】修改用户现有提示词时，必须先调 `read_current_prompts` 读取目标框当前内容，'
-      '基于实际内容决定 append 还是 replace，不要凭记忆/想象盲写；全新创作无需读取历史内容，可直接写入，但新角色必须明确提供 position。'
+      '基于实际内容决定 append 还是 replace，不要凭记忆/想象盲写；全新创作无需读取历史内容，可直接写入，新角色默认省略 position。'
       '\n\n【append 自动去重】append 模式会自动跳过已存在的 tag（按 tag 基础名比较，忽略权重符号），'
       '但仍建议你先 read 确认现状，避免重复添加相似 tag。'
       '\n\n【何时用 replace】当用户要求"换成 X"、"删掉 Y"、"重新编排"等需要改动中间或开头部分时，用 replace 覆盖整个框。'
@@ -59,7 +57,7 @@ class WritePromptTool extends AgentTool {
           'position': {
             'type': 'object',
             'description':
-                '仅用于 character_N 正向框的角色中心坐标。x 向右、y 向下，均为 0..1 归一化坐标；仅在构图实际居中时使用 0.5/0.5。',
+                '默认省略，交给 V5 自动布局。仅当用户明确要求手动定位或指定坐标时使用，不能根据画面内容主动推算。仅用于 character_N 正向框，x 向右、y 向下，范围 0..1。',
             'properties': {
               'x': {'type': 'number', 'minimum': 0, 'maximum': 1},
               'y': {'type': 'number', 'minimum': 0, 'maximum': 1},
@@ -134,24 +132,6 @@ class WritePromptTool extends AgentTool {
     }
 
     final characterMatch = RegExp(r'^character_([1-6])$').firstMatch(target);
-    if (characterMatch != null && !hasPosition) {
-      final index = int.parse(characterMatch.group(1)!) - 1;
-      final chars = _accessor.characters;
-      final existing = index < chars.length ? chars[index] : null;
-      // A user may position an empty card before asking the assistant to fill
-      // its text. Preserve that layout; a UC-only, unpositioned slot is still
-      // a new role and must not bypass position planning.
-      final isUnplacedNewRole = existing == null ||
-          (existing.prompt.trim().isEmpty &&
-              (existing.centerX == null || existing.centerY == null));
-      if (isUnplacedNewRole) {
-        return ToolResult.failure(
-          '$target 是新建角色，但未提供 position。请先根据构图选择归一化 x、y（0..1），再重新调用 write_prompt；'
-          '只有确实居中的构图才使用 0.5/0.5。',
-        );
-      }
-    }
-
     try {
       final newVersion = await _accessor.writePrompt(
         target: target,
@@ -173,8 +153,7 @@ class WritePromptTool extends AgentTool {
             positionResult =
                 '，保留现有位置 (${existing.centerX!.toStringAsFixed(2)}, ${existing.centerY!.toStringAsFixed(2)})';
           } else {
-            positionResult =
-                '。提醒：该角色尚未定位；若本次需要安排构图，请再次调用 write_prompt 并提供 position:{x,y}';
+            positionResult = '，未指定坐标，由绘图模型自动布局';
           }
         }
       }

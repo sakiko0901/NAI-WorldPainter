@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 
 /// The ambient image is filtered once; foreground panels keep their content sharp.
 class StudioBackground extends StatelessWidget {
@@ -29,7 +30,7 @@ class StudioBackground extends StatelessWidget {
                 ),
               ),
             ),
-            if (image != null)
+            if (image != null && FrostedTheme.of(context).blurEnabled)
               Opacity(
                 opacity: theme.brightness == Brightness.dark ? 0.09 : 0.07,
                 child: ImageFiltered(

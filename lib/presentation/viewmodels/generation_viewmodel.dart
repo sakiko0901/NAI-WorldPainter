@@ -112,7 +112,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// V5 思考等级：High = nai-diffusion-5-full，
   /// Medium = nai-diffusion-5-full-medium（固定 14 steps、k_euler_ancestral、无 rescale）。
   GenerationEffort effort = GenerationEffort.high;
+
+  /// Keeps the user's durable High sampling choice while a runtime constraint
+  /// temporarily selects a supported sampler or Medium's fixed parameters.
   ({int steps, String sampler, double cfgRescale})? _highEffortSampling;
+  late final Future<void> _defaultsLoaded;
 
   /// 提示词框版本号。每次 updatePrompt/updateNegativePrompt/updateInpaintPrompt/updateInpaintNegativePrompt 时 +1。
   /// 用于 Agent 检测提示词框内容是否变化（read_current_prompts 返回此字段）。
@@ -195,23 +199,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get _isGatewayMediumEffort => isMediumEffort && !isOfficialEndpoint;
 
   Future<void> updateEffort(GenerationEffort value) async {
+    await _defaultsLoaded;
     if (!supportsEffortToggle || effort == value) return;
     if (value == GenerationEffort.medium) {
-      _highEffortSampling = (
-        steps: steps,
-        sampler: selectedSampler,
-        cfgRescale: cfgRescale,
-      );
+      _rememberHighEffortSampling();
     }
     effort = value;
     if (isMediumEffort) {
       // Medium 强制约束：14 steps、k_euler_ancestral、无 rescale
-      steps = 14;
-      await _manageSettings.setStepsDraft(steps);
-      selectedSampler = 'k_euler_ancestral';
-      await _manageSettings.setSelectedSamplerDraft(selectedSampler);
-      cfgRescale = 0.0;
-      await _manageSettings.setCfgRescaleDraft(cfgRescale);
+      _applyMediumEffortSampling();
     } else {
       await _restoreHighEffortSampling();
     }
@@ -226,14 +222,44 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           cfgRescale: 0.0,
         );
     steps = sampling.steps;
-    selectedSampler = sampling.sampler;
+    final supportedSamplers = isIkunEndpoint
+        ? ApiConstants.ikunSupportedSamplers
+        : ApiConstants.supportedSamplers;
+    selectedSampler = supportedSamplers.contains(sampling.sampler)
+        ? sampling.sampler
+        : ApiConstants.defaultSampler;
     cfgRescale = sampling.cfgRescale;
     await Future.wait([
       _manageSettings.setStepsDraft(steps),
-      _manageSettings.setSelectedSamplerDraft(selectedSampler),
+      // Persist the preference itself, even if this route must display a
+      // supported runtime fallback.
+      _manageSettings.setSelectedSamplerDraft(sampling.sampler),
       _manageSettings.setCfgRescaleDraft(cfgRescale),
     ]);
-    _highEffortSampling = null;
+    _highEffortSampling = sampling;
+  }
+
+  void _applyMediumEffortSampling() {
+    steps = 14;
+    selectedSampler = 'k_euler_ancestral';
+    cfgRescale = 0.0;
+  }
+
+  void _rememberHighEffortSampling() {
+    final supportedSamplers = isIkunEndpoint
+        ? ApiConstants.ikunSupportedSamplers
+        : ApiConstants.supportedSamplers;
+    final cachedSampler = _highEffortSampling?.sampler;
+    final sampler = cachedSampler != null &&
+            !supportedSamplers.contains(cachedSampler) &&
+            supportedSamplers.contains(selectedSampler)
+        ? cachedSampler
+        : selectedSampler;
+    _highEffortSampling = (
+      steps: steps,
+      sampler: sampler,
+      cfgRescale: cfgRescale,
+    );
   }
 
   bool get supportsCharacterPrompts => true;
@@ -470,7 +496,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final Set<String> _recordedStatTaskIds = {};
 
   void _init() {
-    _loadDefaults();
+    _defaultsLoaded = _loadDefaults();
     _listenQueue();
   }
 
@@ -484,10 +510,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     cfgRescale = await _manageSettings.getCfgRescaleDraft();
     steps = await _manageSettings.getStepsDraft();
     isStepsLocked = await _manageSettings.getStepsLocked();
-    if (isStepsLocked && steps != ApiConstants.defaultSteps) {
+    if (isStepsLocked &&
+        !_selectedModelIsMediumEffort &&
+        steps != ApiConstants.defaultSteps) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
+    _highEffortSampling = (
+      steps: steps,
+      sampler: selectedSampler,
+      cfgRescale: cfgRescale,
+    );
     selectedNoiseSchedule =
         await _manageSettings.getSelectedNoiseScheduleDraft();
     prompt = await _manageSettings.getPromptDraft();
@@ -495,7 +528,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     inpaintPrompt = await _manageSettings.getInpaintPromptDraft();
     inpaintNegativePrompt =
         await _manageSettings.getInpaintNegativePromptDraft();
-    characters = await _manageSettings.getCharactersDraft();
+    _characters = await _manageSettings.getCharactersDraft();
+    inpaintCharacters = await _manageSettings.getInpaintCharactersDraft();
     preciseReferences = await _manageSettings.getPreciseReferencesDraft();
     final savedVibeReferences = await _manageSettings.getVibeReferencesDraft();
     vibeReferences = savedVibeReferences;
@@ -504,6 +538,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     batchCount = await _manageSettings.getBatchCount();
     await _loadCustomResolutions();
     _syncEffortFromSelectedModel();
+    if (isMediumEffort) _applyMediumEffortSampling();
+    if (!selectedModel.startsWith('gpt:') &&
+        !selectedModel.startsWith('nano:')) {
+      await _ensureSamplingForCurrentProvider();
+    }
 
     notifyListeners();
   }
@@ -637,6 +676,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> loadModels() async {
+    await _defaultsLoaded;
     final previousSelectedModel = selectedModel;
     final options = <ImageModelOption>[];
 
@@ -765,6 +805,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
     if (selectedModel != previousSelectedModel) {
       _syncEffortFromSelectedModel();
+      if (isMediumEffort) {
+        _applyMediumEffortSampling();
+      } else {
+        // Route discovery can replace an IKUN selection with the configured
+        // route after defaults normalized an unsupported sampler. Re-evaluate
+        // the durable High choice against the final route before normalizing.
+        await _restoreHighEffortSampling();
+      }
     }
     await _ensureResolutionForCurrentProvider();
     await _ensureSamplingForCurrentProvider();
@@ -819,12 +867,59 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get isInpaintingMode => generationMode == GenerationMode.inpainting;
 
   @override
-  List<CharacterSpec> get characters => _characters;
+  List<CharacterSpec> get characters =>
+      isInpaintingMode ? inpaintCharacters : _characters;
   set characters(List<CharacterSpec> v) {
-    _characters = v;
+    if (isInpaintingMode) {
+      inpaintCharacters = v;
+    } else {
+      _characters = v;
+    }
   }
 
   List<CharacterSpec> _characters = const [];
+  List<CharacterSpec> inpaintCharacters = const [];
+
+  /// Copy the selected image's complete prompt snapshot into the inpaint draft.
+  Future<void> importTaskToInpaint(GenerationTask task) async {
+    await _defaultsLoaded;
+    if (isGenerating || isProcessingImage) {
+      throw StateError('当前任务处理中，请稍后导入局部重绘');
+    }
+    final path = task.imagePath;
+    if (path == null || !File(path).existsSync()) {
+      throw StateError('当前图片不可用');
+    }
+    if (isNonNovelAiProvider) {
+      final candidates = imageModelOptions.where(
+        (option) => option.provider == ImageProviderType.novelAi,
+      );
+      final sourceModel = candidates
+              .where((option) =>
+                  option.actualModel == task.model &&
+                  option.endpointId == task.endpointId)
+              .firstOrNull ??
+          candidates.firstOrNull;
+      if (sourceModel == null) {
+        throw StateError('请先配置并选择支持局部重绘的 NovelAI 模型');
+      }
+      await updateSelectedModel(sourceModel.modelId);
+    }
+    generationMode = GenerationMode.inpainting;
+    sourceImagePath = path;
+    maskImagePath = null;
+    inpaintPrompt = task.prompt;
+    inpaintNegativePrompt = task.negativePrompt ?? '';
+    inpaintCharacters = List<CharacterSpec>.of(task.characters ?? const []);
+    _promptVersion++;
+    errorMessage = null;
+    await Future.wait([
+      _manageSettings.setInpaintPromptDraft(inpaintPrompt),
+      _manageSettings.setInpaintNegativePromptDraft(inpaintNegativePrompt),
+      _manageSettings.setInpaintCharactersDraft(inpaintCharacters),
+    ]);
+    notifyListeners();
+  }
 
   @override
   Future<int> writePrompt({
@@ -865,29 +960,29 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         throw ArgumentError('角色序号超出范围（1-6）：$target');
       }
       // 补齐角色列表到 idx+1 个
-      while (_characters.length <= idx) {
-        _characters = [
-          ..._characters,
+      while (characters.length <= idx) {
+        characters = [
+          ...characters,
           const CharacterSpec(prompt: ''),
         ];
       }
-      final currentCharacter = _characters[idx];
+      final currentCharacter = characters[idx];
       if (isUc) {
         final current = currentCharacter.uc ?? '';
         final newUc = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        _characters = [
-          for (int i = 0; i < _characters.length; i++)
-            i == idx ? currentCharacter.copyWith(uc: newUc) : _characters[i],
+        characters = [
+          for (int i = 0; i < characters.length; i++)
+            i == idx ? currentCharacter.copyWith(uc: newUc) : characters[i],
         ];
       } else {
         final current = currentCharacter.prompt;
         final newPrompt = append && current.isNotEmpty
             ? _mergePrompt(current, trimmed)
             : trimmed;
-        _characters = [
-          for (int i = 0; i < _characters.length; i++)
+        characters = [
+          for (int i = 0; i < characters.length; i++)
             if (i == idx)
               currentCharacter.copyWith(
                 prompt: newPrompt,
@@ -895,7 +990,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
                 centerY: centerY,
               )
             else
-              _characters[i],
+              characters[i],
         ];
       }
       _promptVersion++;
@@ -1030,7 +1125,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     List<String>? characterPrompts,
     List<String>? characterNegatives,
   }) async {
-    final previousCharacters = _characters;
+    final previousCharacters = characters;
     await clearAllPrompts();
     if (positive != null && positive.trim().isNotEmpty) {
       if (generationMode == GenerationMode.inpainting) {
@@ -1128,14 +1223,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedModel(String value) async {
+    await _defaultsLoaded;
     final wasMediumEffort = isMediumEffort;
-    final previousHighSampling = supportsEffortToggle && !isMediumEffort
-        ? (steps: steps, sampler: selectedSampler, cfgRescale: cfgRescale)
-        : _highEffortSampling;
+    if (!wasMediumEffort) _rememberHighEffortSampling();
+    final previousHighSampling = _highEffortSampling;
     selectedModel = value;
     _syncEffortFromSelectedModel();
-    if (isMediumEffort) _highEffortSampling = previousHighSampling;
-    if (wasMediumEffort && supportsEffortToggle && !isMediumEffort) {
+    if (isMediumEffort) {
+      _highEffortSampling = previousHighSampling;
+      _applyMediumEffortSampling();
+    } else if (previousHighSampling != null) {
+      // Restore the single High preference even when leaving Medium for a
+      // non-V5 model or changing to another NovelAI route.
       _highEffortSampling = previousHighSampling;
       await _restoreHighEffortSampling();
     }
@@ -1150,7 +1249,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         opt.first.actualModel,
       );
     }
-    if (isIkunEndpoint && isStepsLocked) {
+    if (isIkunEndpoint && isStepsLocked && !isMediumEffort) {
       steps = ApiConstants.defaultSteps;
       await _manageSettings.setStepsDraft(steps);
     }
@@ -1198,20 +1297,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
     if (selectedSampler != nextSampler) {
       selectedSampler = nextSampler;
-      await _manageSettings.setSelectedSamplerDraft(nextSampler);
+      if (!isMediumEffort && samplers.contains(normalizedSampler)) {
+        await _manageSettings.setSelectedSamplerDraft(nextSampler);
+      }
     }
     if (selectedNoiseSchedule != nextNoiseSchedule) {
       selectedNoiseSchedule = nextNoiseSchedule;
       await _manageSettings.setSelectedNoiseScheduleDraft(nextNoiseSchedule);
     }
-    if (isMediumEffort) {
-      steps = 14;
-      cfgRescale = 0;
-      await Future.wait([
-        _manageSettings.setStepsDraft(steps),
-        _manageSettings.setCfgRescaleDraft(cfgRescale),
-      ]);
-    }
+    if (isMediumEffort) _applyMediumEffortSampling();
   }
 
   Future<void> updateSelectedResolution(String value) async {
@@ -1258,7 +1352,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateSelectedSampler(String value) async {
-    selectedSampler = isMediumEffort ? 'k_euler_ancestral' : value;
+    await _defaultsLoaded;
+    if (isMediumEffort) {
+      _applyMediumEffortSampling();
+      notifyListeners();
+      return;
+    }
+    selectedSampler = value;
+    // This is an explicit sampler choice, so it replaces any preference that
+    // may be unsupported on the current route (and currently shown as fallback).
+    _highEffortSampling = (
+      steps: steps,
+      sampler: selectedSampler,
+      cfgRescale: cfgRescale,
+    );
     notifyListeners();
     await _manageSettings.setSelectedSamplerDraft(selectedSampler);
   }
@@ -1276,12 +1383,25 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> updateCfgRescale(double value) async {
-    cfgRescale = isMediumEffort ? 0 : value;
+    await _defaultsLoaded;
+    if (isMediumEffort) {
+      _applyMediumEffortSampling();
+      notifyListeners();
+      return;
+    }
+    cfgRescale = value;
+    _rememberHighEffortSampling();
     await _manageSettings.setCfgRescaleDraft(cfgRescale);
     notifyListeners();
   }
 
   Future<void> updateSteps(int value) async {
+    await _defaultsLoaded;
+    if (isMediumEffort) {
+      _applyMediumEffortSampling();
+      notifyListeners();
+      return;
+    }
     steps = isMediumEffort
         ? 14
         : isV5Model
@@ -1289,14 +1409,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
             : isIkunEndpoint && isStepsLocked
                 ? ApiConstants.defaultSteps
                 : value.clamp(1, 50);
+    _rememberHighEffortSampling();
     await _manageSettings.setStepsDraft(steps);
     notifyListeners();
   }
 
   Future<void> toggleStepsLock() async {
+    await _defaultsLoaded;
     isStepsLocked = !isStepsLocked;
     if (isStepsLocked && isIkunEndpoint && !isMediumEffort) {
       steps = ApiConstants.defaultSteps;
+      _rememberHighEffortSampling();
       await _manageSettings.setStepsDraft(steps);
     }
     await _manageSettings.setStepsLocked(isStepsLocked);
@@ -1623,6 +1746,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final actualModel = _applyEffortToModel(
       option?.actualModel ?? _resolveActualModelId(selectedModel),
     );
+    final rolePrompts = inpaintCharacters
+        .where((character) => character.enabled)
+        .map((character) => character.copyWith(
+              clearUc: _isGatewayMediumEffort,
+              referenceImages: const [],
+            ))
+        .toList(growable: false);
     return GenerationTask(
       taskId: taskId ?? const Uuid().v4(),
       model: actualModel,
@@ -1644,6 +1774,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       status: AppConstants.taskPending,
       createdAt: DateTime.now(),
       mode: GenerationMode.inpainting,
+      characters: rolePrompts.isEmpty ? null : rolePrompts,
+      useCoords: rolePrompts.any(
+        (character) => character.centerX != null && character.centerY != null,
+      ),
       sourceImagePath: sourcePath,
       maskImagePath: maskPath,
       inpaintStrength: strength.clamp(0.01, 1.0),
@@ -1689,7 +1823,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   Future<void> generate() async {
     // 重入守卫：批量生成中再次按下"生成"按钮（或被并发触发）直接忽略，
     // 避免两套 for 循环并行入队导致超过设定张数。
-    if (_generateInFlight) return;
+    if (_generateInFlight || isProcessingImage) return;
     // 局部重绘模式且工作区在场：整轮生成由工作区内部管线完成。
     if (generationMode == GenerationMode.inpainting &&
         inpaintWorkspaceHandler != null) {
@@ -1760,8 +1894,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final enabledCharacters = supportsCharacterPrompts
         ? characters
             .where((c) => c.enabled)
-            .map((c) => _isGatewayMediumEffort
-                ? c.copyWith(clearUc: true, referenceImages: const [])
+            .map((c) => _isGatewayMediumEffort || isInpaintingMode
+                ? c.copyWith(
+                    clearUc: _isGatewayMediumEffort,
+                    referenceImages: const [],
+                  )
                 : c)
             .toList()
         : const <CharacterSpec>[];
@@ -1906,10 +2043,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         (character) => character.centerX != null && character.centerY != null,
       ),
       seed: seed,
-      characters: generationMode == GenerationMode.textToImage &&
-              enabledCharacters.isNotEmpty
-          ? enabledCharacters
-          : null,
+      characters: enabledCharacters.isNotEmpty ? enabledCharacters : null,
       vibeReferences: supportsVibeReferences &&
               generationMode == GenerationMode.textToImage &&
               referenceMode == ReferenceMode.vibe
@@ -2078,7 +2212,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   /// Adds a local image to this workspace without submitting a generation task.
   bool displayImportedImage(GenerationTask image) {
-    if (isGenerating) return false;
+    if (isGenerating || isProcessingImage) return false;
     sessionResults = [...sessionResults, image];
     selectedResultTaskId = image.taskId;
     lastCompletedTask = image;
@@ -2088,9 +2222,31 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     return true;
   }
 
+  /// Accept an already completed edit, including transient inpaint candidates.
+  /// This is allowed during generation; importing unrelated images is not.
+  void addCompletedWorkspaceResult(GenerationTask task) {
+    if (task.status != AppConstants.taskSuccess ||
+        task.imagePath == null ||
+        !File(task.imagePath!).existsSync()) {
+      throw StateError('处理结果图片不可用');
+    }
+    final index =
+        sessionResults.indexWhere((item) => item.taskId == task.taskId);
+    if (index < 0) {
+      sessionResults = [...sessionResults, task];
+    } else {
+      sessionResults = [...sessionResults]..[index] = task;
+    }
+    selectedResultTaskId = task.taskId;
+    lastCompletedTask = task;
+    _userPickedResult = false;
+    errorMessage = null;
+    notifyListeners();
+  }
+
   /// 从当前结果区移除一张图片（仅工作区显示，不删除历史记录）。
   void removeSessionResult(String taskId) {
-    if (isGenerating) return;
+    if (isGenerating || isProcessingImage) return;
     sessionResults =
         sessionResults.where((item) => item.taskId != taskId).toList();
     if (selectedResultTaskId == taskId) {
@@ -2109,17 +2265,50 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get isOfficialUpscaling => _officialUpscaling;
   String? officialUpscaleStatus;
 
+  bool get isProcessingImage => _officialUpscaling || _officialEnhancing;
+  String? imageProcessingSourceTaskId;
+  String? get imageProcessingLabel => _officialUpscaling
+      ? 'Upscale'
+      : _officialEnhancing
+          ? 'Enhance'
+          : null;
+  String? get imageProcessingStatus => _officialUpscaling
+      ? officialUpscaleStatus
+      : _officialEnhancing
+          ? officialEnhanceStatus
+          : null;
+
+  Future<GenerationTask> _processedResult(
+      GenerationTask source, String outputPath) async {
+    final dimensions = await compute(_processedImageDimensions, outputPath);
+    return source.copyWith(
+      clearId: true,
+      taskId: const Uuid().v4(),
+      width: dimensions.$1,
+      height: dimensions.$2,
+      size: '${dimensions.$1}x${dimensions.$2}',
+      imagePath: outputPath,
+      clearImageUrl: true,
+      status: AppConstants.taskSuccess,
+      createdAt: DateTime.now(),
+      completedAt: DateTime.now(),
+      isInternal: false,
+    );
+  }
+
   /// 对工作台当前图片执行 NovelAI 官方超分，成功后把结果加入当前结果区。
-  Future<bool> upscaleWithOfficial(int scale) async {
-    final task = selectedResult ?? lastCompletedTask;
+  Future<bool> upscaleWithOfficial(int scale,
+      {GenerationTask? sourceTask}) async {
+    if (isGenerating || isProcessingImage) return false;
+    final task = sourceTask ?? selectedResult ?? lastCompletedTask;
     final path = task?.imagePath;
     if (path == null || !File(path).existsSync()) {
       errorMessage = '当前图片不可用，无法超分';
       notifyListeners();
       return false;
     }
-    if (_officialUpscaling) return false;
     _officialUpscaling = true;
+    imageProcessingSourceTaskId = task!.taskId;
     officialUpscaleStatus = '准备超分…';
     errorMessage = null;
     notifyListeners();
@@ -2140,21 +2329,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           notifyListeners();
         },
       );
-      final dimensions = await compute(_processedImageDimensions, outputPath);
       officialUpscaleStatus = null;
-      final newTask = task!.copyWith(
-        width: dimensions.$1,
-        height: dimensions.$2,
-        size: '${dimensions.$1}x${dimensions.$2}',
-        taskId: const Uuid().v4(),
-        imagePath: outputPath,
-        imageUrl: null,
-        status: 'success',
-        completedAt: DateTime.now(),
-      );
-      sessionResults = [...sessionResults, newTask];
-      selectedResultTaskId = newTask.taskId;
-      lastCompletedTask = newTask;
+      final newTask = await _processedResult(task, outputPath);
+      addCompletedWorkspaceResult(newTask);
       return true;
     } on ApiException catch (error) {
       officialUpscaleStatus = null;
@@ -2166,6 +2343,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return false;
     } finally {
       _officialUpscaling = false;
+      imageProcessingSourceTaskId = null;
       notifyListeners();
     }
   }
@@ -2182,16 +2360,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     double noise = 0.0,
     bool max = false,
     String? promptOverride,
+    GenerationTask? sourceTask,
+    void Function(GenerationTask result)? onCompleted,
   }) async {
-    final task = selectedResult ?? lastCompletedTask;
+    if (isGenerating || isProcessingImage) return false;
+    final task = sourceTask ?? selectedResult ?? lastCompletedTask;
     final path = task?.imagePath;
     if (path == null || !File(path).existsSync()) {
       errorMessage = '当前图片不可用，无法 Enhance';
       notifyListeners();
       return false;
     }
-    if (_officialEnhancing) return false;
     _officialEnhancing = true;
+    imageProcessingSourceTaskId = task!.taskId;
     officialEnhanceStatus = '准备 Enhance…';
     errorMessage = null;
     notifyListeners();
@@ -2203,7 +2384,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           code: 'NO_OFFICIAL_TOKEN',
         );
       }
-      final sourceTask = task!;
+      final sourceTask = task;
       final imported = sourceTask.model == 'imported-image';
       final model =
           _resolveActualModelId(imported ? selectedModel : sourceTask.model);
@@ -2237,26 +2418,16 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           notifyListeners();
         },
       );
-      final dimensions = await compute(_processedImageDimensions, outputPath);
       officialEnhanceStatus = null;
-      final newTask = sourceTask.copyWith(
+      final newTask = (await _processedResult(sourceTask, outputPath)).copyWith(
         model: model,
         prompt: promptText,
         negativePrompt: effectiveNegative,
         steps: effectiveSteps,
         scale: effectiveScale,
-        width: dimensions.$1,
-        height: dimensions.$2,
-        size: '${dimensions.$1}x${dimensions.$2}',
-        taskId: const Uuid().v4(),
-        imagePath: outputPath,
-        imageUrl: null,
-        status: 'success',
-        completedAt: DateTime.now(),
       );
-      sessionResults = [...sessionResults, newTask];
-      selectedResultTaskId = newTask.taskId;
-      lastCompletedTask = newTask;
+      addCompletedWorkspaceResult(newTask);
+      onCompleted?.call(newTask);
       return true;
     } on ApiException catch (error) {
       officialEnhanceStatus = null;
@@ -2268,6 +2439,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       return false;
     } finally {
       _officialEnhancing = false;
+      imageProcessingSourceTaskId = null;
       notifyListeners();
     }
   }
@@ -2275,15 +2447,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 对任意本地图片执行 NovelAI 官方超分，返回输出文件路径。
   Future<String> upscaleFileWithOfficial(
     String inputPath,
-    int scale,
-  ) async {
-    if (_officialUpscaling) {
-      throw ApiException(message: '已有超分任务进行中', code: 'UPSCALE_BUSY');
+    int scale, {
+    GenerationTask? sourceTask,
+  }) async {
+    if (isGenerating || isProcessingImage) {
+      throw ApiException(message: '已有图像任务进行中', code: 'UPSCALE_BUSY');
     }
     if (!File(inputPath).existsSync()) {
       throw ApiException(message: '图片不存在，无法超分', code: 'FILE_MISSING');
     }
     _officialUpscaling = true;
+    imageProcessingSourceTaskId = sourceTask?.taskId;
     officialUpscaleStatus = '准备超分…';
     errorMessage = null;
     notifyListeners();
@@ -2305,6 +2479,24 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         },
       );
       officialUpscaleStatus = null;
+      final source = sourceTask ??
+          GenerationTask(
+            taskId: const Uuid().v4(),
+            model: 'imported-image',
+            prompt: '',
+            width: 0,
+            height: 0,
+            scale: 0,
+            cfgRescale: 0,
+            sampler: selectedSampler,
+            noiseSchedule: selectedNoiseSchedule,
+            steps: 0,
+            useCoords: false,
+            status: AppConstants.taskSuccess,
+            createdAt: DateTime.now(),
+            imagePath: inputPath,
+          );
+      addCompletedWorkspaceResult(await _processedResult(source, outputPath));
       return outputPath;
     } on ApiException {
       officialUpscaleStatus = null;
@@ -2317,6 +2509,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       );
     } finally {
       _officialUpscaling = false;
+      imageProcessingSourceTaskId = null;
       notifyListeners();
     }
   }
@@ -2367,8 +2560,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         .toList();
   }
 
-  Future<void> _saveCharactersDraft() =>
-      _manageSettings.setCharactersDraft(characters);
+  Future<void> _saveCharactersDraft() => isInpaintingMode
+      ? _manageSettings.setInpaintCharactersDraft(inpaintCharacters)
+      : _manageSettings.setCharactersDraft(_characters);
 
   Future<void> addCharacterReference(int characterIndex, String path) async {
     if (path.isEmpty ||
@@ -2530,9 +2724,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> loadFromHistory(GenerationTask task) async {
+    await _defaultsLoaded;
+    final previousHighSampling = _highEffortSampling ??
+        (steps: steps, sampler: selectedSampler, cfgRescale: cfgRescale);
     final taskEffortModels = task.providerType == ImageProviderType.novelAi
         ? _v5EffortModels(task.model)
         : null;
+    final isMediumEffortHistory = taskEffortModels != null &&
+        task.model.trim().toLowerCase() == taskEffortModels.medium;
     // 历史任务保存了 endpointId 时，必须先恢复同一渠道，避免同名模型落到另一个 NovelAI 协议。
     final candidates = imageModelOptions.where(
       (option) =>
@@ -2541,24 +2740,34 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
               (taskEffortModels != null &&
                   _v5EffortModels(option.actualModel) == taskEffortModels)),
     );
-    final matched = task.endpointId == null
-        ? candidates.firstOrNull
+    final endpointCandidates = task.endpointId == null
+        ? candidates.toList(growable: false)
         : candidates
-                .where((option) => option.endpointId == task.endpointId)
-                .firstOrNull ??
-            (taskEffortModels == null ? candidates.firstOrNull : null);
-    selectedModel = matched?.modelId ??
-        switch (task.providerType) {
-          ImageProviderType.gpt => 'gpt:${task.model}',
-          ImageProviderType.nanoBanana => 'nano:${task.model}',
-          ImageProviderType.novelAi =>
-            taskEffortModels != null && task.endpointId != null
-                ? 'nai:${task.endpointId}:${task.model}'
-                : task.model,
-        };
+            .where((option) => option.endpointId == task.endpointId)
+            .toList(growable: false);
+    final matched = endpointCandidates
+            .where((option) => option.actualModel == task.model)
+            .firstOrNull ??
+        // The paired High/Medium model is useful only as endpoint context.
+        // Without a task endpoint, choosing a paired option could silently
+        // route history through a different channel.
+        (taskEffortModels != null && task.endpointId != null
+            ? endpointCandidates.firstOrNull
+            : null);
+    final hasExactTaskModel = matched?.actualModel == task.model;
+    selectedModel =
+        matched != null && (hasExactTaskModel || taskEffortModels == null)
+            ? matched.modelId
+            : switch (task.providerType) {
+                ImageProviderType.gpt => 'gpt:${task.model}',
+                ImageProviderType.nanoBanana => 'nano:${task.model}',
+                ImageProviderType.novelAi =>
+                  taskEffortModels != null && task.endpointId != null
+                      ? 'nai:${task.endpointId}:${task.model}'
+                      : task.model,
+              };
     if (taskEffortModels != null) {
-      _highEffortSampling = null;
-      effort = task.model.trim().toLowerCase() == taskEffortModels.medium
+      effort = isMediumEffortHistory
           ? GenerationEffort.medium
           : GenerationEffort.high;
     }
@@ -2567,6 +2776,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         matched!.provider,
         matched.endpointId,
       );
+      await _manageSettings.setActiveModel(
+        matched.provider,
+        taskEffortModels == null ? matched.actualModel : task.model,
+      );
     }
     selectedResolution = task.size ?? '${task.width}x${task.height}';
     scale = task.scale;
@@ -2574,8 +2787,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     selectedSampler = task.sampler;
     selectedNoiseSchedule = task.noiseSchedule;
     if (taskEffortModels != null) {
-      steps = task.steps;
-      await _manageSettings.setStepsDraft(steps);
+      if (isMediumEffortHistory) {
+        // A Medium history task describes its fixed runtime parameters. Keep
+        // the user's separate High preference intact for the next High run.
+        _highEffortSampling = previousHighSampling;
+        _applyMediumEffortSampling();
+      } else {
+        // Importing a High history task is an explicit parameter restore.
+        steps = task.steps;
+        _highEffortSampling = (
+          steps: steps,
+          sampler: selectedSampler,
+          cfgRescale: cfgRescale,
+        );
+      }
     }
     seed = task.seed;
     appliedSeed = task.seed;
@@ -2594,12 +2819,19 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     await _manageSettings.setSelectedModelDraft(selectedModel);
     await _manageSettings.setSelectedResolutionDraft(selectedResolution);
     await _manageSettings.setScaleDraft(scale);
-    await _manageSettings.setCfgRescaleDraft(cfgRescale);
-    await _manageSettings.setSelectedSamplerDraft(selectedSampler);
+    if (!isMediumEffortHistory) {
+      await _manageSettings.setCfgRescaleDraft(cfgRescale);
+      await _manageSettings.setSelectedSamplerDraft(selectedSampler);
+      if (taskEffortModels != null) {
+        await _manageSettings.setStepsDraft(steps);
+      }
+    }
     await _manageSettings.setSelectedNoiseScheduleDraft(selectedNoiseSchedule);
 
     if (task.mode == GenerationMode.inpainting && !isNanoProvider) {
       generationMode = GenerationMode.inpainting;
+      inpaintCharacters = List<CharacterSpec>.of(task.characters ?? const []);
+      await _manageSettings.setInpaintCharactersDraft(inpaintCharacters);
       inpaintPrompt = task.prompt;
       inpaintNegativePrompt = task.negativePrompt ?? '';
       await _manageSettings.setInpaintPromptDraft(inpaintPrompt);
@@ -2635,7 +2867,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
-  void loadFromPreset(Preset preset) {
+  Future<void> loadFromPreset(Preset preset) async {
+    await _defaultsLoaded;
+    final highSteps = _highEffortSampling?.steps ?? steps;
+    generationMode = GenerationMode.textToImage;
     prompt = preset.prompt;
     negativePrompt = preset.negativePrompt ?? '';
     selectedModel = preset.model;
@@ -2643,11 +2878,44 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     cfgRescale = preset.cfgRescale;
     selectedSampler = preset.sampler;
     selectedNoiseSchedule = preset.noiseSchedule;
+    _syncEffortFromSelectedModel();
+    await _manageSettings.setSelectedModelDraft(selectedModel);
+    final modelOption = imageModelOptions
+        .where((option) => option.modelId == selectedModel)
+        .firstOrNull;
+    if (modelOption?.endpointId != null) {
+      await _manageSettings.setActiveEndpointId(
+        modelOption!.provider,
+        modelOption.endpointId,
+      );
+      await _manageSettings.setActiveModel(
+        modelOption.provider,
+        modelOption.actualModel,
+      );
+    }
+    // Presets intentionally replace the High sampler/CFG preference. They do
+    // not include steps, so retain the user's High step count even if the
+    // screen was showing Medium's temporary 14-step runtime value.
+    _highEffortSampling = (
+      steps: highSteps,
+      sampler: preset.sampler,
+      cfgRescale: preset.cfgRescale,
+    );
+    steps = highSteps;
+    if (isMediumEffort) {
+      _applyMediumEffortSampling();
+    }
     characters = preset.characters ?? [];
     selectedResolution = '${preset.width}x${preset.height}';
-    _manageSettings.setPromptDraft(prompt);
-    _manageSettings.setNegativePromptDraft(negativePrompt);
-    _saveCharactersDraft();
+    await Future.wait([
+      _manageSettings.setPromptDraft(prompt),
+      _manageSettings.setNegativePromptDraft(negativePrompt),
+      _saveCharactersDraft(),
+      _manageSettings.setSelectedSamplerDraft(_highEffortSampling!.sampler),
+      _manageSettings.setCfgRescaleDraft(_highEffortSampling!.cfgRescale),
+      _manageSettings.setStepsDraft(_highEffortSampling!.steps),
+    ]);
+    await _ensureSamplingForCurrentProvider();
     notifyListeners();
   }
 
@@ -2656,7 +2924,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     negativePrompt = '';
     inpaintPrompt = '';
     inpaintNegativePrompt = '';
-    characters = [];
+    _characters = [];
+    inpaintCharacters = [];
     errorMessage = null;
     clearInpaintingData();
     clearImg2ImgData();
@@ -2665,7 +2934,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _manageSettings.setNegativePromptDraft('');
     _manageSettings.setInpaintPromptDraft('');
     _manageSettings.setInpaintNegativePromptDraft('');
-    _saveCharactersDraft();
+    _manageSettings.setCharactersDraft(const []);
+    _manageSettings.setInpaintCharactersDraft(const []);
     notifyListeners();
   }
 
@@ -2737,7 +3007,6 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   void _syncEffortFromSelectedModel() {
-    _highEffortSampling = null;
     effort = _selectedModelIsMediumEffort
         ? GenerationEffort.medium
         : GenerationEffort.high;

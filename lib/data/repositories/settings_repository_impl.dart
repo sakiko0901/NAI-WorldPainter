@@ -180,6 +180,14 @@ class SettingsRepositoryImpl implements SettingsRepository {
       _local.setCharactersDraft(value);
 
   @override
+  Future<List<CharacterSpec>> getInpaintCharactersDraft() async =>
+      _local.getInpaintCharactersDraft();
+
+  @override
+  Future<void> setInpaintCharactersDraft(List<CharacterSpec> value) =>
+      _local.setInpaintCharactersDraft(value);
+
+  @override
   Future<List<CharacterReferenceImage>> getVibeReferencesDraft() async =>
       _local.getVibeReferencesDraft();
 

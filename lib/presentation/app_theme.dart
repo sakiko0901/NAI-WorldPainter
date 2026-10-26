@@ -62,12 +62,14 @@ TextTheme _appleishBold(TextTheme base, Color color) {
 ThemeData buildNaiHuishiTheme(
   Brightness brightness, {
   bool useGoogleFonts = false,
+  bool frostedGlassEnabled = true,
 }) {
   final isDark = brightness == Brightness.dark;
   final baseTheme = ThemeData(brightness: brightness).textTheme;
   final interTheme =
       useGoogleFonts ? GoogleFonts.interTextTheme(baseTheme) : baseTheme;
-  final glass = FrostedTheme.forBrightness(brightness);
+  final glass = FrostedTheme.forBrightness(brightness)
+      .copyWith(blurEnabled: frostedGlassEnabled);
   final textColor = isDark ? const Color(0xFFE7EBF0) : const Color(0xFF303944);
   final surface = isDark ? const Color(0xFF23272D) : const Color(0xFFF9FBFF);
   final primary = isDark ? const Color(0xFFB5C2D3) : const Color(0xFF7488A3);
@@ -204,6 +206,7 @@ ThemeData buildNaiHuishiTheme(
 
 @immutable
 class FrostedTheme extends ThemeExtension<FrostedTheme> {
+  final bool blurEnabled;
   final Color surface,
       raised,
       border,
@@ -214,7 +217,8 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
       stage;
 
   const FrostedTheme(
-      {required this.surface,
+      {this.blurEnabled = true,
+      required this.surface,
       required this.raised,
       required this.border,
       required this.selection,
@@ -250,7 +254,8 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
 
   @override
   FrostedTheme copyWith(
-          {Color? surface,
+          {bool? blurEnabled,
+          Color? surface,
           Color? raised,
           Color? border,
           Color? selection,
@@ -259,6 +264,7 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
           Color? rail,
           Color? stage}) =>
       FrostedTheme(
+          blurEnabled: blurEnabled ?? this.blurEnabled,
           surface: surface ?? this.surface,
           raised: raised ?? this.raised,
           border: border ?? this.border,
@@ -272,6 +278,8 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
   FrostedTheme lerp(covariant FrostedTheme? other, double t) {
     if (other == null) return this;
     return FrostedTheme(
+        // Apply the effect switch immediately, even during a theme transition.
+        blurEnabled: other.blurEnabled,
         surface: Color.lerp(surface, other.surface, t)!,
         raised: Color.lerp(raised, other.raised, t)!,
         border: Color.lerp(border, other.border, t)!,

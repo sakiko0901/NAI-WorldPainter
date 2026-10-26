@@ -65,6 +65,12 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
 
   GenerationTask get task => widget.task;
 
+  bool get _generationBusy {
+    if (!sl.isRegistered<GenerationViewModel>()) return false;
+    final generation = sl<GenerationViewModel>();
+    return generation.isGenerating || generation.isProcessingImage;
+  }
+
   bool get _hasImage =>
       (task.imagePath != null && File(task.imagePath!).existsSync()) ||
       (task.imageUrl?.trim().isNotEmpty ?? false);
@@ -262,6 +268,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
 
   Widget _buildBottomActions(BuildContext context) {
     final disabled = _dialogOpen || _isApplying;
+    final imageActionsDisabled = disabled || _generationBusy;
     final theme = Theme.of(context);
     return SafeArea(
       top: false,
@@ -301,19 +308,19 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: _DetailMoreAction.inpaint,
-                  enabled: !_isApplying &&
+                  enabled: !imageActionsDisabled &&
                       (widget.onInpaint != null || _supportsInpaint),
                   child: const Text('导入到局部重绘'),
                 ),
                 PopupMenuItem(
                   value: _DetailMoreAction.upscale,
-                  enabled: !_isApplying &&
+                  enabled: !imageActionsDisabled &&
                       (widget.onUpscale != null || _supportsUpscale),
                   child: const Text('Upscale'),
                 ),
                 PopupMenuItem(
                   value: _DetailMoreAction.enhance,
-                  enabled: !_isApplying &&
+                  enabled: !imageActionsDisabled &&
                       (widget.onEnhance != null || _supportsEnhance),
                   child: const Text('Enhance'),
                 ),
@@ -369,6 +376,10 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
 
   Future<void> _executeImageAction(Future<void> Function() action) async {
     if (_isApplying) return;
+    if (_generationBusy) {
+      showFloatingToast(context, '生成或图片处理中，请稍后再试');
+      return;
+    }
     setState(() => _isApplying = true);
     try {
       await action();
@@ -408,16 +419,8 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
     }
     final generation = sl<GenerationViewModel>();
     final sourceTask = task.copyWith(imagePath: path);
-    await generation.loadFromHistory(sourceTask);
-    await generation.updateInpaintPrompt(sourceTask.prompt);
-    await generation.updateInpaintNegativePrompt(
-      sourceTask.negativePrompt ?? '',
-    );
-    generation.setGenerationMode(GenerationMode.inpainting);
-    generation.setSourceImagePath(path);
-    generation.setMaskImagePath(null);
-    showFloatingToast(context, '已导入局部重绘', icon: Icons.check_circle_outline);
-    widget.onNavigate?.call(1);
+    await generation.importTaskToInpaint(sourceTask);
+    _leaveDetailForWorkspace('已导入局部重绘');
   }
 
   Future<void> _openOfficialUpscale() async {
@@ -431,11 +434,14 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
       showFloatingToast(context, '当前图片不可用', icon: Icons.error_outline);
       return;
     }
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => OfficialUpscalePage(initialImagePath: path),
+    final sourceTask = task.copyWith(imagePath: path);
+    final returnToWorkspace = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => OfficialUpscalePage(initialTask: sourceTask),
       ),
     );
+    if (!mounted || returnToWorkspace != true) return;
+    _leaveDetailForWorkspace('Upscale 完成，已加入创作工作区');
   }
 
   Future<void> _enhanceFromHistory() async {
@@ -458,25 +464,14 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
 
     final sourceTask = task.copyWith(imagePath: imagePath);
     final generation = sl<GenerationViewModel>();
-    final results = [...generation.sessionResults];
-    final existingIndex = results.indexWhere(
-      (result) => result.taskId == sourceTask.taskId,
-    );
-    if (existingIndex >= 0) {
-      results[existingIndex] = sourceTask;
-    } else {
-      results.add(sourceTask);
-    }
-    generation.sessionResults = results;
-    generation.lastCompletedTask = sourceTask;
-    generation.selectedResultTaskId = null;
-    generation.selectResult(sourceTask.taskId);
-
+    GenerationTask? enhanced;
     final succeeded = await generation.enhanceWithOfficial(
       scale: options.$3 ? 1.0 : 1.5,
       strength: options.$1,
       noise: options.$2,
       max: options.$3,
+      sourceTask: sourceTask,
+      onCompleted: (result) => enhanced = result,
     );
     if (!mounted) return;
     if (!succeeded) {
@@ -488,16 +483,24 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
       return;
     }
 
-    final enhanced = generation.selectedResult;
-    if (enhanced != null) {
-      await sl<HistoryRepository>().saveTask(enhanced);
+    final completed = enhanced;
+    if (completed == null) {
+      showFloatingToast(
+        context,
+        'Enhance 已完成，但未找到新结果',
+        icon: Icons.error_outline,
+      );
+      return;
     }
+    await sl<HistoryRepository>().saveTask(completed);
+    _leaveDetailForWorkspace('Enhance 完成，已加入创作工作区');
+  }
+
+  void _leaveDetailForWorkspace(String message) {
     if (!mounted) return;
-    showFloatingToast(
-      context,
-      'Enhance 完成，已加入创作结果与历史记录',
-      icon: Icons.check_circle_outline,
-    );
+    showFloatingToast(context, message, icon: Icons.check_circle_outline);
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop();
     widget.onNavigate?.call(1);
   }
 

@@ -1283,14 +1283,8 @@ class NovelAiApiService {
         operation: 'inpainting',
       );
     }
-    if (route.isIkun && _enabledCharacters(task).isNotEmpty) {
-      throw ApiException(
-        message: 'ikun 网关当前不支持局部重绘与多角色控制同时使用，请先移除角色控制',
-        code: 'IKUN_CHARACTERS_INPAINTING_UNSUPPORTED',
-      );
-    }
-
     if (is7877) {
+      final characterPrompts = _buildCharacterPrompts(_enabledCharacters(task));
       return {
         'model': _normalize7877Model(task.model),
         'prompt': task.prompt,
@@ -1313,9 +1307,16 @@ class NovelAiApiService {
             'negative_prompt': task.negativePrompt,
           'quality': true,
           'uc_preset': 'light',
+          if (characterPrompts.isNotEmpty) 'characters': characterPrompts,
+          if (characterPrompts.isNotEmpty) 'use_coords': task.useCoords,
         },
       };
     }
+
+    final characters = _enabledCharacters(task);
+    final characterPrompts = _buildIkunCharacterPrompts(characters);
+    final characterNegativePrompt =
+        _buildIkunCharacterNegativePrompt(task, characters);
 
     return {
       'novelai_operation': 'inpainting',
@@ -1339,6 +1340,12 @@ class NovelAiApiService {
       'sampler': _normalizeIkunSampler(task.sampler),
       'noise_schedule': _normalizeIkunNoiseSchedule(task.noiseSchedule),
       if (task.seed != null) 'seed': task.seed,
+      if (route.isIkun && characterPrompts.isNotEmpty)
+        'characterPrompts': characterPrompts,
+      if (route.isIkun && characterPrompts.isNotEmpty)
+        'use_coords': task.useCoords,
+      if (route.isIkun && characterNegativePrompt != null)
+        'v4_negative_prompt': characterNegativePrompt,
       'response_format': 'b64_json',
     };
   }

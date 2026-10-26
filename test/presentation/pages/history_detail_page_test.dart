@@ -189,7 +189,10 @@ void main() {
   ) async {
     final services = _installHistoryActionServices(tester);
     var navigationCount = 0;
-    final source = _task(imagePath: services.imagePath);
+    final source = _task(
+      imagePath: services.imagePath,
+      characters: const [CharacterSpec(prompt: 'blue hair', uc: 'red eyes')],
+    );
 
     await _openDetail(
       tester,
@@ -206,15 +209,15 @@ void main() {
     expect(services.generation.generationMode, GenerationMode.inpainting);
     expect(services.generation.sourceImagePath, services.imagePath);
     expect(services.generation.maskImagePath, isNull);
-    expect(
-      services.generation.loadedHistoryTask?.taskId,
-      source.taskId,
-    );
+    expect(services.generation.loadedHistoryTask, isNull);
+    expect(services.generation.importedInpaintTask?.taskId, source.taskId);
     expect(services.generation.inpaintPrompt, source.prompt);
     expect(
       services.generation.inpaintNegativePrompt,
       source.negativePrompt,
     );
+    expect(services.generation.characters.single.prompt, 'blue hair');
+    expect(services.generation.characters.single.uc, 'red eyes');
     expect(navigationCount, 1);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 2));
@@ -236,6 +239,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(OfficialUpscalePage), findsOneWidget);
+    expect(
+      tester
+          .widget<OfficialUpscalePage>(find.byType(OfficialUpscalePage))
+          .initialTask
+          ?.taskId,
+      'history-detail-test',
+    );
     expect(find.text('NovelAI Upscale'), findsOneWidget);
     expect(
       tester
@@ -245,6 +255,54 @@ void main() {
       isNotNull,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('history Upscale returns its bound result to the workbench', (
+    tester,
+  ) async {
+    final services = _installHistoryActionServices(tester);
+    final source = _task(imagePath: services.imagePath);
+    var navigationCount = 0;
+
+    await _openDetail(
+      tester,
+      task: source,
+      onNavigate: (_) => navigationCount++,
+    );
+    await tester.tap(find.byKey(const ValueKey('detail-more-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Upscale'));
+    await tester.pump();
+    await _flushFileIo(tester);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('official-upscale-run')),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('开始 2× 放大'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('official-upscale-return-to-workspace')),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('official-upscale-return-to-workspace')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(services.generation.upscaleSource?.taskId, source.taskId);
+    expect(
+      services.generation.selectedResult?.taskId,
+      'upscaled-history-result',
+    );
+    expect(navigationCount, 1);
+    expect(find.byType(HistoryDetailPage), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets('history Enhance supplies an out-of-session source and saves it',
@@ -493,9 +551,23 @@ Future<void> _flushFileIo(WidgetTester tester) async {
 }
 
 class _HistoryActionGeneration extends FrontendGenerationFake {
-  String? sourceImagePath;
-  String? maskImagePath;
+  String? _sourceImagePath;
+  String? _maskImagePath;
+
+  @override
+  String? get sourceImagePath => _sourceImagePath;
+
+  @override
+  set sourceImagePath(String? value) => _sourceImagePath = value;
+
+  @override
+  String? get maskImagePath => _maskImagePath;
+
+  @override
+  set maskImagePath(String? value) => _maskImagePath = value;
+
   GenerationTask? enhanceSource;
+  GenerationTask? upscaleSource;
   GenerationTask? loadedHistoryTask;
 
   @override
@@ -515,6 +587,13 @@ class _HistoryActionGeneration extends FrontendGenerationFake {
   }
 
   @override
+  Future<void> importTaskToInpaint(GenerationTask task) async {
+    await super.importTaskToInpaint(task);
+    sourceImagePath = task.imagePath;
+    maskImagePath = null;
+  }
+
+  @override
   void setSourceImagePath(String? path) => sourceImagePath = path;
 
   @override
@@ -527,8 +606,10 @@ class _HistoryActionGeneration extends FrontendGenerationFake {
     double noise = 0,
     bool max = false,
     String? promptOverride,
+    GenerationTask? sourceTask,
+    void Function(GenerationTask result)? onCompleted,
   }) async {
-    final source = selectedResult ?? lastCompletedTask;
+    final source = sourceTask ?? selectedResult ?? lastCompletedTask;
     if (source == null) return false;
     enhanceSource = source;
     final result = source.copyWith(
@@ -541,7 +622,29 @@ class _HistoryActionGeneration extends FrontendGenerationFake {
     sessionResults = [...sessionResults, result];
     selectedResultTaskId = result.taskId;
     lastCompletedTask = result;
+    onCompleted?.call(result);
     return true;
+  }
+
+  @override
+  Future<String> upscaleFileWithOfficial(
+    String inputPath,
+    int scale, {
+    GenerationTask? sourceTask,
+  }) async {
+    upscaleSource = sourceTask;
+    if (sourceTask != null) {
+      receive(
+        sourceTask.copyWith(
+          taskId: 'upscaled-history-result',
+          imagePath: inputPath,
+          width: sourceTask.width * scale,
+          height: sourceTask.height * scale,
+          completedAt: DateTime.now(),
+        ),
+      );
+    }
+    return inputPath;
   }
 }
 

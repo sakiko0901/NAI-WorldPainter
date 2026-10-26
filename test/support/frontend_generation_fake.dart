@@ -27,6 +27,16 @@ class FrontendGenerationFake extends ChangeNotifier
   String? errorMessage;
   @override
   bool isGenerating = false;
+  bool processingImage = false;
+  @override
+  bool get isProcessingImage => processingImage;
+  @override
+  String? imageProcessingSourceTaskId;
+  @override
+  String? imageProcessingLabel;
+  @override
+  String? imageProcessingStatus;
+  GenerationTask? importedInpaintTask;
   @override
   int batchCount = 1;
   @override
@@ -34,7 +44,22 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   String selectedModel = 'nai-diffusion-4-5-full';
   @override
-  List<CharacterSpec> characters = [];
+  List<CharacterSpec> get characters =>
+      generationMode == GenerationMode.inpainting
+          ? inpaintCharacters
+          : _characters;
+  @override
+  set characters(List<CharacterSpec> value) {
+    if (generationMode == GenerationMode.inpainting) {
+      inpaintCharacters = value;
+    } else {
+      _characters = value;
+    }
+  }
+
+  List<CharacterSpec> _characters = [];
+  @override
+  List<CharacterSpec> inpaintCharacters = [];
   @override
   List<String> gptImagePaths = [];
   @override
@@ -76,6 +101,7 @@ class FrontendGenerationFake extends ChangeNotifier
     effort = value;
     notifyListeners();
   }
+
   @override
   bool get isTiledImg2Img => false;
   @override
@@ -128,6 +154,43 @@ class FrontendGenerationFake extends ChangeNotifier
   }
 
   @override
+  Future<void> importTaskToInpaint(GenerationTask task) async {
+    importedInpaintTask = task;
+    generationMode = GenerationMode.inpainting;
+    inpaintPrompt = task.prompt;
+    inpaintNegativePrompt = task.negativePrompt ?? '';
+    characters = List<CharacterSpec>.of(task.characters ?? const []);
+    notifyListeners();
+  }
+
+  @override
+  Future<bool> upscaleWithOfficial(
+    int scale, {
+    GenerationTask? sourceTask,
+  }) async =>
+      false;
+
+  @override
+  Future<bool> enhanceWithOfficial({
+    required double scale,
+    required double strength,
+    double noise = 0.0,
+    bool max = false,
+    String? promptOverride,
+    GenerationTask? sourceTask,
+    void Function(GenerationTask result)? onCompleted,
+  }) async =>
+      false;
+
+  @override
+  Future<String> upscaleFileWithOfficial(
+    String inputPath,
+    int scale, {
+    GenerationTask? sourceTask,
+  }) async =>
+      inputPath;
+
+  @override
   void selectResult(String taskId) {
     selectedResultTaskId = taskId;
     notifyListeners();
@@ -163,6 +226,9 @@ class FrontendGenerationFake extends ChangeNotifier
     selectedResultTaskId = task.taskId;
     notifyListeners();
   }
+
+  @override
+  void addCompletedWorkspaceResult(GenerationTask task) => receive(task);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

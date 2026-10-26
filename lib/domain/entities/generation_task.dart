@@ -101,6 +101,7 @@ class GenerationTask extends Equatable {
 
   GenerationTask copyWith({
     int? id,
+    bool clearId = false,
     String? taskId,
     String? model,
     String? endpointId,
@@ -123,6 +124,7 @@ class GenerationTask extends Equatable {
     String? status,
     String? imagePath,
     String? imageUrl,
+    bool clearImageUrl = false,
     String? errorMessage,
     DateTime? createdAt,
     DateTime? completedAt,
@@ -141,7 +143,7 @@ class GenerationTask extends Equatable {
     bool? isInternal,
   }) {
     return GenerationTask(
-      id: id ?? this.id,
+      id: clearId ? null : id ?? this.id,
       taskId: taskId ?? this.taskId,
       model: model ?? this.model,
       endpointId: endpointId ?? this.endpointId,
@@ -163,7 +165,7 @@ class GenerationTask extends Equatable {
       preciseReferences: preciseReferences ?? this.preciseReferences,
       status: status ?? this.status,
       imagePath: imagePath ?? this.imagePath,
-      imageUrl: imageUrl ?? this.imageUrl,
+      imageUrl: clearImageUrl ? null : imageUrl ?? this.imageUrl,
       errorMessage: errorMessage ?? this.errorMessage,
       createdAt: createdAt ?? this.createdAt,
       completedAt: completedAt ?? this.completedAt,

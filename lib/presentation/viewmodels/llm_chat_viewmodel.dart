@@ -529,14 +529,19 @@ class LlmChatViewModel extends ChangeNotifier {
               '以上 Skill 只负责 V5 提示词的构思与编排。App 的工具名称、确认机制、提示词框目标、'
               'read-then-write 约束和图片生成流程以本系统规则为准，不要自行发明工具。需要详细构思或写法时，'
               '调用 `read_prompting_reference` 读取对应参考文档；修改现有内容仍必须先调用 `read_current_prompts`。'
-              '`write_prompt` 的 position 参数会直接写入角色坐标，是本 App 的实际 Custom Position 控件；'
-              '参考文档中的纯文本 Position 建议不能代替坐标参数。';
+              '`write_prompt` 的 position 是可选的手动坐标参数，默认省略，由 V5 自动布局；'
+              '不要把参考文档中的位置建议转换成坐标，只有用户明确要求手动定位时才使用。';
           v5Registry = (_agentLoopRegistry()).copy()
             ..register(ReadPromptingReferenceTool(_promptingSkillLoader));
         } catch (e) {
           if (kDebugMode) debugPrint('V5 prompting skill unavailable: $e');
         }
       }
+
+      // Apply the current default even to saved/custom prompts and when the
+      // optional V5 reference assets cannot be loaded.
+      sysContent = '$sysContent\n\n## 角色位置规则\n'
+          '${AppConstants.assistantCharacterPositionPolicy}';
 
       // 固定集成规则也适用于自定义系统提示词；记忆每轮直接召回，不依赖模型选工具。
       final memoryQuery =

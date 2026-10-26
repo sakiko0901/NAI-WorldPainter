@@ -35,6 +35,7 @@ void main() {
     outputDirectory = await Directory.systemTemp.createTemp('inpaint_widget_');
     generationRepository = _SuccessfulGenerationRepository(outputDirectory);
     vm = _InpaintGenerationFake();
+    vm.setGenerationMode(GenerationMode.inpainting);
     history = _UnusedHistoryRepository();
     sl.registerSingleton<GenerationViewModel>(vm);
     sl.registerSingleton<GenerationQueue>(
@@ -98,6 +99,193 @@ void main() {
       expect(field.minLines, 3);
       expect(field.maxLines, 6);
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('does not start inpaint while official image processing is busy',
+      (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1200);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      _host(const SingleChildScrollView(child: InpaintWorkspaceCard())),
+    );
+    await _loadWorkspaceImage(tester, vm);
+
+    vm.processingImage = true;
+    final handled = await vm.inpaintWorkspaceHandler!();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(handled, isFalse);
+    expect(generationRepository.submittedTasks, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'inpaint roles edit positive and negative prompts with V5 auto position',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    vm.selectedModel = 'nai-diffusion-5-full';
+
+    await tester.pumpWidget(
+      _host(const SingleChildScrollView(child: InpaintWorkspaceCard())),
+    );
+    await _loadWorkspaceImage(tester, vm);
+
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-add-character')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-add-character')));
+    await tester.pumpAndSettle();
+    expect(vm.characters, hasLength(1));
+    expect(vm.characters.single.centerX, isNull);
+    expect(vm.characters.single.centerY, isNull);
+
+    final positive = find.byKey(const ValueKey('inpaint-character-prompt-1'));
+    final negative = find.byKey(const ValueKey('inpaint-character-negative-1'));
+    await tester.ensureVisible(positive);
+    await tester.enterText(positive, '1girl, silver hair');
+    await tester.pump();
+    await tester.enterText(negative, 'blurry, extra fingers');
+    await tester.pump();
+    expect(vm.characters.single.prompt, '1girl, silver hair');
+    expect(vm.characters.single.uc, 'blurry, extra fingers');
+
+    final roleCard = find.byKey(const ValueKey('inpaint-character-0'));
+    await tester.ensureVisible(roleCard);
+    await tester.tap(find.descendant(of: roleCard, matching: find.text('手动')));
+    await tester.pumpAndSettle();
+    expect(vm.characters.single.centerX, 0.5);
+    expect(vm.characters.single.centerY, 0.5);
+
+    await tester.enterText(positive, '1girl, blue eyes');
+    await tester.pump();
+    expect(vm.characters.single.centerX, 0.5);
+    expect(vm.characters.single.centerY, 0.5);
+
+    await tester.tap(find.descendant(of: roleCard, matching: find.text('自动')));
+    await tester.pumpAndSettle();
+    expect(vm.characters.single.centerX, isNull);
+    expect(vm.characters.single.centerY, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('inpaint role editors fit a narrow screen with enlarged text', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 852);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      _host(
+        const MediaQuery(
+          data: MediaQueryData(
+            size: Size(320, 852),
+            textScaler: TextScaler.linear(1.35),
+          ),
+          child: SingleChildScrollView(child: InpaintWorkspaceCard()),
+        ),
+      ),
+    );
+    await _loadWorkspaceImage(tester, vm);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-add-character')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-add-character')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('inpaint-character-negative-1')),
+    );
+
+    expect(find.byKey(const ValueKey('inpaint-character-prompt-1')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('inpaint-character-negative-1')),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('external prompt replacement refreshes mounted role editors',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    vm.inpaintPrompt = 'old global positive';
+    vm.inpaintNegativePrompt = 'old global negative';
+    vm.characters = [
+      const CharacterSpec(
+        prompt: 'old character prompt',
+        uc: 'old character negative',
+        centerX: 0.7,
+        centerY: 0.3,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _host(const SingleChildScrollView(child: InpaintWorkspaceCard())),
+    );
+    await _loadWorkspaceImage(tester, vm);
+    expect(
+      tester
+          .widget<TextField>(
+              find.byKey(const ValueKey('inpaint-positive-prompt')))
+          .controller!
+          .text,
+      'old global positive',
+    );
+
+    vm.inpaintPrompt = 'new global positive';
+    vm.inpaintNegativePrompt = 'new global negative';
+    vm.characters = [
+      const CharacterSpec(
+        prompt: 'new character prompt',
+        uc: 'new character negative',
+        centerX: 0.2,
+        centerY: 0.8,
+      ),
+    ];
+    vm.notifyListeners();
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(
+              find.byKey(const ValueKey('inpaint-positive-prompt')))
+          .controller!
+          .text,
+      'new global positive',
+    );
+    expect(
+      tester
+          .widget<TextField>(
+              find.byKey(const ValueKey('inpaint-negative-prompt')))
+          .controller!
+          .text,
+      'new global negative',
+    );
+    expect(
+      tester
+          .widget<TextField>(
+              find.byKey(const ValueKey('inpaint-character-prompt-1')))
+          .controller!
+          .text,
+      'new character prompt',
+    );
+    expect(
+      tester
+          .widget<TextField>(
+              find.byKey(const ValueKey('inpaint-character-negative-1')))
+          .controller!
+          .text,
+      'new character negative',
+    );
+    expect(vm.characters.single.centerX, 0.2);
+    expect(vm.characters.single.centerY, 0.8);
     expect(tester.takeException(), isNull);
   });
 
@@ -353,6 +541,15 @@ void main() {
     expect(find.byType(InpaintComparison), findsOneWidget);
     expect(find.text('候选结果 3 / 3'), findsOneWidget);
     expect(generationRepository.submittedTasks, hasLength(3));
+    expect(vm.sessionResults, hasLength(3));
+    expect(
+      vm.sessionResults.every((task) =>
+          task.status == 'success' &&
+          task.imagePath != null &&
+          File(task.imagePath!).existsSync() &&
+          !task.isInternal),
+      isTrue,
+    );
     final immutableSource =
         generationRepository.submittedTasks.first.sourceImagePath;
     expect(immutableSource, isNot(generationRepository.generatedPaths.first));

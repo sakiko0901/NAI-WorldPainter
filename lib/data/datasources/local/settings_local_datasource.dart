@@ -167,6 +167,22 @@ class SettingsLocalDatasource {
     );
   }
 
+  List<CharacterSpec> getInpaintCharactersDraft() {
+    final raw = _prefs.getString(AppConstants.keyInpaintCharactersDraft);
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List)
+        .map((item) =>
+            CharacterSpec.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<void> setInpaintCharactersDraft(List<CharacterSpec> value) async {
+    await _prefs.setString(
+      AppConstants.keyInpaintCharactersDraft,
+      jsonEncode(value.map((character) => character.toJson()).toList()),
+    );
+  }
+
   List<CharacterReferenceImage> getVibeReferencesDraft() {
     final raw = _prefs.getString(AppConstants.keyVibeReferencesDraft);
     if (raw == null || raw.isEmpty) return [];

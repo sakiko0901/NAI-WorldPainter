@@ -16,11 +16,15 @@ class HomePage extends StatefulWidget {
 
   final AppearanceMode appearanceMode;
   final ValueChanged<AppearanceMode> onAppearanceChanged;
+  final bool frostedGlassEnabled;
+  final ValueChanged<bool>? onFrostedGlassChanged;
 
   const HomePage({
     super.key,
     required this.appearanceMode,
     required this.onAppearanceChanged,
+    this.frostedGlassEnabled = true,
+    this.onFrostedGlassChanged,
   });
 
   @override
@@ -143,6 +147,8 @@ class _HomePageState extends State<HomePage> {
                     key: const ValueKey('tools-destination'),
                     appearanceMode: widget.appearanceMode,
                     onAppearanceChanged: widget.onAppearanceChanged,
+                    frostedGlassEnabled: widget.frostedGlassEnabled,
+                    onFrostedGlassChanged: widget.onFrostedGlassChanged,
                     onNavigateToGenerate: _returnToCreate,
                   )
                 : const SizedBox.shrink(),

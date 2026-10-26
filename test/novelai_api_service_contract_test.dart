@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
+import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 
@@ -47,7 +48,8 @@ void main() {
         method: request.method,
         headers: headers,
       ));
-      if (request.uri.path.startsWith('/origin/')) {
+      if (request.uri.path.startsWith('/origin/') ||
+          request.uri.path == ApiConstants.officialGenerateImage) {
         final archive = Archive()
           ..addFile(ArchiveFile('result.png', 4, const [137, 80, 78, 71]));
         request.response
@@ -67,6 +69,40 @@ void main() {
   });
 
   tearDown(() => server.close(force: true));
+
+  group('V5 无坐标多角色请求不启用位置控制', () {
+    for (final contract in _v5CharacterContracts) {
+      test('${contract.name} 未指定位置时由模型自行构图', () async {
+        final request = await _captureCharacterRequest(
+          contract,
+          useCoords: false,
+          baseUri: baseUri,
+          requests: requests,
+          characters: const [
+            CharacterSpec(prompt: 'red hair'),
+            CharacterSpec(prompt: 'black hair'),
+          ],
+        );
+
+        _expectUnpositionedV5Characters(request, contract);
+      });
+
+      test('${contract.name} 保留手动角色坐标能力', () async {
+        final request = await _captureCharacterRequest(
+          contract,
+          useCoords: true,
+          baseUri: baseUri,
+          requests: requests,
+          characters: const [
+            CharacterSpec(prompt: 'red hair', centerX: 0.23, centerY: 0.37),
+            CharacterSpec(prompt: 'black hair', centerX: 0.77, centerY: 0.69),
+          ],
+        );
+
+        _expectPositionedV5Characters(request, contract);
+      });
+    }
+  });
 
   test('ikun 采样器严格匹配 gateway 当前白名单', () {
     const expected = [
@@ -513,34 +549,148 @@ void main() {
     expect(_body(requests.single)['response_format'], 'b64_json');
   });
 
-  test('ikun 局部重绘拒绝 gateway 无法消费的多角色控制', () async {
-    final directory =
-        await Directory.systemTemp.createTemp('nai_ikun_inpaint_chars_');
-    addTearDown(() => directory.delete(recursive: true));
-    final source = File('${directory.path}/source.png');
-    final mask = File('${directory.path}/mask.png');
-    await source.writeAsBytes(const [1, 2, 3]);
-    await mask.writeAsBytes(const [4, 5, 6]);
-    final service = _service();
-
-    await expectLater(
-      service.inpaintImage(
-        _task(
-          protocol: AppConstants.novelAiImageGenerationsProtocol,
-          sourceImagePath: source.path,
-          maskImagePath: mask.path,
-          characters: const [CharacterSpec(prompt: 'red hair')],
+  test('ikun 高模型局部重绘发送自动布局角色与角色负向提示', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: true,
+      useCoords: false,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(prompt: 'red hair', uc: 'bad hair'),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          enabled: false,
         ),
-        'key',
-        baseUri.toString(),
-      ),
-      throwsA(isA<ApiException>().having(
-        (error) => error.code,
-        'code',
-        'IKUN_CHARACTERS_INPAINTING_UNSUPPORTED',
-      )),
+      ],
     );
-    expect(requests, isEmpty);
+
+    final body = _body(request);
+    expect(request.path, ApiConstants.imageGenerations);
+    expect(body['characterPrompts'], [
+      {'prompt': 'red hair'},
+    ]);
+    expect(body['use_coords'], false);
+    expect(body['v4_negative_prompt'], {
+      'caption': {
+        'base_caption': 'global negative',
+        'char_captions': [
+          {'char_caption': 'bad hair', 'centers': <Map<String, double>>[]},
+        ],
+      },
+      'legacy_uc': false,
+    });
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+    expect(body, isNot(contains('params')));
+  });
+
+  test('ikun 高模型局部重绘保留角色手动坐标和负向坐标', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: true,
+      useCoords: true,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(
+          prompt: 'red hair',
+          uc: 'bad hair',
+          centerX: 0.23,
+          centerY: 0.37,
+        ),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          centerX: 0.8,
+          centerY: 0.7,
+          enabled: false,
+        ),
+      ],
+    );
+
+    final body = _body(request);
+    expect(body['characterPrompts'], [
+      {
+        'prompt': 'red hair',
+        'center': {'x': 0.23, 'y': 0.37},
+      },
+    ]);
+    expect(body['use_coords'], true);
+    expect(body['v4_negative_prompt']['caption']['char_captions'], [
+      {
+        'char_caption': 'bad hair',
+        'centers': [
+          {'x': 0.23, 'y': 0.37},
+        ],
+      },
+    ]);
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+  });
+
+  test('7877 高模型局部重绘发送自动布局角色正负向并忽略禁用角色', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: false,
+      useCoords: false,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(prompt: 'red hair', uc: 'bad hair'),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          enabled: false,
+        ),
+      ],
+    );
+
+    final body = _body(request);
+    final params = _asMap(body['params']);
+    expect(request.path, ApiConstants.imageGenerations);
+    expect(params['characters'], [
+      {'prompt': 'red hair', 'uc': 'bad hair'},
+    ]);
+    expect(params['use_coords'], false);
+    expect(params['negative_prompt'], 'global negative');
+    expect(body, isNot(contains('characterPrompts')));
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
+  });
+
+  test('7877 高模型局部重绘保留角色手动坐标', () async {
+    final request = await _captureInpaintCharacterRequest(
+      isIkun: false,
+      useCoords: true,
+      baseUri: baseUri,
+      requests: requests,
+      characters: const [
+        CharacterSpec(
+          prompt: 'red hair',
+          uc: 'bad hair',
+          centerX: 0.23,
+          centerY: 0.37,
+        ),
+        CharacterSpec(
+          prompt: 'disabled role marker',
+          uc: 'disabled negative marker',
+          centerX: 0.8,
+          centerY: 0.7,
+          enabled: false,
+        ),
+      ],
+    );
+
+    final params = _asMap(_body(request)['params']);
+    expect(params['characters'], [
+      {
+        'prompt': 'red hair',
+        'uc': 'bad hair',
+        'center': {'x': 0.23, 'y': 0.37},
+      },
+    ]);
+    expect(params['use_coords'], true);
+    expect(request.body, isNot(contains('disabled role marker')));
+    expect(request.body, isNot(contains('disabled negative marker')));
   });
 
   test('ikun 局部重绘通过 NewAPI 统一入口发送顶层参数', () async {
@@ -1061,6 +1211,244 @@ void main() {
     });
     expect(body, isNot(contains('params')));
   });
+}
+
+Future<_CapturedRequest> _captureCharacterRequest(
+  _V5CharacterContract contract, {
+  required bool useCoords,
+  required List<CharacterSpec> characters,
+  required Uri baseUri,
+  required List<_CapturedRequest> requests,
+}) async {
+  final task = _task(
+    model: contract.model,
+    protocol: contract.protocol,
+    useCoords: useCoords,
+    characters: characters,
+  );
+  if (contract.isOfficial) {
+    final dio = Dio(BaseOptions(baseUrl: baseUri.toString()))
+      ..httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () => HttpClient(),
+      );
+    final result =
+        await OfficialNovelAiApiService(dio).generateImage(task, 'key');
+    await _deleteIfPresent(result.imagePath);
+  } else {
+    final result = await _service().generateImage(
+      task,
+      'key',
+      baseUri.toString(),
+    );
+    await _deleteIfPresent(result.imagePath);
+  }
+
+  expect(requests, hasLength(1));
+  return requests.single;
+}
+
+Future<_CapturedRequest> _captureInpaintCharacterRequest({
+  required bool isIkun,
+  required bool useCoords,
+  required List<CharacterSpec> characters,
+  required Uri baseUri,
+  required List<_CapturedRequest> requests,
+}) async {
+  final directory =
+      await Directory.systemTemp.createTemp('nai_inpaint_characters_');
+  addTearDown(() => directory.delete(recursive: true));
+  final source = File('${directory.path}/source.png');
+  final mask = File('${directory.path}/mask.png');
+  await source.writeAsBytes(const [1, 2, 3]);
+  await mask.writeAsBytes(const [4, 5, 6]);
+  final result = await _service().inpaintImage(
+    _task(
+      model: 'nai-diffusion-5-full',
+      protocol: isIkun
+          ? AppConstants.novelAiImageGenerationsProtocol
+          : AppConstants.novelAiChatCompletionsProtocol,
+      sourceImagePath: source.path,
+      maskImagePath: mask.path,
+      useCoords: useCoords,
+      characters: characters,
+      negativePrompt: 'global negative',
+    ),
+    'key',
+    baseUri.toString(),
+  );
+  await _deleteIfPresent(result.imagePath);
+
+  expect(requests, hasLength(1));
+  return requests.single;
+}
+
+Future<void> _deleteIfPresent(String? path) async {
+  if (path == null) return;
+  final file = File(path);
+  if (await file.exists()) await file.delete();
+}
+
+void _expectUnpositionedV5Characters(
+  _CapturedRequest request,
+  _V5CharacterContract contract,
+) {
+  final body = _body(request);
+  if (contract.isOfficial) {
+    expect(request.path, ApiConstants.officialGenerateImage);
+    expect(body['model'], contract.model);
+    expect(body['action'], 'generate');
+
+    final parameters = _asMap(body['parameters']);
+    final positive = _asMap(parameters['v4_prompt']);
+    final positiveCaption = _asMap(positive['caption']);
+    final placeholderCenters = [
+      {'x': 0.5, 'y': 0.5},
+    ];
+    expect(parameters['use_coords'], false);
+    expect(positive['use_coords'], false);
+    expect(positiveCaption['char_captions'], [
+      {'char_caption': 'red hair', 'centers': placeholderCenters},
+      {'char_caption': 'black hair', 'centers': placeholderCenters},
+    ]);
+    final negative = _asMap(parameters['v4_negative_prompt']);
+    final negativeCaption = _asMap(negative['caption']);
+    expect(negative['use_coords'], false);
+    expect(negativeCaption['char_captions'], [
+      {'char_caption': '', 'centers': placeholderCenters},
+      {'char_caption': '', 'centers': placeholderCenters},
+    ]);
+    return;
+  }
+
+  expect(request.path, ApiConstants.imageGenerations);
+  expect(body['model'], contract.model);
+  if (contract.isIkun || contract.isMedium) {
+    expect(body['use_coords'], false);
+    expect(body['characterPrompts'], [
+      {'prompt': 'red hair'},
+      {'prompt': 'black hair'},
+    ]);
+    expect(body, isNot(contains('params')));
+    return;
+  }
+
+  final parameters = _asMap(body['params']);
+  expect(parameters['use_coords'], false);
+  expect(parameters['characters'], [
+    {'prompt': 'red hair', 'uc': ''},
+    {'prompt': 'black hair', 'uc': ''},
+  ]);
+}
+
+void _expectPositionedV5Characters(
+  _CapturedRequest request,
+  _V5CharacterContract contract,
+) {
+  final body = _body(request);
+  if (contract.isOfficial) {
+    final parameters = _asMap(body['parameters']);
+    final positive = _asMap(parameters['v4_prompt']);
+    final positiveCaption = _asMap(positive['caption']);
+    expect(parameters['use_coords'], true);
+    expect(positive['use_coords'], true);
+    expect(positiveCaption['char_captions'], [
+      {
+        'char_caption': 'red hair',
+        'centers': [
+          {'x': 0.23, 'y': 0.37},
+        ],
+      },
+      {
+        'char_caption': 'black hair',
+        'centers': [
+          {'x': 0.77, 'y': 0.69},
+        ],
+      },
+    ]);
+    return;
+  }
+
+  if (contract.isIkun || contract.isMedium) {
+    expect(body['use_coords'], true);
+    expect(body['characterPrompts'], [
+      {
+        'prompt': 'red hair',
+        'center': {'x': 0.23, 'y': 0.37},
+      },
+      {
+        'prompt': 'black hair',
+        'center': {'x': 0.77, 'y': 0.69},
+      },
+    ]);
+    return;
+  }
+
+  final parameters = _asMap(body['params']);
+  expect(parameters['use_coords'], true);
+  expect(parameters['characters'], [
+    {
+      'prompt': 'red hair',
+      'uc': '',
+      'center': {'x': 0.23, 'y': 0.37},
+    },
+    {
+      'prompt': 'black hair',
+      'uc': '',
+      'center': {'x': 0.77, 'y': 0.69},
+    },
+  ]);
+}
+
+Map<String, dynamic> _asMap(Object? value) =>
+    Map<String, dynamic>.from(value! as Map);
+
+const List<_V5CharacterContract> _v5CharacterContracts = [
+  _V5CharacterContract(
+    '官方 V5 High',
+    'nai-diffusion-5-full',
+    AppConstants.novelAiOfficialProtocol,
+    isOfficial: true,
+  ),
+  _V5CharacterContract(
+    'IKUN V5 High',
+    'nai-diffusion-5-full',
+    AppConstants.novelAiImageGenerationsProtocol,
+    isIkun: true,
+  ),
+  _V5CharacterContract(
+    'IKUN V5 Medium',
+    'nai-diffusion-5-full-medium',
+    AppConstants.novelAiImageGenerationsProtocol,
+    isIkun: true,
+  ),
+  _V5CharacterContract(
+    '7877 V5 High',
+    'nai-diffusion-5-full',
+    AppConstants.novelAiChatCompletionsProtocol,
+  ),
+  _V5CharacterContract(
+    '7877 V5 Medium',
+    'nai-diffusion-5-full-medium',
+    AppConstants.novelAiChatCompletionsProtocol,
+  ),
+];
+
+class _V5CharacterContract {
+  final String name;
+  final String model;
+  final String protocol;
+  final bool isOfficial;
+  final bool isIkun;
+
+  const _V5CharacterContract(
+    this.name,
+    this.model,
+    this.protocol, {
+    this.isOfficial = false,
+    this.isIkun = false,
+  });
+
+  bool get isMedium => model.contains('medium');
 }
 
 NovelAiApiService _service() {

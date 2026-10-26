@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
@@ -195,6 +196,23 @@ void main() {
     expect(system, contains('不要据此断言没有记忆'));
     expect(system, isNot(contains('未找到任何记忆')));
     expect(h.api.mainCalls.single.lastUserText, '请画纳西妲。');
+  });
+
+  test('custom and saved prompts receive the current automatic layout policy',
+      () async {
+    final h = await startHarness(systemPrompt: '旧规则：每个角色都必须指定 position。');
+    await h.viewModel.sendUserMessage('请画两个人，一人在前景，一人在远处。');
+    final system = h.api.mainCalls.single.firstSystemContent!;
+    expect(system, contains(AppConstants.assistantCharacterPositionPolicy));
+    expect(system.indexOf(AppConstants.assistantCharacterPositionPolicy),
+        greaterThan(system.indexOf('旧规则')));
+    expect(AppConstants.defaultLlmSystemPrompt,
+        contains(AppConstants.assistantCharacterPositionPolicy));
+    await h.viewModel.createNewSession();
+    await h.viewModel.sendUserMessage('请画两个人，一人在前景，一人在远处。');
+    final v5System = h.api.mainCalls.last.firstSystemContent!;
+    expect(v5System, contains(AppConstants.assistantCharacterPositionPolicy));
+    expect(v5System, contains('默认省略，由 V5 自动布局'));
   });
 
   test(

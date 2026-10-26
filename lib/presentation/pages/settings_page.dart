@@ -23,12 +23,16 @@ class SettingsPage extends StatefulWidget {
   final VoidCallback? onNavigateToGenerate;
   final AppearanceMode appearanceMode;
   final ValueChanged<AppearanceMode> onAppearanceChanged;
+  final bool frostedGlassEnabled;
+  final ValueChanged<bool>? onFrostedGlassChanged;
 
   const SettingsPage({
     super.key,
     this.onNavigateToGenerate,
     required this.appearanceMode,
     required this.onAppearanceChanged,
+    this.frostedGlassEnabled = true,
+    this.onFrostedGlassChanged,
   });
 
   @override
@@ -249,12 +253,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   _SettingsTile(
                     icon: CupertinoIcons.paintbrush_fill,
                     title: '主题与外观',
-                    subtitle: '亮色、暗色与咖啡纸主题',
+                    subtitle: '亮色、暗色与毛玻璃效果',
                     onTap: () => Navigator.of(context).push(
                       CupertinoPageRoute(
                         builder: (_) => ThemeAppearancePage(
                           appearanceMode: widget.appearanceMode,
                           onAppearanceChanged: widget.onAppearanceChanged,
+                          frostedGlassEnabled: widget.frostedGlassEnabled,
+                          onFrostedGlassChanged: widget.onFrostedGlassChanged,
                         ),
                       ),
                     ),
