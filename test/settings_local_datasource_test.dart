@@ -8,6 +8,38 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test(
+      'NovelAI streaming preference survives endpoint normalization and restart',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    var datasource = SettingsLocalDatasource(prefs);
+    expect(datasource.getEndpoints(ImageProviderType.novelAi)[2].streamEnabled,
+        isNull);
+    for (final enabled in [false, true]) {
+      final endpoints = datasource.getEndpoints(ImageProviderType.novelAi);
+      await datasource.setEndpoints(ImageProviderType.novelAi, [
+        endpoints[0],
+        endpoints[1],
+        endpoints[2].copyWith(streamEnabled: enabled),
+      ]);
+      datasource = SettingsLocalDatasource(prefs);
+      final restored = datasource.getEndpoints(ImageProviderType.novelAi)[2];
+      expect(restored.streamEnabled, enabled);
+      // Editing another channel property must retain the saved preference.
+      await datasource.setEndpoints(ImageProviderType.novelAi, [
+        endpoints[0],
+        endpoints[1],
+        restored.copyWith(baseUrl: 'https://relay.example'),
+      ]);
+      expect(
+          SettingsLocalDatasource(prefs)
+              .getEndpoints(ImageProviderType.novelAi)[2]
+              .streamEnabled,
+          enabled);
+    }
+  });
+
   test('inpaint role drafts persist separately from text generation roles',
       () async {
     SharedPreferences.setMockInitialValues({});
@@ -114,6 +146,36 @@ void main() {
 
     expect(datasource.getReferenceModeDraft(), ReferenceMode.vibe);
     expect(datasource.getBatchCount(), 1);
+  });
+
+  test('NovelAI 自定义官方协议 URL 在重启后保留，留空恢复官渠', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final datasource = SettingsLocalDatasource(prefs);
+    final endpoints = datasource.getEndpoints(ImageProviderType.novelAi);
+    await datasource.setEndpoints(ImageProviderType.novelAi, [
+      endpoints[0],
+      endpoints[1],
+      endpoints[2].copyWith(baseUrl: 'https://relay.example/novelai/'),
+    ]);
+
+    final reopened = SettingsLocalDatasource(prefs);
+    final saved = reopened.getEndpoints(ImageProviderType.novelAi);
+    expect(saved[2].baseUrl, 'https://relay.example/novelai');
+    expect(saved[2].protocol, AppConstants.novelAiOfficialProtocol);
+    expect(saved[2].apiKey, isEmpty);
+
+    await reopened.setEndpoints(ImageProviderType.novelAi, [
+      saved[0],
+      saved[1],
+      saved[2].copyWith(baseUrl: '  '),
+    ]);
+    expect(
+      SettingsLocalDatasource(prefs)
+          .getEndpoints(ImageProviderType.novelAi)[2]
+          .baseUrl,
+      ApiConstants.officialImageBaseUrl,
+    );
   });
 
   test('旧 Precise 草稿会保留有效字段并移除可变 fidelity', () async {

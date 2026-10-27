@@ -4,20 +4,20 @@
 
 ### 面向 Android 的 NovelAI 一站式创作客户端
 
-> 当前功能分支为 `feat/mobile-preview-v5`。本分支的前端和 AI 记忆改动请按[分支安装包构建说明](docs/android_apk_testing.md)验证；下方 Releases 下载入口属于历史发布版本，不能代表本分支最新源码。
+> 最新代码位于 `master`，当前安装包为 1.2.4（ARM64 versionCode 220034）。本次更新包含界面调整、自定义 NovelAI 渠道及流式传输开关，见[更新说明](docs/releases/2026-10-27-1.2.4.md)。
 
 从自然语言提示词、精密参照与图像生成，到超分、打标和 Pixiv 发布，在一个应用中完成完整工作流。
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#系统要求)
 [![Framework](https://img.shields.io/badge/Flutter-3.x-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
-[![Version](https://img.shields.io/badge/Version-1.2.2-FF6F61?style=for-the-badge)](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest)
+[![Version](https://img.shields.io/badge/Version-1.2.4-FF6F61?style=for-the-badge)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-8A63D2?style=for-the-badge)](LICENSE)
 
 <br>
 
-[**下载最新版 APK**](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest/download/app-release.apk)
+[**下载最新版 APK**](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)
 &nbsp;&nbsp;·&nbsp;&nbsp;
-[查看发布说明](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest)
+[查看发布说明](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest)
 &nbsp;&nbsp;·&nbsp;&nbsp;
 [浏览功能](#功能亮点)
 
@@ -76,9 +76,9 @@
 
 <div align="center">
 
-[![Download APK](https://img.shields.io/badge/下载-最新版_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases/latest/download/app-release.apk)
+[![Download APK](https://img.shields.io/badge/下载-最新版_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)
 
-[所有版本与更新说明](https://github.com/cocophilia093-wq/NAI-WorldPainter/releases)
+[所有版本与更新说明](https://github.com/sakiko0901/NAI-WorldPainter/releases)
 
 </div>
 
@@ -87,7 +87,7 @@
 3. 安装并启动绘世。
 4. 打开「设置 → API 配置」，填写 NovelAI 兼容网关的 Base URL、API Key 与模型。
 
-> Android 若提示“文件可能有害”，这是侧载 APK 的通用提示。请仅从本仓库 Releases 下载，并核对发布者为 `cocophilia093-wq`。
+> Android 若提示“文件可能有害”，这是侧载 APK 的通用提示。请从本仓库 Releases 下载，并核对发布者为 `sakiko0901`。
 
 ## 系统要求
 
@@ -95,7 +95,7 @@
 |---|---|
 | **系统** | Android 设备 |
 | **架构** | arm64-v8a |
-| **版本** | 1.2.2+208011 |
+| **版本** | 1.2.4+218034（ARM64 versionCode 220034） |
 | **安装包** | 约 50 MB |
 | **网络** | 使用云端生图、LLM、打标及 Pixiv 功能时需要网络 |
 | **必要配置** | NovelAI 兼容网关 Base URL、API Key、可用模型 |

@@ -1,8 +1,11 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
+import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/api_config_page.dart';
 import 'package:nai_huishi/presentation/pages/artist_prompt_manager_page.dart';
@@ -46,6 +49,15 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _v5Error;
   int? _anlas;
   bool _v5TokenConfigured = false;
+  bool _settingsLoaded = false;
+
+  bool get _isCustomNovelAiChannel {
+    if (!_settingsLoaded) return false;
+    final official = _vm.endpoints(ImageProviderType.novelAi).where(
+        (endpoint) => endpoint.id == AppConstants.novelAiOfficialEndpointId);
+    return official.isNotEmpty &&
+        NovelAiConnection.isCustomBaseUrl(official.first.baseUrl);
+  }
 
   @override
   void initState() {
@@ -53,16 +65,18 @@ class _SettingsPageState extends State<SettingsPage> {
     _vm = sl<SettingsViewModel>();
     _vm.addListener(_onVmChanged);
     _load();
-    _loadV5Usage();
   }
 
   Future<void> _load() async {
     await _vm.loadSettings();
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() => _settingsLoaded = true);
+    await _loadV5Usage();
   }
 
   /// 汇总官方 V5 体力与 Anlas；缺少 Token 或字段时显示不可用状态。
   Future<void> _loadV5Usage() async {
+    if (!_settingsLoaded || _isCustomNovelAiChannel) return;
     if (_v5Loading) return;
     _v5Loading = true;
     if (mounted) {
@@ -70,6 +84,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     try {
       final token = await sl<OfficialNovelAiTokenStore>().read();
+      if (!mounted || _isCustomNovelAiChannel) return;
       if (token == null || token.trim().isEmpty) {
         if (mounted) {
           setState(() {
@@ -83,7 +98,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       if (mounted) setState(() => _v5TokenConfigured = true);
       final usage = await sl<OfficialNovelAiApiService>().fetchV5Usage(token);
-      if (mounted) {
+      if (mounted && !_isCustomNovelAiChannel) {
         setState(() {
           _v5Usage = usage;
           _anlas = usage?.totalAnlas;
@@ -106,7 +121,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _onVmChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      if (_isCustomNovelAiChannel) {
+        _v5Usage = null;
+        _anlas = null;
+        _v5TokenConfigured = false;
+      }
+    });
   }
 
   @override
@@ -150,7 +172,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
-              if (_v5TokenConfigured) ...[
+              if (!_isCustomNovelAiChannel && _v5TokenConfigured) ...[
                 const SizedBox(height: 18),
                 _buildV5UsageCard(),
               ],

@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 
@@ -141,15 +142,24 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                           TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                     ),
                   ),
-                  FilledButton.tonalIcon(
+                  TextButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      CupertinoPageRoute<void>(
+                        builder: (_) => const PromptMemoryPage(),
+                      ),
+                    ),
+                    icon: const Icon(CupertinoIcons.book, size: 18),
+                    label: const Text('学习记忆'),
+                  ),
+                  IconButton(
+                    tooltip: '新对话',
                     onPressed: () async {
                       final version = await showPromptVersionDialog(context);
                       if (version == null) return;
                       await widget.vm.createNewSession(promptVersion: version);
                       if (context.mounted) Navigator.of(context).pop();
                     },
-                    icon: Icon(CupertinoIcons.add, size: 16),
-                    label: Text('新对话'),
+                    icon: const Icon(CupertinoIcons.add, size: 22),
                   ),
                 ],
               ),

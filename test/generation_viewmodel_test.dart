@@ -528,6 +528,50 @@ void main() {
         viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
   });
 
+  test('reselecting the newest placeholder resumes auto-follow mid-batch',
+      () async {
+    final image = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'generation_viewmodel_reselect.png',
+    );
+    await image.writeAsBytes(const [1, 2, 3]);
+    addTearDown(() => image.deleteSync());
+
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(
+      _DelayedGenerationRepository(image.path),
+      history,
+    );
+    addTearDown(queue.dispose);
+    final viewModel = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(viewModel.dispose);
+    viewModel.prompt = '1girl';
+    viewModel.selectedModel = 'model';
+    await viewModel.updateBatchCount(4);
+
+    final generateFuture = viewModel.generate();
+
+    // 等到第 2 张完成、第 3 张占位卡选中
+    await Future<void>.delayed(const Duration(milliseconds: 420));
+    final thirdId = viewModel.sessionResults.last.taskId;
+    expect(viewModel.selectedResultTaskId, thirdId);
+
+    // 翻回第 1 张，再转回最后一张（第 3 张，可能仍是占位卡）
+    viewModel.selectResult(viewModel.sessionResults.first.taskId);
+    viewModel.selectResult(viewModel.sessionResults.last.taskId);
+
+    // 第 3、4 张陆续完成，选中项应继续跟随到最后
+    await generateFuture;
+
+    expect(viewModel.sessionResults, hasLength(4));
+    expect(viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
+  });
+
   test('imported image displays without submitting a task or replacing drafts',
       () async {
     final history = _MemoryHistoryRepository();

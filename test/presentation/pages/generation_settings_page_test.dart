@@ -94,6 +94,13 @@ void main() {
       expect(creationOffset, greaterThan(0));
 
       await tester.tap(find.byTooltip('生成参数'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final entering = tester.getRect(
+        find.byKey(const ValueKey('generation-settings-page')),
+      );
+      expect(entering.left, greaterThan(0));
+      expect(entering.left, lessThan(393));
       await tester.pumpAndSettle();
 
       final settingsPage =
@@ -212,7 +219,8 @@ void main() {
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(find.byTooltip('生成参数'), findsOneWidget);
-    expect(find.text('创作'), findsOneWidget);
+    expect(find.byType(GeneratePage), findsOneWidget);
+    expect(find.text('创作'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

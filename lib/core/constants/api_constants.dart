@@ -4,7 +4,7 @@ class ApiConstants {
   // 默认 NovelAI 中转站根地址
   static const String defaultBaseUrl = 'https://novelai.ikun114.top/';
 
-  // NovelAI 官方 API 仅允许使用这些固定 HTTPS 地址。
+  // NovelAI 默认官方地址；原生协议的中转渠道可单独配置图像 Base URL。
   static const String officialImageBaseUrl = 'https://image.novelai.net';
   static const String officialApiBaseUrl = 'https://api.novelai.net';
   static const String officialUserData = '/user/data';

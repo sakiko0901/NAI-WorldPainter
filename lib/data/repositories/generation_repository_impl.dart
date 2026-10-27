@@ -7,6 +7,8 @@ import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/domain/entities/novelai_route.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
@@ -108,30 +110,40 @@ class GenerationRepositoryImpl implements GenerationRepository {
   Future<GenerationTask> _submitNovelAi(GenerationTask task) async {
     final route = NovelAiRoute.fromIds(task.endpointId, task.protocol);
     if (route.isOfficial) {
-      final token = await _officialTokenStore.read();
+      final endpoints =
+          await _settingsRepo.getEndpoints(ImageProviderType.novelAi);
+      final endpoint = endpoints
+          .where((ep) =>
+              ep.id ==
+              (task.endpointId ?? AppConstants.novelAiOfficialEndpointId))
+          .firstOrNull;
+      final baseUrl = endpoint?.baseUrl ?? '';
+      final isCustom = NovelAiConnection.isCustomBaseUrl(baseUrl);
+      final api = _officialApiService.forBaseUrl(baseUrl);
+      final token = await _officialTokenStore.readForBaseUrl(baseUrl);
       if (token == null || token.trim().isEmpty) {
         throw ApiException(
-          message: '请先在 API 配置中填写 NovelAI 官方 Token',
+          message: isCustom
+              ? '请先在 API 配置中填写此自定义渠道的 API Key'
+              : '请先在 API 配置中填写 NovelAI 官方 Token',
           code: 'NO_OFFICIAL_TOKEN',
         );
       }
-      final prepared = await _prepareOfficialVibeReferences(task, token);
+      final prepared = await _prepareOfficialVibeReferences(task, token, api);
       final handler = _streamHandlers.remove(task.taskId);
       final hasPrecise = prepared.preciseReferences.isNotEmpty;
-      // 官方流式：V4/V4.5/V5 且非精确参考 multipart 时可用
-      final canStream = !hasPrecise;
+      // Older official configurations streamed by default. Relays opt in, since
+      // many only implement the regular endpoint. Multipart references require
+      // the regular endpoint regardless of the preference.
+      final canStream = !hasPrecise && (endpoint?.streamEnabled ?? !isCustom);
       if (canStream) {
-        try {
-          return await _officialApiService.generateImageStream(
-            prepared,
-            token,
-            onFrame: handler,
-          );
-        } on ApiException {
-          rethrow;
-        }
+        return api.generateImageStream(
+          prepared,
+          token,
+          onFrame: handler,
+        );
       }
-      return _officialApiService.generateImage(prepared, token);
+      return api.generateImage(prepared, token);
     }
 
     final creds = await _resolveNovelAiCreds(task.endpointId);
@@ -231,6 +243,7 @@ class GenerationRepositoryImpl implements GenerationRepository {
   Future<GenerationTask> _prepareOfficialVibeReferences(
     GenerationTask task,
     String token,
+    OfficialNovelAiApiService api,
   ) async {
     if (task.vibeReferences.isEmpty) return task;
     final prepared = <CharacterReferenceImage>[];
@@ -238,7 +251,7 @@ class GenerationRepositoryImpl implements GenerationRepository {
       if (reference.path.isEmpty) {
         throw ApiException(message: '氛围参考图像不可用，请重新选择');
       }
-      final encoded = await _officialApiService.encodeVibeReference(
+      final encoded = await api.encodeVibeReference(
         imagePath: reference.path,
         model: task.model,
         informationExtracted: reference.informationExtracted,

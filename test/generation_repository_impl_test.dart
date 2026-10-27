@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
@@ -7,6 +10,7 @@ import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -24,6 +28,154 @@ const _ikunEndpoint = ApiEndpoint(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final custom in [false, true]) {
+    for (final enabled in <bool?>[null, false, true]) {
+      test(
+          'native streaming preference $enabled for custom=$custom selects one endpoint',
+          () async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final tokens = OfficialNovelAiTokenStore();
+        final baseUrl = custom
+            ? 'https://relay.example/native'
+            : ApiConstants.officialImageBaseUrl;
+        await tokens.writeForBaseUrl(baseUrl, 'configured-key');
+        final adapter = _CaptureNativeAdapter();
+        final repository = GenerationRepositoryImpl(
+          apiService: _RecordingNovelAiService(),
+          officialApiService: OfficialNovelAiApiService(
+              Dio(BaseOptions(baseUrl: ApiConstants.officialImageBaseUrl))
+                ..httpClientAdapter = adapter),
+          officialTokenStore: tokens,
+          gptApiService: GptApiService(Dio()),
+          nanoApiService: NanoBananaApiService(Dio()),
+          settingsRepo: _FakeSettingsRepository(
+            endpoints: [
+              ApiEndpoint(
+                id: AppConstants.novelAiOfficialEndpointId,
+                name: 'NovelAI',
+                baseUrl: baseUrl,
+                apiKey: '',
+                models: const ['nai-diffusion-5-full'],
+                protocol: AppConstants.novelAiOfficialProtocol,
+                streamEnabled: enabled,
+              ),
+            ],
+            activeId: AppConstants.novelAiOfficialEndpointId,
+          ),
+          vibeEncodingRepo: _FakeVibeEncodingRepository(),
+        );
+        await expectLater(
+          repository.submitGeneration(_task(
+            endpointId: AppConstants.novelAiOfficialEndpointId,
+            protocol: AppConstants.novelAiOfficialProtocol,
+          ).copyWith(model: 'nai-diffusion-5-full')),
+          throwsA(isA<ApiException>()),
+        );
+        // A stream failure must not submit a second, chargeable generation.
+        expect(adapter.requests, hasLength(1));
+        final request = adapter.requests.single;
+        final stream = enabled ?? !custom;
+        expect(request.uri.toString(),
+            '$baseUrl${stream ? ApiConstants.officialGenerateImageStream : ApiConstants.officialGenerateImage}');
+        expect(request.headers['Authorization'], 'Bearer configured-key');
+        final parameters = (request.data as Map)['parameters'] as Map;
+        if (stream) {
+          expect(parameters['stream'], 'msgpack');
+        } else {
+          expect(parameters, isNot(contains('stream')));
+        }
+      });
+    }
+  }
+
+  test('custom native route uses the saved relay URL and its own API key',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final tokens = OfficialNovelAiTokenStore();
+    await tokens.write('official-token');
+    await tokens.writeForBaseUrl('https://relay.example/proxy', 'relay-key');
+    final adapter = _CaptureNativeAdapter();
+    final dio = Dio(BaseOptions(baseUrl: ApiConstants.officialImageBaseUrl))
+      ..httpClientAdapter = adapter;
+    final repository = GenerationRepositoryImpl(
+      apiService: _RecordingNovelAiService(),
+      officialApiService: OfficialNovelAiApiService(dio),
+      officialTokenStore: tokens,
+      gptApiService: GptApiService(Dio()),
+      nanoApiService: NanoBananaApiService(Dio()),
+      settingsRepo: _FakeSettingsRepository(
+        endpoints: const [
+          ApiEndpoint(
+            id: AppConstants.novelAiOfficialEndpointId,
+            name: 'NovelAI 自定义渠道',
+            baseUrl: 'https://relay.example/proxy/',
+            apiKey: '',
+            models: ['model'],
+            protocol: AppConstants.novelAiOfficialProtocol,
+          ),
+        ],
+        activeId: AppConstants.novelAiOfficialEndpointId,
+      ),
+      vibeEncodingRepo: _FakeVibeEncodingRepository(),
+    );
+    // An intentional mock rejection stops before any file or real generation.
+    await expectLater(
+      repository.submitGeneration(_task(
+        endpointId: AppConstants.novelAiOfficialEndpointId,
+        protocol: AppConstants.novelAiOfficialProtocol,
+      )),
+      throwsA(isA<ApiException>()),
+    );
+    expect(adapter.requests, hasLength(1));
+    final request = adapter.requests.single;
+    expect(request.uri.toString(),
+        'https://relay.example/proxy${ApiConstants.officialGenerateImage}');
+    expect(request.headers['Authorization'], 'Bearer relay-key');
+    expect(request.followRedirects, isFalse);
+    expect(dio.options.baseUrl, ApiConstants.officialImageBaseUrl);
+    expect(await tokens.read(), 'official-token');
+  });
+
+  test('custom native route never falls back to the official token', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final tokens = OfficialNovelAiTokenStore();
+    await tokens.write('official-token');
+    final adapter = _CaptureNativeAdapter();
+    final repository = GenerationRepositoryImpl(
+      apiService: _RecordingNovelAiService(),
+      officialApiService:
+          OfficialNovelAiApiService(Dio()..httpClientAdapter = adapter),
+      officialTokenStore: tokens,
+      gptApiService: GptApiService(Dio()),
+      nanoApiService: NanoBananaApiService(Dio()),
+      settingsRepo: _FakeSettingsRepository(
+        endpoints: const [
+          ApiEndpoint(
+            id: AppConstants.novelAiOfficialEndpointId,
+            name: 'relay',
+            baseUrl: 'https://new-relay.example',
+            apiKey: '',
+            models: ['model'],
+            protocol: AppConstants.novelAiOfficialProtocol,
+          ),
+        ],
+        activeId: AppConstants.novelAiOfficialEndpointId,
+      ),
+      vibeEncodingRepo: _FakeVibeEncodingRepository(),
+    );
+    await expectLater(
+      repository.submitGeneration(_task(
+        endpointId: AppConstants.novelAiOfficialEndpointId,
+        protocol: AppConstants.novelAiOfficialProtocol,
+      )),
+      throwsA(isA<ApiException>()
+          .having((error) => error.message, 'message', contains('自定义渠道'))),
+    );
+    expect(adapter.requests, isEmpty);
+  });
+
   test(
       'NovelAI task resolves credentials by endpointId instead of active endpoint',
       () async {
@@ -164,6 +316,23 @@ void main() {
       ),
     );
   });
+}
+
+class _CaptureNativeAdapter implements HttpClientAdapter {
+  final requests = <RequestOptions>[];
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options,
+      Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+    requests.add(options);
+    return ResponseBody.fromString('{"message":"mock rejection"}', 400,
+        headers: {
+          Headers.contentTypeHeader: ['application/json']
+        });
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
 
 GenerationTask _task({

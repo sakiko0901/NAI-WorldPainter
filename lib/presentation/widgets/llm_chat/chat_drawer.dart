@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
-import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
@@ -14,7 +13,6 @@ import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dar
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_sessions_panel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
-import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 
 class ChatDrawer extends StatefulWidget {
@@ -266,13 +264,6 @@ class _ChatDrawerState extends State<ChatDrawer> {
     );
   }
 
-  Future<void> _openMemories() async {
-    await Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (_) => const PromptMemoryPage()),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -340,77 +331,87 @@ class _ChatDrawerState extends State<ChatDrawer> {
   }
 
   Widget _buildChatColumn() {
-    return Column(
-      children: [
-        _buildTopBar(),
-        Expanded(
-          child: !_ready || _vm.isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _buildMessageList(),
-        ),
-        if (_vm.errorMessage != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.withValues(alpha: 0.24)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    CupertinoIcons.exclamationmark_triangle,
-                    size: 16,
-                    color: Colors.redAccent,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _vm.errorMessage!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurface,
+    return LayoutBuilder(
+      builder: (context, constraints) => Column(
+        children: [
+          _buildTopBar(),
+          Expanded(
+            child: !_ready || _vm.isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _buildMessageList(),
+          ),
+          if (_vm.errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.24)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      CupertinoIcons.exclamationmark_triangle,
+                      size: 16,
+                      color: Colors.redAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _vm.errorMessage!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
                     ),
-                  ),
-                  GestureDetector(
-                    onTap: _vm.clearError,
-                    child: Icon(
-                      CupertinoIcons.xmark,
-                      size: 14,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    GestureDetector(
+                      onTap: _vm.clearError,
+                      child: Icon(
+                        CupertinoIcons.xmark,
+                        size: 14,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
+          ChatInputBar(
+            maxHeight: (constraints.maxHeight - 62).clamp(0, double.infinity),
+            includeKeyboardInset:
+                !(widget.embedded || widget.parentResizesForKeyboard),
+            controller: _inputController,
+            isSending: _vm.isSending,
+            onOpenStylePresets: _openStylePresets,
+            onSend: (text, {String? imageBase64, String? textAttachment}) =>
+                _vm.sendUserMessage(
+              text,
+              imageBase64: imageBase64,
+              textAttachment: textAttachment,
+            ),
           ),
-        ChatInputBar(
-          includeKeyboardInset:
-              !(widget.embedded || widget.parentResizesForKeyboard),
-          controller: _inputController,
-          isSending: _vm.isSending,
-          onSend: (text, {String? imageBase64, String? textAttachment}) =>
-              _vm.sendUserMessage(
-            text,
-            imageBase64: imageBase64,
-            textAttachment: textAttachment,
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildTopBar() {
-    final title = widget.title;
-    return FrostedSurface(
-      radius: 0,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+    final title = widget.embedded ? null : widget.title;
+    final iconColor = Theme.of(context).colorScheme.onSurface;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: Row(
         children: [
+          IconButton(
+            onPressed: _openSessions,
+            tooltip: '会话历史',
+            icon: Icon(CupertinoIcons.list_bullet, color: iconColor),
+          ),
           if (title != null)
             Expanded(
               child: Text(
@@ -422,56 +423,25 @@ class _ChatDrawerState extends State<ChatDrawer> {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-            ),
-          IconButton(
-            onPressed: _openSessions,
-            tooltip: '会话列表',
-            icon: Icon(
-              CupertinoIcons.list_bullet,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-          IconButton(
-            onPressed: _openStylePresets,
-            tooltip: '画风收藏',
-            icon: Icon(
-              CupertinoIcons.square_grid_2x2,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-          IconButton(
-            onPressed: _openMemories,
-            tooltip: '学习记忆',
-            icon: Icon(
-              CupertinoIcons.book,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-          if (title == null) const Spacer(),
+            )
+          else
+            const Spacer(),
           IconButton(
             onPressed: _createNewSession,
             tooltip: '新建会话',
-            icon: Icon(
-              CupertinoIcons.square_pencil,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
+            icon: Icon(CupertinoIcons.square_pencil, color: iconColor),
           ),
           IconButton(
             onPressed: () => showChatSettingsSheet(context, _vm),
-            tooltip: '配置',
-            icon: Icon(
-              CupertinoIcons.gear_alt,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
+            tooltip: '设置',
+            icon: Icon(CupertinoIcons.gear_alt, color: iconColor),
           ),
-          IconButton(
-            onPressed: widget.onClose,
-            tooltip: widget.embedded ? '返回创作' : '关闭',
-            icon: Icon(
-              CupertinoIcons.xmark_circle_fill,
-              color: Theme.of(context).colorScheme.onSurface,
+          if (!widget.embedded)
+            IconButton(
+              onPressed: widget.onClose,
+              tooltip: '关闭',
+              icon: Icon(CupertinoIcons.xmark_circle_fill, color: iconColor),
             ),
-          ),
         ],
       ),
     );
@@ -480,30 +450,32 @@ class _ChatDrawerState extends State<ChatDrawer> {
   Widget _buildMessageList() {
     if (_vm.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                CupertinoIcons.wand_stars,
-                size: 34,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
-                    .withValues(alpha: 0.5),
-              ),
-              SizedBox(height: 12),
-              Text(
-                '请阐述你的梦',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.6,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  CupertinoIcons.wand_stars,
+                  size: 34,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant
+                      .withValues(alpha: 0.5),
                 ),
-              ),
-            ],
+                SizedBox(height: 12),
+                Text(
+                  '请阐述你的梦',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 18,
+                    height: 1.6,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );

@@ -2,12 +2,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
+import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:uuid/uuid.dart';
 
@@ -155,8 +158,26 @@ class _OfficialNovelAiCard extends StatefulWidget {
 class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
   bool _expanded = false;
   bool _testing = false;
+  bool _savingStreaming = false;
   String? _status;
   OfficialNovelAiAccount? _account;
+
+  bool get _isCustom =>
+      NovelAiConnection.isCustomBaseUrl(widget.endpoint.baseUrl);
+
+  Future<void> _setStreaming(bool enabled) async {
+    setState(() => _savingStreaming = true);
+    try {
+      await sl<SettingsViewModel>().updateEndpoint(
+        ImageProviderType.novelAi,
+        widget.endpoint.copyWith(streamEnabled: enabled),
+      );
+    } catch (_) {
+      if (mounted) showFloatingToast(context, '流式设置保存失败，请重试');
+    } finally {
+      if (mounted) setState(() => _savingStreaming = false);
+    }
+  }
 
   Future<void> _activate(String model) async {
     await sl<SettingsViewModel>().setActive(
@@ -165,53 +186,27 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
       model,
     );
     if (mounted) {
-      showFloatingToast(context, '已切换到 NovelAI 官方 · $model',
+      showFloatingToast(
+          context, '已切换到 NovelAI ${_isCustom ? '自定义渠道' : '官方'} · $model',
           icon: CupertinoIcons.checkmark_circle_fill);
     }
   }
 
-  Future<void> _editToken() async {
-    final store = sl<OfficialNovelAiTokenStore>();
-    final controller = TextEditingController(text: await store.read() ?? '');
+  Future<void> _editConnection() async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('NovelAI 官方 Token'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(
-            labelText: 'Persistent API Token',
-            helperText: '仅安全保存于本机，且仅发送到 NovelAI 官方 HTTPS 域名。',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              await store.write(controller.text);
-              if (dialogContext.mounted) Navigator.pop(dialogContext, true);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+      builder: (_) => _NovelAiConnectionDialog(endpoint: widget.endpoint),
     );
-    controller.dispose();
     if (saved == true && mounted) {
       setState(() {
-        _status = 'Token 已安全保存';
+        _status = '渠道配置已保存';
         _account = null;
       });
     }
   }
 
   Future<void> _test() async {
+    if (_isCustom) return;
     setState(() {
       _testing = true;
       _status = null;
@@ -223,7 +218,7 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
       final account =
           await sl<OfficialNovelAiApiService>().verifyToken(token ?? '');
       stopwatch.stop();
-      if (mounted) {
+      if (mounted && !_isCustom) {
         setState(() {
           _account = account;
           _status = 'Token 有效 · ${stopwatch.elapsedMilliseconds}ms';
@@ -259,8 +254,14 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
             onTap: () => setState(() => _expanded = !_expanded),
             leading: Icon(CupertinoIcons.shield_lefthalf_fill,
                 color: colors.primary),
-            title: const Text('NovelAI 官方'),
-            subtitle: const Text('image.novelai.net · 固定 HTTPS 官方渠道'),
+            title: Text(_isCustom ? 'NovelAI 自定义渠道' : 'NovelAI 官方'),
+            subtitle: Text(
+              _isCustom
+                  ? widget.endpoint.baseUrl
+                  : ApiConstants.officialImageBaseUrl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             trailing: Icon(_expanded
                 ? CupertinoIcons.chevron_up
                 : CupertinoIcons.chevron_down),
@@ -271,9 +272,25 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    '官方 Token 单独安全保存，仅发送到 NovelAI 官方 HTTPS 接口。',
-                    style: TextStyle(fontSize: 12),
+                  Text(
+                    _isCustom
+                        ? '使用自定义 URL 与 API Key，适用于兼容 NovelAI 原生接口的中转平台。'
+                        : 'URL 留空时使用官方渠道，也可填写中转平台的 URL 与 API Key。',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    key: const ValueKey('novelai-streaming-switch'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('启用流式传输', style: TextStyle(fontSize: 14)),
+                    subtitle: Text(
+                      _isCustom
+                          ? '实时预览生成进度，需要中转平台支持流式传输。'
+                          : '实时预览生成进度；关闭后仅显示完成的图片。',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    value: widget.endpoint.streamEnabled ?? !_isCustom,
+                    onChanged: _savingStreaming ? null : _setStreaming,
                   ),
                   const SizedBox(height: 12),
                   Wrap(
@@ -293,20 +310,21 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
                     spacing: 8,
                     children: [
                       OutlinedButton.icon(
-                        onPressed: _editToken,
+                        onPressed: _testing ? null : _editConnection,
                         icon: const Icon(CupertinoIcons.lock_fill, size: 16),
-                        label: const Text('设置 Token'),
+                        label: const Text('设置 URL 与 API Key'),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: _testing ? null : _test,
-                        icon: _testing
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(CupertinoIcons.wifi, size: 16),
-                        label: Text(_testing ? '验证中…' : '验证 Token'),
-                      ),
+                      if (!_isCustom)
+                        OutlinedButton.icon(
+                          onPressed: _testing ? null : _test,
+                          icon: _testing
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(CupertinoIcons.wifi, size: 16),
+                          label: Text(_testing ? '验证中…' : '验证 Token'),
+                        ),
                     ],
                   ),
                   if (_status != null) ...[
@@ -318,7 +336,7 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
                                 ? colors.onSurfaceVariant
                                 : Colors.greenAccent.shade400)),
                   ],
-                  if (_account != null) ...[
+                  if (!_isCustom && _account != null) ...[
                     const SizedBox(height: 6),
                     Text(
                         [
@@ -337,6 +355,177 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _NovelAiConnectionDialog extends StatefulWidget {
+  final ApiEndpoint endpoint;
+
+  const _NovelAiConnectionDialog({required this.endpoint});
+
+  @override
+  State<_NovelAiConnectionDialog> createState() =>
+      _NovelAiConnectionDialogState();
+}
+
+class _NovelAiConnectionDialogState extends State<_NovelAiConnectionDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _url;
+  final _key = TextEditingController();
+  late String _credentialUrl;
+  bool _loadingKey = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final custom = NovelAiConnection.isCustomBaseUrl(widget.endpoint.baseUrl);
+    _url = TextEditingController(text: custom ? widget.endpoint.baseUrl : '');
+    _credentialUrl = NovelAiConnection.normalizeBaseUrl(_url.text);
+    _loadKey(_credentialUrl);
+  }
+
+  Future<void> _loadKey(String baseUrl) async {
+    try {
+      final value =
+          await sl<OfficialNovelAiTokenStore>().readForBaseUrl(baseUrl);
+      if (!mounted || baseUrl != _credentialUrl) return;
+      setState(() {
+        _key.text = value ?? '';
+        _loadingKey = false;
+      });
+    } catch (_) {
+      if (!mounted || baseUrl != _credentialUrl) return;
+      setState(() {
+        _loadingKey = false;
+        _error = '无法读取已保存的 API Key，请重新填写';
+      });
+    }
+  }
+
+  void _urlChanged(String value) {
+    final baseUrl = NovelAiConnection.normalizeBaseUrl(value);
+    if (baseUrl == _credentialUrl) return;
+    setState(() {
+      _credentialUrl = baseUrl;
+      _key.clear();
+      _error = null;
+      _loadingKey = true;
+    });
+    _loadKey(baseUrl);
+  }
+
+  Future<void> _save() async {
+    if (_saving || _loadingKey || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final baseUrl = NovelAiConnection.normalizeBaseUrl(_url.text);
+      await sl<OfficialNovelAiTokenStore>().writeForBaseUrl(baseUrl, _key.text);
+      await sl<SettingsViewModel>().updateEndpoint(
+        ImageProviderType.novelAi,
+        widget.endpoint.copyWith(
+          baseUrl: baseUrl,
+          apiKey: '',
+          name: NovelAiConnection.isCustomBaseUrl(baseUrl)
+              ? 'NovelAI 自定义渠道'
+              : 'NovelAI 官方',
+        ),
+      );
+      if (sl.isRegistered<GenerationViewModel>()) {
+        await sl<GenerationViewModel>().loadModels();
+      }
+      if (mounted) Navigator.pop(context, true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = '保存失败，请重试';
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _key.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final custom = NovelAiConnection.isCustomBaseUrl(_url.text);
+    return AlertDialog(
+      title: const Text('NovelAI 渠道配置'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                key: const ValueKey('novelai-channel-url'),
+                controller: _url,
+                readOnly: _saving,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                enableSuggestions: false,
+                onChanged: _urlChanged,
+                validator: (value) =>
+                    NovelAiConnection.validateBaseUrl(value ?? ''),
+                decoration: InputDecoration(
+                  labelText: 'URL（可选）',
+                  hintText: ApiConstants.officialImageBaseUrl,
+                  hintStyle:
+                      TextStyle(color: colors.onSurface.withValues(alpha: .35)),
+                  helperText: '留空使用 NovelAI 官方渠道',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                key: const ValueKey('novelai-channel-key'),
+                controller: _key,
+                readOnly: _saving || _loadingKey,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText:
+                      custom ? 'API Key' : 'API Key / Persistent API Token',
+                  helperText: _loadingKey
+                      ? '读取当前渠道的 API Key…'
+                      : custom
+                          ? '填写该中转平台的 API Key'
+                          : '填写 NovelAI 官方的 Persistent API Token',
+                  helperMaxLines: 2,
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!,
+                    style: TextStyle(color: colors.error, fontSize: 12)),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _saving || _loadingKey ? null : _save,
+          child: Text(_saving ? '保存中…' : '保存'),
+        ),
+      ],
     );
   }
 }

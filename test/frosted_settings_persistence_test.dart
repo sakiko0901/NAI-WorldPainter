@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
+import 'package:nai_huishi/domain/entities/api_endpoint.dart';
+import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/app.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
@@ -131,6 +133,9 @@ Future<void> _openAppearance(WidgetTester tester) async {
 }
 
 class _SettingsFake extends ChangeNotifier implements SettingsViewModel {
+  @override
+  List<ApiEndpoint> endpoints(ImageProviderType provider) => const [];
+
   @override
   Future<void> loadSettings() async {}
 

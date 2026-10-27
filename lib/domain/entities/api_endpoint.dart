@@ -9,6 +9,10 @@ class ApiEndpoint extends Equatable {
   final List<String> models;
   final String protocol;
 
+  /// Null preserves the channel default for configurations saved before this
+  /// setting existed (official on, custom relay off).
+  final bool? streamEnabled;
+
   const ApiEndpoint({
     required this.id,
     required this.name,
@@ -16,6 +20,7 @@ class ApiEndpoint extends Equatable {
     required this.apiKey,
     required this.models,
     this.protocol = 'openaiChat',
+    this.streamEnabled,
   });
 
   ApiEndpoint copyWith({
@@ -25,6 +30,7 @@ class ApiEndpoint extends Equatable {
     String? apiKey,
     List<String>? models,
     String? protocol,
+    bool? streamEnabled,
   }) {
     return ApiEndpoint(
       id: id ?? this.id,
@@ -33,6 +39,7 @@ class ApiEndpoint extends Equatable {
       apiKey: apiKey ?? this.apiKey,
       models: models ?? this.models,
       protocol: protocol ?? this.protocol,
+      streamEnabled: streamEnabled ?? this.streamEnabled,
     );
   }
 
@@ -43,6 +50,7 @@ class ApiEndpoint extends Equatable {
         'api_key': apiKey,
         'models': models,
         'protocol': protocol,
+        if (streamEnabled != null) 'stream_enabled': streamEnabled,
       };
 
   factory ApiEndpoint.fromJson(Map<String, dynamic> json) => ApiEndpoint(
@@ -53,8 +61,10 @@ class ApiEndpoint extends Equatable {
         models: (json['models'] as List?)?.map((e) => e as String).toList() ??
             const [],
         protocol: json['protocol'] as String? ?? 'openaiChat',
+        streamEnabled: json['stream_enabled'] as bool?,
       );
 
   @override
-  List<Object?> get props => [id, name, baseUrl, apiKey, models, protocol];
+  List<Object?> get props =>
+      [id, name, baseUrl, apiKey, models, protocol, streamEnabled];
 }

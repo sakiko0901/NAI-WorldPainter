@@ -13,6 +13,7 @@ import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/director_tool.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 
 /// 官方专用超分模型（与官方 Web 客户端一致，不随生成模型变化）。
 const String officialUpscaleModel = 'nai-diffusion-5-curated';
@@ -83,14 +84,15 @@ class OfficialNovelAiV5Usage {
   });
 }
 
-/// Direct NovelAI API transport. It owns an isolated Dio so a Persistent API
-/// Token can never inherit a gateway URL, proxy adapter, shared header, or
-/// permissive TLS callback from the app's generic clients.
+/// Native NovelAI transport, isolated from the app's generic gateway clients.
+/// A relay uses a separate client and a separately stored credential.
 class OfficialNovelAiApiService {
   final Dio _dio;
+  final bool _isCustom;
 
   OfficialNovelAiApiService([Dio? dio])
-      : _dio = dio ??
+      : _isCustom = false,
+        _dio = dio ??
             Dio(BaseOptions(
               baseUrl: ApiConstants.officialImageBaseUrl,
               connectTimeout: const Duration(seconds: 15),
@@ -101,6 +103,22 @@ class OfficialNovelAiApiService {
               },
             ));
 
+  OfficialNovelAiApiService._custom(this._dio) : _isCustom = true;
+
+  OfficialNovelAiApiService forBaseUrl(String baseUrl) {
+    final error = NovelAiConnection.validateBaseUrl(baseUrl);
+    if (error != null) throw ApiException(message: error);
+    if (!NovelAiConnection.isCustomBaseUrl(baseUrl)) {
+      return _isCustom ? OfficialNovelAiApiService() : this;
+    }
+    return OfficialNovelAiApiService._custom(_dio.clone(
+      options: _dio.options.copyWith(
+        baseUrl: NovelAiConnection.normalizeBaseUrl(baseUrl),
+        followRedirects: false,
+      ),
+    ));
+  }
+
   Options _options(String token,
           {ResponseType responseType = ResponseType.bytes}) =>
       Options(
@@ -109,6 +127,9 @@ class OfficialNovelAiApiService {
       );
 
   Future<OfficialNovelAiAccount> verifyToken(String token) async {
+    if (_isCustom) {
+      throw ApiException(message: '自定义渠道不查询 NovelAI 官方账户');
+    }
     if (token.trim().isEmpty) {
       throw ApiException(message: '请先填写 NovelAI Persistent API Token');
     }
@@ -138,10 +159,8 @@ class OfficialNovelAiApiService {
         anlas: parseNum(anlasValue),
         v5UsagePercent:
             percent is num ? percent.toDouble() : double.tryParse('$percent'),
-        fixedTrainingStepsLeft:
-            parseNum(training?['fixedTrainingStepsLeft']),
-        purchasedTrainingSteps:
-            parseNum(training?['purchasedTrainingSteps']),
+        fixedTrainingStepsLeft: parseNum(training?['fixedTrainingStepsLeft']),
+        purchasedTrainingSteps: parseNum(training?['purchasedTrainingSteps']),
       );
     } on DioException catch (error) {
       throw _error(error, '验证官方 Token 失败');
@@ -152,6 +171,7 @@ class OfficialNovelAiApiService {
   /// 打 GET /user/data，从 subscription.usage 里取 percent / isNegative /
   /// nextRefill；字段官方未写进公开文档，以实际响应为准，取不到时返回 null。
   Future<OfficialNovelAiV5Usage?> fetchV5Usage(String token) async {
+    if (_isCustom) return null;
     if (token.trim().isEmpty) {
       throw ApiException(message: '请先填写 NovelAI Persistent API Token');
     }
@@ -189,8 +209,7 @@ class OfficialNovelAiApiService {
           : double.tryParse('$percentValue');
       if (percent == null) return null;
       final nextRefillValue = usage['nextRefill'];
-      final training =
-          _map(subscription['trainingStepsLeft']);
+      final training = _map(subscription['trainingStepsLeft']);
       int? parseNum(Object? value) => value is num
           ? value.round()
           : value != null
@@ -205,10 +224,8 @@ class OfficialNovelAiApiService {
         tier: subscription['tier'] is int
             ? subscription['tier'] as int
             : int.tryParse('${subscription['tier']}'),
-        fixedTrainingStepsLeft:
-            parseNum(training?['fixedTrainingStepsLeft']),
-        purchasedTrainingSteps:
-            parseNum(training?['purchasedTrainingSteps']),
+        fixedTrainingStepsLeft: parseNum(training?['fixedTrainingStepsLeft']),
+        purchasedTrainingSteps: parseNum(training?['purchasedTrainingSteps']),
       );
     } on DioException catch (error) {
       throw _error(error, '查询 V5 体力失败');
@@ -419,8 +436,7 @@ class OfficialNovelAiApiService {
       var inputWidth = decoded.width;
       var inputHeight = decoded.height;
       if (inputWidth * inputHeight > maxInputPixels) {
-        final shrink =
-            math.sqrt(maxInputPixels / (inputWidth * inputHeight));
+        final shrink = math.sqrt(maxInputPixels / (inputWidth * inputHeight));
         inputWidth = (inputWidth * shrink).floor().clamp(1, decoded.width);
         inputHeight = (inputHeight * shrink).floor().clamp(1, decoded.height);
         onStatus?.call('原图超过超分输入上限，先缩放至 $inputWidth×$inputHeight');

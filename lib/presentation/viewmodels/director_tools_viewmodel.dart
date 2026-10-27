@@ -10,6 +10,7 @@ import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.d
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/director_tool.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/domain/usecases/manage_settings.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 
@@ -50,7 +51,10 @@ class DirectorToolsViewModel extends ChangeNotifier {
   String get channelName => switch (selectedChannel) {
         DirectorChannel.gateway7877 => '7877',
         DirectorChannel.ikun => 'ikun',
-        DirectorChannel.official => 'NovelAI 官方',
+        DirectorChannel.official =>
+          NovelAiConnection.isCustomBaseUrl(_endpointOfficial?.baseUrl ?? '')
+              ? 'NovelAI 自定义渠道'
+              : 'NovelAI 官方',
       };
 
   bool get _usesOfficial => selectedChannel == DirectorChannel.official;
@@ -215,13 +219,13 @@ class DirectorToolsViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       final bytes = _usesOfficial
-          ? await _officialApi.augmentImage(
-              imagePath: source,
-              tool: selectedTool,
-              token: await _requireOfficialToken(),
-              prompt: selectedTool.usesPrompt ? prompt : null,
-              defry: selectedTool.usesDefry ? defry : null,
-            )
+          ? await _officialApi.forBaseUrl(endpoint.baseUrl).augmentImage(
+                imagePath: source,
+                tool: selectedTool,
+                token: await _requireOfficialToken(),
+                prompt: selectedTool.usesPrompt ? prompt : null,
+                defry: selectedTool.usesDefry ? defry : null,
+              )
           : selectedChannel == DirectorChannel.gateway7877
               ? await _api.processDirectorImage(
                   imagePath: source,
@@ -256,9 +260,13 @@ class DirectorToolsViewModel extends ChangeNotifier {
   }
 
   Future<String> _requireOfficialToken() async {
-    final token = await _officialTokenStore.read();
+    final baseUrl = _endpointOfficial?.baseUrl ?? '';
+    final token = await _officialTokenStore.readForBaseUrl(baseUrl);
     if (token == null || token.trim().isEmpty) {
-      throw AppException(message: '请先在 API 配置中填写 NovelAI 官方 Token');
+      throw AppException(
+          message: NovelAiConnection.isCustomBaseUrl(baseUrl)
+              ? '请先在 API 配置中填写此自定义渠道的 API Key'
+              : '请先在 API 配置中填写 NovelAI 官方 Token');
     }
     return token;
   }

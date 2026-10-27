@@ -8,6 +8,7 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 
 class SettingsLocalDatasource {
   final SharedPreferences _prefs;
@@ -608,9 +609,11 @@ class SettingsLocalDatasource {
             ? existingOfficial!.name
             : 'NovelAI 官方',
         protocol: AppConstants.novelAiOfficialProtocol,
-        baseUrl: ApiConstants.officialImageBaseUrl,
+        baseUrl:
+            NovelAiConnection.normalizeBaseUrl(existingOfficial?.baseUrl ?? ''),
         apiKey: '',
         models: ApiConstants.officialNovelAiModels,
+        streamEnabled: existingOfficial?.streamEnabled,
       ),
     ];
   }

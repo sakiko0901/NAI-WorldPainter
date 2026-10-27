@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/navigation/app_destination.dart';
+import 'package:nai_huishi/presentation/navigation/studio_page_route.dart';
 import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/history_page.dart';
 import 'package:nai_huishi/presentation/pages/settings_page.dart';
@@ -75,20 +76,11 @@ class _HomePageState extends State<HomePage> {
     if (_galleryRoute != null) return;
 
     FocusManager.instance.primaryFocus?.unfocus();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final route = PageRouteBuilder<void>(
-      transitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
-      reverseTransitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
-      pageBuilder: (_, __, ___) =>
-          HistoryPage(onNavigate: _handleLegacyNavigation),
-      transitionsBuilder: (_, animation, __, child) => SlideTransition(
-        position: Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
-            .animate(CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-                reverseCurve: Curves.easeInCubic)),
-        child: child,
-      ),
+    final route = studioPageRoute<void>(
+      context: context,
+      name: '/history-gallery',
+      fromLeft: true,
+      builder: (_) => HistoryPage(onNavigate: _handleLegacyNavigation),
     );
     _galleryRoute = route;
     try {

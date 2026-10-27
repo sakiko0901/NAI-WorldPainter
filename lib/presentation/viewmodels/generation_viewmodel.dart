@@ -17,6 +17,7 @@ import 'package:nai_huishi/domain/agents/prompt_box_accessor.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/novelai_route.dart';
+import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
 import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
@@ -176,6 +177,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   bool get is7877Endpoint => _currentNovelAiRoute?.isGateway7877 ?? false;
 
   bool get isOfficialEndpoint => _currentNovelAiRoute?.isOfficial ?? false;
+
+  String _officialBaseUrl = ApiConstants.officialImageBaseUrl;
+
+  bool get isCustomNovelAiEndpoint =>
+      isOfficialEndpoint &&
+      NovelAiConnection.isCustomBaseUrl(_officialBaseUrl);
 
   bool get isV5Model {
     final model =
@@ -389,11 +396,12 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   // ── 官方渠道 Anlas 消耗预估 ──
   bool _officialAccountLoading = false;
+  bool _disposed = false;
   OfficialNovelAiAccount? _officialAccount;
 
   /// 当前官方渠道单张预计消耗（仅官方渠道时计算），供生成页显示。
   int? get officialCostPerImage {
-    if (!isOfficialEndpoint) return null;
+    if (!isOfficialEndpoint || isCustomNovelAiEndpoint) return null;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final res = _parseResolution(selectedResolution);
@@ -407,25 +415,62 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   /// 官方剩余总点数（Anlas）。
-  int? get officialTotalAnlas => _officialAccount?.totalTrainingSteps;
+  int? get officialTotalAnlas =>
+      isCustomNovelAiEndpoint ? null : _officialAccount?.totalTrainingSteps;
 
   bool get officialAccountLoading => _officialAccountLoading;
 
   /// 刷新官方账户点数（Anlas），静默失败。
   Future<void> refreshOfficialAccount() async {
-    if (!isOfficialEndpoint || _officialAccountLoading) return;
+    if (_disposed || !isOfficialEndpoint || _officialAccountLoading) return;
     _officialAccountLoading = true;
     notifyListeners();
     try {
+      await _loadOfficialBaseUrl();
+      if (_disposed || !isOfficialEndpoint) return;
+      if (isCustomNovelAiEndpoint) {
+        _officialAccount = null;
+        return;
+      }
       final token = await _officialTokenStore.read();
+      if (_disposed || !isOfficialEndpoint || isCustomNovelAiEndpoint) return;
       if (token == null || token.trim().isEmpty) return;
-      _officialAccount = await _officialApi.verifyToken(token);
+      final account = await _officialApi.verifyToken(token);
+      if (!_disposed && isOfficialEndpoint && !isCustomNovelAiEndpoint) {
+        _officialAccount = account;
+      }
     } catch (_) {
       // 静默失败：点数显示不影响生成流程。
     } finally {
       _officialAccountLoading = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
+  }
+
+  Future<String> _loadOfficialBaseUrl() async {
+    final endpoints =
+        await _manageSettings.getEndpoints(ImageProviderType.novelAi);
+    _officialBaseUrl = endpoints
+            .where((ep) => ep.id == AppConstants.novelAiOfficialEndpointId)
+            .firstOrNull
+            ?.baseUrl ??
+        ApiConstants.officialImageBaseUrl;
+    return _officialBaseUrl;
+  }
+
+  Future<({OfficialNovelAiApiService api, String token})>
+      _resolveOfficialConnection() async {
+    final baseUrl = await _loadOfficialBaseUrl();
+    final token = await _officialTokenStore.readForBaseUrl(baseUrl);
+    if (token == null || token.trim().isEmpty) {
+      throw ApiException(
+        message: NovelAiConnection.isCustomBaseUrl(baseUrl)
+            ? '请先在 API 配置中填写此自定义渠道的 API Key'
+            : '请先在 API 配置中填写 NovelAI 官方 Token',
+        code: 'NO_OFFICIAL_TOKEN',
+      );
+    }
+    return (api: _officialApi.forBaseUrl(baseUrl), token: token);
   }
 
   // 批量生成
@@ -444,7 +489,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   int _batchRemaining = 0;
   int get batchRemaining => _batchRemaining;
 
-  /// 用户是否在缩略图条上手动选过某张。手动选过后，新到达的结果不再自动跟随。
+  /// 用户是否停在非最新的旧图上（翻看旧图时锁定，不被新结果打断）。
+  /// 重新选中最后一张（回到最新位置）即恢复自动跟随。
   bool _userPickedResult = false;
 
   /// 当前是否正查看结果区最后一张（含生成中的占位卡）。
@@ -683,6 +729,14 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     // NovelAI — 聚合全部固定槽位，每个选项保留 endpoint、协议和真实模型。
     final novelEndpoints =
         await _manageSettings.getEndpoints(ImageProviderType.novelAi);
+    _officialBaseUrl = novelEndpoints
+            .where((ep) => ep.id == AppConstants.novelAiOfficialEndpointId)
+            .firstOrNull
+            ?.baseUrl ??
+        ApiConstants.officialImageBaseUrl;
+    if (NovelAiConnection.isCustomBaseUrl(_officialBaseUrl)) {
+      _officialAccount = null;
+    }
     final activeNovelAiEndpointId =
         await _manageSettings.getActiveEndpointId(ImageProviderType.novelAi);
     final activeNovelAiModel =
@@ -2206,7 +2260,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   void selectResult(String taskId) {
     if (selectedResultTaskId == taskId) return;
     selectedResultTaskId = taskId;
-    _userPickedResult = true;
+    // 选中最后一张（含生成中的占位卡）即回到"最新位置"，
+    // 之后新结果继续自动跟随；选旧图则锁定，不被打断。
+    _userPickedResult = !isViewingLatestResult;
     notifyListeners();
   }
 
@@ -2313,16 +2369,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     errorMessage = null;
     notifyListeners();
     try {
-      final token = await _officialTokenStore.read();
-      if (token == null || token.trim().isEmpty) {
-        throw ApiException(
-          message: '请先在 API 配置中填写 NovelAI 官方 Token',
-          code: 'NO_OFFICIAL_TOKEN',
-        );
-      }
-      final outputPath = await _officialApi.upscaleImage(
+      final connection = await _resolveOfficialConnection();
+      final outputPath = await connection.api.upscaleImage(
         imagePath: path,
-        token: token,
+        token: connection.token,
         scale: scale,
         onStatus: (status) {
           officialUpscaleStatus = status;
@@ -2377,13 +2427,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     errorMessage = null;
     notifyListeners();
     try {
-      final token = await _officialTokenStore.read();
-      if (token == null || token.trim().isEmpty) {
-        throw ApiException(
-          message: '请先在 API 配置中填写 NovelAI 官方 Token',
-          code: 'NO_OFFICIAL_TOKEN',
-        );
-      }
+      final connection = await _resolveOfficialConnection();
       final sourceTask = task;
       final imported = sourceTask.model == 'imported-image';
       final model =
@@ -2400,9 +2444,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
               : (sourceTask.prompt.trim().isNotEmpty
                   ? sourceTask.prompt.trim()
                   : prompt);
-      final outputPath = await _officialApi.enhanceImage(
+      final outputPath = await connection.api.enhanceImage(
         imagePath: path,
-        token: token,
+        token: connection.token,
         model: model,
         prompt: promptText,
         negativePrompt: effectiveNegative,
@@ -2462,16 +2506,10 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     errorMessage = null;
     notifyListeners();
     try {
-      final token = await _officialTokenStore.read();
-      if (token == null || token.trim().isEmpty) {
-        throw ApiException(
-          message: '请先在 API 配置中填写 NovelAI 官方 Token',
-          code: 'NO_OFFICIAL_TOKEN',
-        );
-      }
-      final outputPath = await _officialApi.upscaleImage(
+      final connection = await _resolveOfficialConnection();
+      final outputPath = await connection.api.upscaleImage(
         imagePath: inputPath,
-        token: token,
+        token: connection.token,
         scale: scale,
         onStatus: (status) {
           officialUpscaleStatus = status;
@@ -3061,6 +3099,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   @override
   void dispose() {
+    _disposed = true;
     _queueSub?.cancel();
     _taskSub?.cancel();
     _previewSub?.cancel();

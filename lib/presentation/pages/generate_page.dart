@@ -24,6 +24,7 @@ import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
 import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/navigation/studio_page_route.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
@@ -208,131 +209,142 @@ class _GeneratePageState extends State<GeneratePage> {
   Widget build(BuildContext context) {
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final imagePath = (_vm.selectedResult ?? _vm.lastCompletedTask)?.imagePath;
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        flexibleSpace:
-            const FrostedSurface(radius: 0, child: SizedBox.expand()),
-        leadingWidth: 100,
-        leading: widget.onNavigate == null
-            ? null
-            : TextButton.icon(
-                onPressed: () => widget.onNavigate!(0),
-                icon: const Icon(Icons.photo_library_outlined, size: 20),
-                label: const Text('画廊', style: TextStyle(fontSize: 14)),
-              ),
-        title: const Text('创作'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            tooltip: '生成参数',
-            icon: const Icon(Icons.tune),
-            onPressed: _isImageOperationBusy ? null : _openGenerationSettings,
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: StudioBackground(
+            image: imagePath != null && File(imagePath).existsSync()
+                ? ResizeImage(FileImage(File(imagePath)), width: 600)
+                : null,
           ),
-        ],
-      ),
-      bottomNavigationBar:
-          _isChatDrawerOpen || keyboardOpen ? null : _buildFloatingBottomBar(),
-      body: LayoutBuilder(builder: (context, constraints) {
-        final textExtra =
-            ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
-                .clamp(0.0, 72.0);
-        final thumbnails = _vm.sessionResults.length > 1 ? 48.0 : 0.0;
-        final workspaceHeight =
-            (constraints.maxHeight - 210 - textExtra - thumbnails)
-                .clamp(220.0, 536.0)
-                .toDouble();
-        final displayedImage = _vm.selectedResult ?? _vm.lastCompletedTask;
-        final imageHeight = displayedImage != null &&
-                displayedImage.width > 0 &&
-                displayedImage.height > 0
-            ? ((constraints.maxWidth - 48) *
-                    displayedImage.height /
-                    displayedImage.width)
-                .clamp(160.0, MediaQuery.sizeOf(context).height * 0.85)
-                .toDouble()
-            : workspaceHeight;
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: StudioBackground(
-                image: imagePath != null && File(imagePath).existsSync()
-                    ? ResizeImage(FileImage(File(imagePath)), width: 600)
-                    : null,
+        ),
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          resizeToAvoidBottomInset: true,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            leadingWidth: 100,
+            leading: widget.onNavigate == null
+                ? null
+                : TextButton.icon(
+                    onPressed: () => widget.onNavigate!(0),
+                    icon: const Icon(Icons.photo_library_outlined, size: 20),
+                    label: const Text('画廊', style: TextStyle(fontSize: 14)),
+                  ),
+            actions: [
+              IconButton(
+                tooltip: '生成参数',
+                icon: const Icon(Icons.tune),
+                onPressed:
+                    _isImageOperationBusy ? null : _openGenerationSettings,
               ),
-            ),
-            BackdropGroup(
-                child: NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (_vm.isGenerating &&
-                    notification is UserScrollNotification &&
-                    notification.direction != ScrollDirection.idle) {
-                  _userScrolledDuringGeneration = true;
-                }
-                return false;
-              },
-              child: ListView(
-                key: const PageStorageKey('creation-scroll'),
-                controller: _scrollController,
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                physics: _characterPositionLocked ||
-                        (_vm.generationMode == GenerationMode.inpainting &&
-                            (_inpaintWorkspaceLocked ||
-                                InpaintWorkspaceCard.gestureActive.value))
-                    ? const NeverScrollableScrollPhysics()
-                    : null,
-                padding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                children: [
-                  _buildModeSection(),
-                  const SizedBox(height: 12),
-                  if (_vm.generationMode != GenerationMode.inpainting) ...[
-                    _buildResultSection(workspaceHeight: imageHeight),
-                    const SizedBox(height: 12),
-                    _buildPromptSection(),
-                    const SizedBox(height: 12),
-                    if (!_vm.isNonNovelAiProvider &&
-                        _vm.supportsCharacterPrompts) ...[
-                      _CharacterControlSection(
-                        vm: _vm,
-                        imageAspectRatio: _outputAspectRatio,
-                        onPositionGestureChanged: (active) {
-                          if (mounted && active != _characterPositionLocked) {
-                            setState(() => _characterPositionLocked = active);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    if (!_vm.isNonNovelAiProvider &&
-                        (_vm.supportsVibeReferences ||
-                            _vm.supportsPreciseReferences))
-                      _CharacterReferenceSection(
-                          vm: _vm,
-                          imagePicker: _imagePicker,
-                          onShowMessage: _showToast),
-                    if (_vm.isNonNovelAiProvider)
-                      _buildGptReferenceImageSection(),
-                  ],
-                  if (_hasOpenedInpaint)
-                    Offstage(
-                      key: const ValueKey('retained-inpaint-workspace'),
-                      offstage: _vm.generationMode != GenerationMode.inpainting,
-                      child: _buildInpaintingSection(),
+            ],
+          ),
+          bottomNavigationBar: _isChatDrawerOpen || keyboardOpen
+              ? null
+              : _buildFloatingBottomBar(),
+          body: LayoutBuilder(builder: (context, constraints) {
+            final textExtra =
+                ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
+                    .clamp(0.0, 72.0);
+            final thumbnails = _vm.sessionResults.length > 1 ? 48.0 : 0.0;
+            final workspaceHeight =
+                (constraints.maxHeight - 210 - textExtra - thumbnails)
+                    .clamp(220.0, 536.0)
+                    .toDouble();
+            final displayedImage = _vm.selectedResult ?? _vm.lastCompletedTask;
+            final imageHeight = displayedImage != null &&
+                    displayedImage.width > 0 &&
+                    displayedImage.height > 0
+                ? ((constraints.maxWidth - 48) *
+                        displayedImage.height /
+                        displayedImage.width)
+                    .clamp(160.0, MediaQuery.sizeOf(context).height * 0.85)
+                    .toDouble()
+                : workspaceHeight;
+            return Stack(
+              children: [
+                BackdropGroup(
+                    child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (_vm.isGenerating &&
+                        notification is UserScrollNotification &&
+                        notification.direction != ScrollDirection.idle) {
+                      _userScrolledDuringGeneration = true;
+                    }
+                    return false;
+                  },
+                  child: ListView(
+                    key: const PageStorageKey('creation-scroll'),
+                    controller: _scrollController,
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    physics: _characterPositionLocked ||
+                            (_vm.generationMode == GenerationMode.inpainting &&
+                                (_inpaintWorkspaceLocked ||
+                                    InpaintWorkspaceCard.gestureActive.value))
+                        ? const NeverScrollableScrollPhysics()
+                        : null,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
                     ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            )),
-            if (_isChatDrawerOpen)
-              ChatDrawer(
-                  onClose: _closeChatDrawer, parentResizesForKeyboard: true),
-          ],
-        );
-      }),
+                    children: [
+                      _buildModeSection(),
+                      const SizedBox(height: 12),
+                      if (_vm.generationMode != GenerationMode.inpainting) ...[
+                        _buildResultSection(workspaceHeight: imageHeight),
+                        const SizedBox(height: 12),
+                        _buildPromptSection(),
+                        const SizedBox(height: 12),
+                        if (!_vm.isNonNovelAiProvider &&
+                            _vm.supportsCharacterPrompts) ...[
+                          _CharacterControlSection(
+                            vm: _vm,
+                            imageAspectRatio: _outputAspectRatio,
+                            onPositionGestureChanged: (active) {
+                              if (mounted &&
+                                  active != _characterPositionLocked) {
+                                setState(
+                                    () => _characterPositionLocked = active);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (!_vm.isNonNovelAiProvider &&
+                            (_vm.supportsVibeReferences ||
+                                _vm.supportsPreciseReferences))
+                          _CharacterReferenceSection(
+                              vm: _vm,
+                              imagePicker: _imagePicker,
+                              onShowMessage: _showToast),
+                        if (_vm.isNonNovelAiProvider)
+                          _buildGptReferenceImageSection(),
+                      ],
+                      if (_hasOpenedInpaint)
+                        Offstage(
+                          key: const ValueKey('retained-inpaint-workspace'),
+                          offstage:
+                              _vm.generationMode != GenerationMode.inpainting,
+                          child: _buildInpaintingSection(),
+                        ),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                )),
+                if (_isChatDrawerOpen)
+                  ChatDrawer(
+                      onClose: _closeChatDrawer,
+                      parentResizesForKeyboard: true),
+              ],
+            );
+          }),
+        ),
+      ],
     );
   }
 
@@ -1928,25 +1940,13 @@ class _GeneratePageState extends State<GeneratePage> {
     if (_isGenerationSettingsOpen || _isImageOperationBusy) return;
     _isGenerationSettingsOpen = true;
     FocusManager.instance.primaryFocus?.unfocus();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     try {
-      await Navigator.of(context).push<void>(PageRouteBuilder<void>(
-        settings: const RouteSettings(name: '/generation-settings'),
-        transitionDuration: Duration(milliseconds: reduceMotion ? 0 : 280),
-        reverseTransitionDuration:
-            Duration(milliseconds: reduceMotion ? 0 : 220),
-        pageBuilder: (_, __, ___) => _GenerationSettingsPage(
+      await Navigator.of(context).push<void>(studioPageRoute<void>(
+        context: context,
+        name: '/generation-settings',
+        builder: (_) => _GenerationSettingsPage(
           vm: _vm,
           buildModelSection: () => _buildModelSection(),
-        ),
-        transitionsBuilder: (_, animation, __, child) => SlideTransition(
-          position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-              .animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
-          )),
-          child: child,
         ),
       ));
     } finally {
