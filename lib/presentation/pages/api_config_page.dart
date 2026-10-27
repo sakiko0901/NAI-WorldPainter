@@ -275,118 +275,124 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
           width: widget.isActive ? 1.2 : .5,
         ),
       ),
-      child: Column(
-        children: [
-          ListTile(
-            onTap: () => setState(() => _expanded = !_expanded),
-            leading: Icon(CupertinoIcons.shield_lefthalf_fill,
-                color: colors.primary),
-            title: Text(_isCustom ? 'NovelAI 自定义渠道' : 'NovelAI 官方'),
-            subtitle: Text(
-              _isCustom
-                  ? widget.endpoint.baseUrl
-                  : ApiConstants.officialImageBaseUrl,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            ListTile(
+              onTap: () => setState(() => _expanded = !_expanded),
+              leading: Icon(CupertinoIcons.shield_lefthalf_fill,
+                  color: colors.primary),
+              title: Text(_isCustom ? 'NovelAI 自定义渠道' : 'NovelAI 官方'),
+              subtitle: Text(
+                _isCustom
+                    ? widget.endpoint.baseUrl
+                    : ApiConstants.officialImageBaseUrl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Icon(_expanded
+                  ? CupertinoIcons.chevron_up
+                  : CupertinoIcons.chevron_down),
             ),
-            trailing: Icon(_expanded
-                ? CupertinoIcons.chevron_up
-                : CupertinoIcons.chevron_down),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    _isCustom
-                        ? '使用自定义 URL 与 API Key，适用于兼容 NovelAI 原生接口的中转平台。'
-                        : 'URL 留空时使用官方渠道，也可填写中转平台的 URL 与 API Key。',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile.adaptive(
-                    key: const ValueKey('novelai-streaming-switch'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('启用流式传输', style: TextStyle(fontSize: 14)),
-                    subtitle: Text(
+            if (_expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
                       _isCustom
-                          ? '实时预览生成进度，需要中转平台支持流式传输。'
-                          : '实时预览生成进度；关闭后仅显示完成的图片。',
+                          ? '使用自定义 URL 与 API Key，适用于兼容 NovelAI 原生接口的中转平台。'
+                          : 'URL 留空时使用官方渠道，也可填写中转平台的 URL 与 API Key。',
                       style: const TextStyle(fontSize: 12),
                     ),
-                    value: widget.endpoint.streamEnabled ?? !_isCustom,
-                    onChanged: _savingStreaming ? null : _setStreaming,
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ...widget.endpoint.models.map((model) => ChoiceChip(
-                            label: Text(model),
-                            selected:
-                                widget.isActive && widget.activeModel == model,
-                            onSelected: (_) => _activate(model),
-                          )),
-                      ActionChip(
-                        key: const ValueKey('novelai-add-model'),
-                        avatar: const Icon(CupertinoIcons.plus, size: 16),
-                        label: const Text('新增模型'),
-                        onPressed: _addModel,
+                    const SizedBox(height: 12),
+                    SwitchListTile.adaptive(
+                      key: const ValueKey('novelai-streaming-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title:
+                          const Text('启用流式传输', style: TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                        _isCustom
+                            ? '实时预览生成进度，需要中转平台支持流式传输。'
+                            : '实时预览生成进度；关闭后仅显示完成的图片。',
+                        style: const TextStyle(fontSize: 12),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _testing ? null : _editConnection,
-                        icon: const Icon(CupertinoIcons.lock_fill, size: 16),
-                        label: const Text('设置 URL 与 API Key'),
-                      ),
-                      if (!_isCustom)
-                        OutlinedButton.icon(
-                          onPressed: _testing ? null : _test,
-                          icon: _testing
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(CupertinoIcons.wifi, size: 16),
-                          label: Text(_testing ? '验证中…' : '验证 Token'),
+                      value: widget.endpoint.streamEnabled ?? !_isCustom,
+                      onChanged: _savingStreaming ? null : _setStreaming,
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ...widget.endpoint.models.map((model) => ChoiceChip(
+                              label: Text(model),
+                              selected: widget.isActive &&
+                                  widget.activeModel == model,
+                              onSelected: (_) => _activate(model),
+                            )),
+                        ActionChip(
+                          key: const ValueKey('novelai-add-model'),
+                          avatar: const Icon(CupertinoIcons.plus, size: 16),
+                          label: const Text('新增模型'),
+                          onPressed: _addModel,
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _testing ? null : _editConnection,
+                          icon: const Icon(CupertinoIcons.lock_fill, size: 16),
+                          label: const Text('设置 URL 与 API Key'),
+                        ),
+                        if (!_isCustom)
+                          OutlinedButton.icon(
+                            onPressed: _testing ? null : _test,
+                            icon: _testing
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(CupertinoIcons.wifi, size: 16),
+                            label: Text(_testing ? '验证中…' : '验证 Token'),
+                          ),
+                      ],
+                    ),
+                    if (_status != null) ...[
+                      const SizedBox(height: 10),
+                      Text(_status!,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: _account == null
+                                  ? colors.onSurfaceVariant
+                                  : Colors.greenAccent.shade400)),
                     ],
-                  ),
-                  if (_status != null) ...[
-                    const SizedBox(height: 10),
-                    Text(_status!,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: _account == null
-                                ? colors.onSurfaceVariant
-                                : Colors.greenAccent.shade400)),
+                    if (!_isCustom && _account != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                          [
+                            if (_account!.tier?.isNotEmpty == true)
+                              '套餐：${_account!.tier}',
+                            if (_account!.anlas != null)
+                              'Anlas：${_account!.anlas}',
+                            if (_account!.v5UsagePercent != null)
+                              'V5 额度：${_account!.v5UsagePercent!.toStringAsFixed(1)}%',
+                          ].join(' · '),
+                          style: TextStyle(
+                              fontSize: 12, color: colors.onSurfaceVariant)),
+                    ],
                   ],
-                  if (!_isCustom && _account != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                        [
-                          if (_account!.tier?.isNotEmpty == true)
-                            '套餐：${_account!.tier}',
-                          if (_account!.anlas != null)
-                            'Anlas：${_account!.anlas}',
-                          if (_account!.v5UsagePercent != null)
-                            'V5 额度：${_account!.v5UsagePercent!.toStringAsFixed(1)}%',
-                        ].join(' · '),
-                        style: TextStyle(
-                            fontSize: 12, color: colors.onSurfaceVariant)),
-                  ],
-                ],
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -709,67 +715,73 @@ class _EndpointCardState extends State<_EndpointCard> {
                 ? colors.primary.withValues(alpha: .5)
                 : colors.onSurface.withValues(alpha: .08)),
       ),
-      child: Column(
-        children: [
-          ListTile(
-            onTap: () => setState(() => _expanded = !_expanded),
-            leading: Icon(
-                widget.isActive
-                    ? CupertinoIcons.checkmark_circle_fill
-                    : CupertinoIcons.circle,
-                color:
-                    widget.isActive ? colors.primary : colors.onSurfaceVariant),
-            title: Text(_displayName(endpoint)),
-            subtitle: Text(
-                endpoint.baseUrl.isEmpty ? '未填写 Base URL' : endpoint.baseUrl,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-            trailing: Icon(_expanded
-                ? CupertinoIcons.chevron_up
-                : CupertinoIcons.chevron_down),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (endpoint.models.isEmpty)
-                      const Text('尚未添加任何模型', style: TextStyle(fontSize: 12))
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: endpoint.models
-                            .map((model) => ChoiceChip(
-                                  label: Text(model),
-                                  selected: widget.isActive &&
-                                      widget.activeModel == model,
-                                  onSelected: (_) => _activate(model),
-                                ))
-                            .toList(),
-                      ),
-                    const SizedBox(height: 12),
-                    Wrap(spacing: 8, children: [
-                      OutlinedButton.icon(
-                          onPressed: _isTesting ? null : _runTest,
-                          icon: const Icon(CupertinoIcons.wifi, size: 16),
-                          label: Text(_isTesting ? '测试中…' : '测试连接')),
-                      OutlinedButton.icon(
-                          onPressed: () => _showEditDialog(
-                              context, widget.provider, endpoint),
-                          icon: const Icon(CupertinoIcons.pencil, size: 16),
-                          label: const Text('编辑')),
-                    ]),
-                    if (_testStatus != null) ...[
-                      const SizedBox(height: 8),
-                      Text(_testStatus!,
-                          style: TextStyle(
-                              fontSize: 12, color: colors.onSurfaceVariant))
-                    ],
-                  ]),
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            ListTile(
+              onTap: () => setState(() => _expanded = !_expanded),
+              leading: Icon(
+                  widget.isActive
+                      ? CupertinoIcons.checkmark_circle_fill
+                      : CupertinoIcons.circle,
+                  color: widget.isActive
+                      ? colors.primary
+                      : colors.onSurfaceVariant),
+              title: Text(_displayName(endpoint)),
+              subtitle: Text(
+                  endpoint.baseUrl.isEmpty ? '未填写 Base URL' : endpoint.baseUrl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+              trailing: Icon(_expanded
+                  ? CupertinoIcons.chevron_up
+                  : CupertinoIcons.chevron_down),
             ),
-        ],
+            if (_expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (endpoint.models.isEmpty)
+                        const Text('尚未添加任何模型', style: TextStyle(fontSize: 12))
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: endpoint.models
+                              .map((model) => ChoiceChip(
+                                    label: Text(model),
+                                    selected: widget.isActive &&
+                                        widget.activeModel == model,
+                                    onSelected: (_) => _activate(model),
+                                  ))
+                              .toList(),
+                        ),
+                      const SizedBox(height: 12),
+                      Wrap(spacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: _isTesting ? null : _runTest,
+                            icon: const Icon(CupertinoIcons.wifi, size: 16),
+                            label: Text(_isTesting ? '测试中…' : '测试连接')),
+                        OutlinedButton.icon(
+                            onPressed: () => _showEditDialog(
+                                context, widget.provider, endpoint),
+                            icon: const Icon(CupertinoIcons.pencil, size: 16),
+                            label: const Text('编辑')),
+                      ]),
+                      if (_testStatus != null) ...[
+                        const SizedBox(height: 8),
+                        Text(_testStatus!,
+                            style: TextStyle(
+                                fontSize: 12, color: colors.onSurfaceVariant))
+                      ],
+                    ]),
+              ),
+          ],
+        ),
       ),
     );
   }

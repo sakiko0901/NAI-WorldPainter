@@ -210,10 +210,12 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           children: [
             SizedBox.square(
               dimension: 15,
-              child: CircularProgressIndicator(
-                key: const ValueKey('result-processing-indicator'),
-                strokeWidth: 1.8,
-                color: theme.colorScheme.primary,
+              child: RepaintBoundary(
+                child: CircularProgressIndicator(
+                  key: const ValueKey('result-processing-indicator'),
+                  strokeWidth: 1.8,
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
             const SizedBox(width: 9),
@@ -379,7 +381,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                     const SizedBox(
                       width: 26,
                       height: 26,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                      // Keep continuous ticks off the workspace and glass panel.
+                      child: RepaintBoundary(
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ] else
@@ -457,7 +462,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   children: [
                     const SizedBox.square(
                       dimension: 10,
-                      child: CircularProgressIndicator(strokeWidth: 1.6),
+                      child: RepaintBoundary(
+                        child: CircularProgressIndicator(strokeWidth: 1.6),
+                      ),
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -538,9 +545,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                         SizedBox(
                           width: 13,
                           height: 13,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.7,
-                            color: theme.colorScheme.primary,
+                          child: RepaintBoundary(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.7,
+                              color: theme.colorScheme.primary,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 7),
@@ -587,11 +596,13 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                               children: [
                                 SizedBox.square(
                                   dimension: 24,
-                                  child: CircularProgressIndicator(
-                                    key: const ValueKey(
-                                        'result-processing-overlay-indicator'),
-                                    strokeWidth: 2.4,
-                                    color: theme.colorScheme.primary,
+                                  child: RepaintBoundary(
+                                    child: CircularProgressIndicator(
+                                      key: const ValueKey(
+                                          'result-processing-overlay-indicator'),
+                                      strokeWidth: 2.4,
+                                      color: theme.colorScheme.primary,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -757,9 +768,11 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                               child: SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 1.8,
-                                  color: theme.colorScheme.primary,
+                                child: RepaintBoundary(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.8,
+                                    color: theme.colorScheme.primary,
+                                  ),
                                 ),
                               ),
                             ),

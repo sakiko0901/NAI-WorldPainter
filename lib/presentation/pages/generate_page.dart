@@ -23,6 +23,7 @@ import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
 import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
+import 'package:nai_huishi/presentation/widgets/generation_preview_builder.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/navigation/studio_page_route.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
@@ -1022,7 +1023,9 @@ class _GeneratePageState extends State<GeneratePage> {
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: RepaintBoundary(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         )
                       : const Icon(CupertinoIcons.photo_on_rectangle, size: 17),
                   label: Text(
@@ -1711,6 +1714,13 @@ class _GeneratePageState extends State<GeneratePage> {
   }
 
   Widget _buildResultSection({required double workspaceHeight}) {
+    return GenerationPreviewBuilder(
+      updates: _vm.previewUpdates,
+      builder: (_) => _buildResultCard(workspaceHeight: workspaceHeight),
+    );
+  }
+
+  Widget _buildResultCard({required double workspaceHeight}) {
     final task = _vm.selectedResult ?? _vm.lastCompletedTask;
     final hasLocalImage =
         task?.imagePath != null && File(task!.imagePath!).existsSync();
@@ -1895,7 +1905,9 @@ class _GeneratePageState extends State<GeneratePage> {
                 icon: _vm.isProcessingImage
                     ? const SizedBox.square(
                         dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: RepaintBoundary(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       )
                     : Icon(
                         _vm.isGenerating
