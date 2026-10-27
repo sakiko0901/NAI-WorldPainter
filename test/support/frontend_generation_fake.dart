@@ -93,6 +93,17 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   final Map<String, int> streamPreviewSteps = {};
   @override
+  final ChangeNotifier previewUpdates = ChangeNotifier();
+
+  void receivePreview(String taskId, Uint8List bytes, int? step) {
+    streamPreviews[taskId] = bytes;
+    if (step != null) streamPreviewSteps[taskId] = step;
+    streamPreviewBytes = bytes;
+    streamPreviewStep = streamPreviewSteps[taskId];
+    previewUpdates.notifyListeners();
+  }
+
+  @override
   bool get isMediumEffort => false;
   @override
   GenerationEffort effort = GenerationEffort.high;
@@ -229,6 +240,12 @@ class FrontendGenerationFake extends ChangeNotifier
 
   @override
   void addCompletedWorkspaceResult(GenerationTask task) => receive(task);
+
+  @override
+  void dispose() {
+    previewUpdates.dispose();
+    super.dispose();
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

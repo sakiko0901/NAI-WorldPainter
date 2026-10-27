@@ -562,6 +562,115 @@ void main() {
     expect(vm.characters[1].centerY, isNull);
   });
 
+  test(
+      'stream frames notify only preview observers and clear by task at both terminal states',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final repository = _ControlledPreviewGenerationRepository();
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await vm.loadModels();
+    var ordinaryNotifications = 0;
+    var previewNotifications = 0;
+    final successApplied = Completer<void>();
+    final failureApplied = Completer<void>();
+    vm.addListener(() {
+      ordinaryNotifications++;
+      if (vm.sessionResults.any((task) => task.taskId == 'preview-success') &&
+          !successApplied.isCompleted) {
+        successApplied.complete();
+      }
+      if (vm.errorMessage == 'controlled preview failure' &&
+          !failureApplied.isCompleted) {
+        failureApplied.complete();
+      }
+    });
+    vm.previewUpdates.addListener(() => previewNotifications++);
+
+    final first = _successfulImageTask(
+      taskId: 'preview-success',
+      imagePath: 'unused',
+      width: 8,
+      height: 8,
+    ).copyWith(status: AppConstants.taskPending);
+    final second = first.copyWith(taskId: 'preview-failure');
+    final firstCompletion = queue.enqueueTransientAndWait(first);
+    final secondCompletion = queue.enqueueTransientAndWait(second);
+    await repository.waitForSubmission(first.taskId);
+    await Future<void>.delayed(Duration.zero);
+    final beforeFrames = ordinaryNotifications;
+
+    late Uint8List latest;
+    for (var step = 1; step <= 20; step++) {
+      latest = Uint8List.fromList([step]);
+      repository.preview(first.taskId, latest, step);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.streamPreviews[first.taskId], same(latest));
+      expect(vm.streamPreviewSteps[first.taskId], step);
+    }
+    expect(previewNotifications, 20);
+    expect(ordinaryNotifications, beforeFrames,
+        reason: 'preview frames must not invalidate creation-page listeners');
+    expect(vm.streamPreviewBytes, same(latest));
+    expect(vm.streamPreviewStep, 20);
+    expect(vm.streamPreviews.containsKey(second.taskId), isFalse);
+
+    latest = Uint8List.fromList([21]);
+    repository.preview(first.taskId, latest, null);
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.streamPreviewBytes, same(latest));
+    expect(vm.streamPreviewStep, 20,
+        reason: 'a frame without a step retains this task\'s last known step');
+    expect(previewNotifications, 21);
+    expect(ordinaryNotifications, beforeFrames);
+
+    repository.succeed(first.taskId);
+    expect((await firstCompletion).status, AppConstants.taskSuccess);
+    await successApplied.future.timeout(const Duration(seconds: 2));
+    await repository.waitForSubmission(second.taskId);
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.streamPreviews, isEmpty);
+    expect(vm.streamPreviewSteps, isEmpty);
+    expect(vm.streamPreviewBytes, isNull);
+    expect(vm.streamPreviewStep, isNull);
+    expect(vm.sessionResults.single.taskId, first.taskId);
+    expect(ordinaryNotifications, greaterThan(beforeFrames));
+
+    final beforeSecondFrame = ordinaryNotifications;
+    final secondFrame = Uint8List.fromList([99]);
+    repository.preview(second.taskId, secondFrame, null);
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.streamPreviews, {second.taskId: secondFrame});
+    expect(vm.streamPreviewSteps, isEmpty,
+        reason: 'the next task must not inherit the previous task\'s step');
+    expect(vm.streamPreviewBytes, same(secondFrame));
+    expect(vm.streamPreviewStep, isNull);
+    expect(previewNotifications, 22);
+    expect(ordinaryNotifications, beforeSecondFrame);
+
+    repository.preview(second.taskId, secondFrame, 7);
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.streamPreviewSteps, {second.taskId: 7});
+    expect(ordinaryNotifications, beforeSecondFrame);
+
+    repository.fail(second.taskId);
+    expect((await secondCompletion).status, AppConstants.taskFailed);
+    await failureApplied.future.timeout(const Duration(seconds: 2));
+    expect(vm.streamPreviews, isEmpty);
+    expect(vm.streamPreviewSteps, isEmpty);
+    expect(vm.streamPreviewBytes, isNull);
+    expect(vm.streamPreviewStep, isNull);
+    expect(vm.errorMessage, contains('controlled preview failure'));
+    expect(ordinaryNotifications, greaterThan(beforeSecondFrame));
+  });
+
   test('batch generation keeps selection on the newest placeholder', () async {
     final image = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -2762,6 +2871,51 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
   @override
   void setStreamPreviewHandler(
       String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ControlledPreviewGenerationRepository implements GenerationRepository {
+  final _submissions = <String, Completer<GenerationTask>>{};
+  final _completions = <String, Completer<GenerationTask>>{};
+  final _handlers = <String, void Function(Uint8List, int?)>{};
+  final _tasks = <String, GenerationTask>{};
+
+  Future<GenerationTask> waitForSubmission(String taskId) =>
+      _submissions.putIfAbsent(taskId, Completer<GenerationTask>.new).future;
+
+  void preview(String taskId, Uint8List bytes, int? step) =>
+      _handlers[taskId]!(bytes, step);
+
+  void succeed(String taskId) => _completions[taskId]!.complete(
+        _tasks[taskId]!.copyWith(status: AppConstants.taskSuccess),
+      );
+
+  void fail(String taskId) => _completions[taskId]!.completeError(
+        ApiException(message: 'controlled preview failure', statusCode: 502),
+      );
+
+  @override
+  Future<GenerationTask> submitGeneration(GenerationTask task) {
+    _tasks[task.taskId] = task;
+    final completion =
+        _completions.putIfAbsent(task.taskId, Completer<GenerationTask>.new);
+    _submissions
+        .putIfAbsent(task.taskId, Completer<GenerationTask>.new)
+        .complete(task);
+    return completion.future;
+  }
+
+  @override
+  void setStreamPreviewHandler(
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {
+    if (onFrame == null) {
+      _handlers.remove(taskId);
+    } else {
+      _handlers[taskId] = onFrame;
+    }
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

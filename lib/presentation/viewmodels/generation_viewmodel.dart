@@ -69,6 +69,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final Map<String, Uint8List> streamPreviews = {};
   final Map<String, int> streamPreviewSteps = {};
 
+  final ChangeNotifier _previewUpdates = ChangeNotifier();
+
+  /// Preview frames change only the result viewport, not the creation draft.
+  Listenable get previewUpdates => _previewUpdates;
+
   /// 旧字段保留供页面兼容（当前选中占位的帧）。
   Uint8List? get streamPreviewBytes =>
       _previewTaskId == null ? null : streamPreviews[_previewTaskId];
@@ -629,12 +634,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
     _taskSub = _queue.taskStream.listen(_onQueueTask);
     _previewSub = _queue.previewStream.listen((frame) {
+      if (_disposed) return;
       final (taskId, bytes, step) = frame;
       // 每个任务持有自己的预览帧，多张并行/串行生成互不覆盖
       streamPreviews[taskId] = bytes;
       if (step != null) streamPreviewSteps[taskId] = step;
       _previewTaskId = taskId;
-      notifyListeners();
+      _previewUpdates.notifyListeners();
     });
   }
 
@@ -3103,6 +3109,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _queueSub?.cancel();
     _taskSub?.cancel();
     _previewSub?.cancel();
+    _previewUpdates.dispose();
     super.dispose();
   }
 }
