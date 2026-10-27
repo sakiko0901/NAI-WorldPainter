@@ -8,6 +8,39 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  for (final baseUrl in [
+    ApiConstants.officialImageBaseUrl,
+    'https://relay.example/native',
+  ]) {
+    test('added official model survives normalization and restart at $baseUrl',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final datasource = SettingsLocalDatasource(prefs);
+      final endpoints = datasource.getEndpoints(ImageProviderType.novelAi);
+      await datasource.setEndpoints(ImageProviderType.novelAi, [
+        endpoints[0],
+        endpoints[1],
+        endpoints[2].copyWith(
+          baseUrl: baseUrl,
+          streamEnabled: false,
+          models: const [
+            '  channel-model-vNext  ',
+            '',
+            'channel-model-vNext',
+            'nai-diffusion-5-full',
+          ],
+        ),
+      ]);
+      final restored = SettingsLocalDatasource(prefs)
+          .getEndpoints(ImageProviderType.novelAi)[2];
+      expect(restored.models,
+          [...ApiConstants.officialNovelAiModels, 'channel-model-vNext']);
+      expect(restored.baseUrl, baseUrl);
+      expect(restored.streamEnabled, isFalse);
+    });
+  }
+
   test(
       'NovelAI streaming preference survives endpoint normalization and restart',
       () async {

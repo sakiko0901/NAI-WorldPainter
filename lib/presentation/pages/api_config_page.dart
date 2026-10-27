@@ -185,6 +185,9 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
       widget.endpoint.id,
       model,
     );
+    if (sl.isRegistered<GenerationViewModel>()) {
+      await sl<GenerationViewModel>().loadModels();
+    }
     if (mounted) {
       showFloatingToast(
           context, '已切换到 NovelAI ${_isCustom ? '自定义渠道' : '官方'} · $model',
@@ -202,6 +205,30 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
         _status = '渠道配置已保存';
         _account = null;
       });
+    }
+  }
+
+  Future<void> _addModel() async {
+    final model = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          _NovelAiModelDialog(existingModels: widget.endpoint.models),
+    );
+    if (model == null || !mounted) return;
+    try {
+      await sl<SettingsViewModel>().updateEndpoint(
+        ImageProviderType.novelAi,
+        widget.endpoint.copyWith(models: [...widget.endpoint.models, model]),
+      );
+      if (sl.isRegistered<GenerationViewModel>()) {
+        await sl<GenerationViewModel>().loadModels();
+      }
+      if (mounted) {
+        showFloatingToast(context, '模型已添加',
+            icon: CupertinoIcons.checkmark_circle_fill);
+      }
+    } catch (_) {
+      if (mounted) showFloatingToast(context, '模型保存失败，请重试');
     }
   }
 
@@ -296,14 +323,20 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: widget.endpoint.models
-                        .map((model) => ChoiceChip(
-                              label: Text(model),
-                              selected: widget.isActive &&
-                                  widget.activeModel == model,
-                              onSelected: (_) => _activate(model),
-                            ))
-                        .toList(),
+                    children: [
+                      ...widget.endpoint.models.map((model) => ChoiceChip(
+                            label: Text(model),
+                            selected:
+                                widget.isActive && widget.activeModel == model,
+                            onSelected: (_) => _activate(model),
+                          )),
+                      ActionChip(
+                        key: const ValueKey('novelai-add-model'),
+                        avatar: const Icon(CupertinoIcons.plus, size: 16),
+                        label: const Text('新增模型'),
+                        onPressed: _addModel,
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Wrap(
@@ -357,6 +390,69 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
       ),
     );
   }
+}
+
+class _NovelAiModelDialog extends StatefulWidget {
+  final List<String> existingModels;
+
+  const _NovelAiModelDialog({required this.existingModels});
+
+  @override
+  State<_NovelAiModelDialog> createState() => _NovelAiModelDialogState();
+}
+
+class _NovelAiModelDialogState extends State<_NovelAiModelDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _controller = TextEditingController();
+
+  void _submit() {
+    if (_formKey.currentState!.validate()) {
+      Navigator.pop(context, _controller.text.trim());
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('新增模型'),
+        content: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: TextFormField(
+              key: const ValueKey('novelai-model-name'),
+              controller: _controller,
+              autofocus: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              decoration: const InputDecoration(
+                labelText: '模型名称',
+                helperText: '填写渠道支持的完整模型名称',
+                helperMaxLines: 2,
+              ),
+              validator: (value) {
+                final model = value?.trim() ?? '';
+                if (model.isEmpty) return '请输入模型名称';
+                if (widget.existingModels.contains(model)) return '该模型已存在';
+                return null;
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(onPressed: _submit, child: const Text('添加')),
+        ],
+      );
 }
 
 class _NovelAiConnectionDialog extends StatefulWidget {

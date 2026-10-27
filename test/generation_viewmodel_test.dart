@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
@@ -569,7 +570,8 @@ void main() {
     await generateFuture;
 
     expect(viewModel.sessionResults, hasLength(4));
-    expect(viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
+    expect(
+        viewModel.selectedResultTaskId, viewModel.sessionResults.last.taskId);
   });
 
   test('imported image displays without submitting a task or replacing drafts',
@@ -2024,6 +2026,39 @@ void main() {
 
     expect(viewModel.selectedModel, 'nai:ikun:ikun-custom-model');
     expect(viewModel.isIkunEndpoint, isTrue);
+  });
+
+  test('added native model is available and selected in the creation workspace',
+      () async {
+    final settings = _SettingsRepository()
+      ..activeNovelAiEndpointId = AppConstants.novelAiOfficialEndpointId
+      ..activeNovelAiModel = 'channel-model-vNext'
+      ..novelAiEndpoints = const [
+        ApiEndpoint(
+          id: AppConstants.novelAiOfficialEndpointId,
+          name: 'NovelAI 官方',
+          baseUrl: ApiConstants.officialImageBaseUrl,
+          apiKey: '',
+          models: ['nai-diffusion-5-full', 'channel-model-vNext'],
+          protocol: AppConstants.novelAiOfficialProtocol,
+        ),
+      ];
+    final history = _MemoryHistoryRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(settings),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await vm.loadModels();
+    expect(vm.currentModelOption?.actualModel, 'channel-model-vNext');
+    expect(vm.currentModelOption?.endpointId,
+        AppConstants.novelAiOfficialEndpointId);
+    expect(vm.isOfficialEndpoint, isTrue);
   });
 
   test('loadFromHistory keeps iku endpoint for matching model names', () async {

@@ -34,6 +34,55 @@ void main() {
     settings.dispose();
   });
 
+  for (final custom in [false, true]) {
+    testWidgets('adds and selects a model in the native channel custom=$custom',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 720);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      settings.endpoint = settings.endpoint.copyWith(
+        baseUrl: custom ? 'https://relay.example' : '',
+        streamEnabled: false,
+      );
+      await tester.pumpWidget(MaterialApp(
+        theme: buildNaiHuishiTheme(Brightness.dark),
+        home: const ApiConfigPage(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(custom ? 'NovelAI 自定义渠道' : 'NovelAI 官方'));
+      await tester.pumpAndSettle();
+      final addModel = find.byKey(const ValueKey('novelai-add-model'));
+      await tester.ensureVisible(addModel);
+      await tester.tap(addModel);
+      await tester.pumpAndSettle();
+      final field = find.byKey(const ValueKey('novelai-model-name'));
+      await tester.enterText(field, '  ');
+      await tester.tap(find.text('添加'));
+      await tester.pumpAndSettle();
+      expect(find.text('请输入模型名称'), findsOneWidget);
+      await tester.enterText(field, ApiConstants.officialNovelAiModels.first);
+      await tester.tap(find.text('添加'));
+      await tester.pumpAndSettle();
+      expect(find.text('该模型已存在'), findsOneWidget);
+      await tester.enterText(field, '  channel-model-vNext  ');
+      await tester.tap(find.text('添加'));
+      await tester.pumpAndSettle();
+      expect(settings.endpoint.models.last, 'channel-model-vNext');
+      expect(settings.endpoint.streamEnabled, isFalse);
+      final modelChip = find.widgetWithText(ChoiceChip, 'channel-model-vNext');
+      await tester.ensureVisible(modelChip);
+      await tester.tap(modelChip);
+      await tester.pumpAndSettle();
+      expect(settings.selectedModel, 'channel-model-vNext');
+      expect(tester.widget<ChoiceChip>(modelChip).selected, isTrue);
+      expect(api.accountRequests, 0);
+      await tester.pump(const Duration(milliseconds: 1800));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('streaming switch saves and restores on page reopen',
       (tester) async {
     Future<void> openCard() async {
@@ -155,6 +204,7 @@ void main() {
 }
 
 class _SettingsFake extends ChangeNotifier implements SettingsViewModel {
+  String? selectedModel;
   ApiEndpoint endpoint = const ApiEndpoint(
     id: AppConstants.novelAiOfficialEndpointId,
     name: 'NovelAI 官方',
@@ -175,7 +225,15 @@ class _SettingsFake extends ChangeNotifier implements SettingsViewModel {
   String? activeEndpointId(ImageProviderType provider) => endpoint.id;
 
   @override
-  String? activeModel(ImageProviderType provider) => endpoint.models.first;
+  String? activeModel(ImageProviderType provider) =>
+      selectedModel ?? endpoint.models.first;
+
+  @override
+  Future<void> setActive(
+      ImageProviderType provider, String endpointId, String? model) async {
+    selectedModel = model;
+    notifyListeners();
+  }
 
   @override
   Future<void> updateEndpoint(

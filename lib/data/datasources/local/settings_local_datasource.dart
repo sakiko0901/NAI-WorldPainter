@@ -612,7 +612,11 @@ class SettingsLocalDatasource {
         baseUrl:
             NovelAiConnection.normalizeBaseUrl(existingOfficial?.baseUrl ?? ''),
         apiKey: '',
-        models: ApiConstants.officialNovelAiModels,
+        models: <String>{
+          ...ApiConstants.officialNovelAiModels,
+          for (final model in existingOfficial?.models ?? const <String>[])
+            if (model.trim().isNotEmpty) model.trim(),
+        }.toList(),
         streamEnabled: existingOfficial?.streamEnabled,
       ),
     ];
