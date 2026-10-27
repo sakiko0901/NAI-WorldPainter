@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
@@ -48,7 +49,28 @@ void main() {
         method: request.method,
         headers: headers,
       ));
-      if (request.uri.path.startsWith('/origin/') ||
+      if (request.uri.path == ApiConstants.officialGenerateImageStream) {
+        request.response.headers.contentType =
+            ContentType('application', 'octet-stream');
+        for (final event in [
+          {
+            'event_type': 'intermediate',
+            'image': Uint8List.fromList([1, 2, 3]),
+            'step_ix': 3,
+          },
+          {
+            'event_type': 'final',
+            'image': Uint8List.fromList([137, 80, 78, 71]),
+          },
+        ]) {
+          final data = msgpack.serialize(event);
+          final header = ByteData(4)..setUint32(0, data.length);
+          request.response.add(header.buffer.asUint8List());
+          await request.response.flush();
+          request.response.add(data);
+          await request.response.flush();
+        }
+      } else if (request.uri.path.startsWith('/origin/') ||
           request.uri.path == ApiConstants.officialGenerateImage) {
         final archive = Archive()
           ..addFile(ArchiveFile('result.png', 4, const [137, 80, 78, 71]));
@@ -69,6 +91,94 @@ void main() {
   });
 
   tearDown(() => server.close(force: true));
+
+  for (final model in ['nai-diffusion-4-5-full', 'nai-diffusion-5-full']) {
+    for (final stream in [false, true]) {
+      for (final positioned in [false, true]) {
+        test(
+            'official img2img keeps two roles $model stream=$stream coordinates=$positioned',
+            () async {
+          final directory =
+              await Directory.systemTemp.createTemp('native_roles_');
+          addTearDown(() => directory.delete(recursive: true));
+          final source = File('${directory.path}/source.png');
+          final sourceBytes = img.encodePng(img.Image(width: 16, height: 16));
+          await source.writeAsBytes(sourceBytes);
+          final task = _task(
+            model: model,
+            protocol: AppConstants.novelAiOfficialProtocol,
+            endpointId: AppConstants.novelAiOfficialEndpointId,
+            img2imgSourceImagePath: source.path,
+            img2imgStrength: 0.55,
+            negativePrompt: 'global negative',
+            useCoords: positioned,
+            characters: [
+              CharacterSpec(
+                  prompt: 'red hair',
+                  uc: 'blue hair',
+                  centerX: positioned ? 0.25 : null,
+                  centerY: positioned ? 0.75 : null),
+              CharacterSpec(
+                  prompt: 'black hair',
+                  uc: 'white hair',
+                  centerX: positioned ? 0.75 : null,
+                  centerY: positioned ? 0.25 : null),
+              const CharacterSpec(prompt: 'disabled character', enabled: false),
+            ],
+          );
+          final dio = Dio(BaseOptions(baseUrl: baseUri.toString()))
+            ..httpClientAdapter = IOHttpClientAdapter(
+              createHttpClient: () => HttpClient(),
+            );
+          final service = OfficialNovelAiApiService(dio);
+          final previews = <int>[];
+          final result = stream
+              ? await service.generateImageStream(task, 'key',
+                  onFrame: (bytes, step) {
+                  expect(bytes, [1, 2, 3]);
+                  previews.add(step!);
+                })
+              : await service.generateImage(task, 'key');
+          addTearDown(() => _deleteIfPresent(result.imagePath));
+          expect(result.status, 'success');
+          expect(requests, hasLength(1));
+          expect(
+              requests.single.path,
+              stream
+                  ? ApiConstants.officialGenerateImageStream
+                  : ApiConstants.officialGenerateImage);
+          expect(requests.single.headers['authorization'], 'Bearer key');
+          final body = _body(requests.single);
+          expect(body['action'], 'img2img');
+          expect(body['model'], model);
+          final parameters = _asMap(body['parameters']);
+          expect(parameters['image'], base64Encode(sourceBytes));
+          expect(parameters['strength'], 0.55);
+          final positive = _asMap(parameters['v4_prompt']);
+          final negative = _asMap(parameters['v4_negative_prompt']);
+          final roles = _asMap(positive['caption'])['char_captions'] as List;
+          final negativeRoles =
+              _asMap(negative['caption'])['char_captions'] as List;
+          expect(roles.map((role) => role['char_caption']),
+              ['red hair', 'black hair']);
+          expect(negativeRoles.map((role) => role['char_caption']),
+              ['blue hair', 'white hair']);
+          expect(_asMap(positive['caption'])['base_caption'], '1girl');
+          expect(
+              _asMap(negative['caption'])['base_caption'], 'global negative');
+          expect(positive['use_coords'], positioned);
+          expect(negative['use_coords'], positioned);
+          expect(roles.first['centers'], [
+            {'x': positioned ? 0.25 : 0.5, 'y': positioned ? 0.75 : 0.5},
+          ]);
+          expect(roles.last['centers'], [
+            {'x': positioned ? 0.75 : 0.5, 'y': positioned ? 0.25 : 0.5},
+          ]);
+          expect(previews, stream ? [3] : isEmpty);
+        });
+      }
+    }
+  }
 
   group('V5 无坐标多角色请求不启用位置控制', () {
     for (final contract in _v5CharacterContracts) {

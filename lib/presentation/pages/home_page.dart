@@ -168,17 +168,15 @@ class _HomePageState extends State<HomePage> {
                     tooltip: AppDestination.create.label,
                     icon: const FountainPenIcon(),
                     selectedIcon: FountainPenIcon(
-                        color: FrostedTheme.of(context).onSelection),
+                        color: Theme.of(context).colorScheme.primary),
                   ),
                   _navigationDestination(
                     label: AppDestination.assistant.label,
                     icon: CupertinoIcons.sparkles,
-                    selectedIcon: CupertinoIcons.sparkles,
                   ),
                   _navigationDestination(
                     label: AppDestination.tools.label,
                     icon: CupertinoIcons.square_grid_2x2,
-                    selectedIcon: CupertinoIcons.square_grid_2x2_fill,
                   ),
                 ],
               )),
@@ -188,12 +186,11 @@ class _HomePageState extends State<HomePage> {
   NavigationDestination _navigationDestination({
     required String label,
     required IconData icon,
-    required IconData selectedIcon,
   }) {
+    final colors = Theme.of(context).colorScheme;
     return NavigationDestination(
-      icon: Icon(icon, size: 20),
-      selectedIcon: Icon(selectedIcon,
-          size: 20, color: FrostedTheme.of(context).onSelection),
+      icon: Icon(icon, size: 20, color: colors.onSurfaceVariant),
+      selectedIcon: Icon(icon, size: 20, color: colors.primary),
       label: label,
       tooltip: label,
     );

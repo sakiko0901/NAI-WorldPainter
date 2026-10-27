@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -28,6 +28,75 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final mode in Img2ImgMode.values) {
+    test('official $mode img2img retains enabled role prompts and coordinates',
+        () async {
+      final directory =
+          await Directory.systemTemp.createTemp('native_img2img_roles_');
+      addTearDown(() => directory.delete(recursive: true));
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => directory.path);
+      addTearDown(() => TestDefaultBinaryMessengerBinding
+          .instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null));
+      final source = await _writeTestPng(directory, 'source.png', 16, 16);
+      final history = _MemoryHistoryRepository();
+      final repository = _CapturingGenerationRepository(source.path);
+      final queue = GenerationQueue(repository, history);
+      addTearDown(queue.dispose);
+      final settings = _SettingsRepository()
+        ..activeNovelAiEndpointId = AppConstants.novelAiOfficialEndpointId
+        ..activeNovelAiModel = 'nai-diffusion-5-full'
+        ..novelAiEndpoints = const [
+          ApiEndpoint(
+              id: AppConstants.novelAiOfficialEndpointId,
+              name: 'NovelAI 官方',
+              baseUrl: ApiConstants.officialImageBaseUrl,
+              apiKey: '',
+              models: ['nai-diffusion-5-full'],
+              protocol: AppConstants.novelAiOfficialProtocol),
+        ];
+      final vm = _createGenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(settings),
+        saveImage: SaveImageUseCase(history),
+        queue: queue,
+      );
+      addTearDown(vm.dispose);
+      await vm.loadModels();
+      vm.prompt = 'two people';
+      vm.negativePrompt = 'global negative';
+      vm.characters = const [
+        CharacterSpec(
+            prompt: 'red hair', uc: 'blue hair', centerX: 0.25, centerY: 0.75),
+        CharacterSpec(
+            prompt: 'black hair',
+            uc: 'white hair',
+            centerX: 0.75,
+            centerY: 0.25),
+        CharacterSpec(prompt: 'disabled role', enabled: false),
+      ];
+      vm.updateImg2ImgMode(mode);
+      vm.updateImg2ImgStrength(0.55);
+      vm.setImg2ImgSourceImagePath(source.path);
+      await vm.generate();
+      expect(vm.errorMessage, isNull);
+      expect(repository.submitted, hasLength(1));
+      final task = repository.submitted.single;
+      expect(task.endpointId, AppConstants.novelAiOfficialEndpointId);
+      expect(task.img2imgSourceImagePath, isNotNull);
+      expect(task.img2imgStrength, 0.55);
+      expect(task.useCoords, isTrue);
+      expect(task.characters!.map((role) => role.prompt),
+          ['red hair', 'black hair']);
+      expect(
+          task.characters!.map((role) => role.uc), ['blue hair', 'white hair']);
+      expect(task.characters!.first.centerX, 0.25);
+      expect(task.characters!.last.centerY, 0.25);
+    });
+  }
 
   test(
       'inpaint import replaces all prompts and isolates persistent role drafts',

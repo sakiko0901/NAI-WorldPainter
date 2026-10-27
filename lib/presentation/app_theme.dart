@@ -159,7 +159,7 @@ ThemeData buildNaiHuishiTheme(
     navigationBarTheme: NavigationBarThemeData(
       height: 52,
       backgroundColor: Colors.transparent,
-      indicatorColor: glass.selection,
+      indicatorColor: Colors.transparent,
       elevation: 0,
       labelTextStyle: WidgetStatePropertyAll(TextStyle(
           fontSize: 11,
