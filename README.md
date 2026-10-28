@@ -1,383 +1,229 @@
 <div align="center">
 
-# NAI-WorldPainter · 绘世
+<img src="docs/images/worldpainter-cover.svg" width="100%" alt="绘世 NAI WorldPainter — Android 上的图像生成、局部重绘与提示词管理" />
 
-### 面向 Android 的 NovelAI 一站式创作客户端
+# NAI WorldPainter · 绘世
 
-> 最新代码位于 `master`，当前安装包为 1.2.4（ARM64 versionCode 220037）。本次更新优化生成预览和 API 渠道卡片，并包含自定义 NovelAI 渠道、流式传输开关与手动新增模型，见[更新说明](docs/releases/2026-10-27-1.2.4.md)。
+**在手机上整理灵感、生成画面，再把细节慢慢画好。**
 
-从自然语言提示词、精密参照与图像生成，到超分、打标和 Pixiv 发布，在一个应用中完成完整工作流。
+面向 Android 的 NovelAI 创作客户端，集成图像生成、局部重绘、提示词笔记本与 AI 助手。
 
-[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#系统要求)
-[![Framework](https://img.shields.io/badge/Flutter-3.x-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
-[![Version](https://img.shields.io/badge/Version-1.2.4-FF6F61?style=for-the-badge)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest)
-[![License](https://img.shields.io/badge/License-MIT-8A63D2?style=for-the-badge)](LICENSE)
+[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.4_%C2%B7_220040-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
 
-<br>
-
-[**下载最新版 APK**](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)
-&nbsp;&nbsp;·&nbsp;&nbsp;
-[查看发布说明](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest)
-&nbsp;&nbsp;·&nbsp;&nbsp;
-[浏览功能](#功能亮点)
-
-> 当前提供 Android arm64-v8a Release APK，约 50 MB。
+[本次更新](#本次更新) · [界面展示](#界面展示) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
 
 </div>
 
----
+## 本次更新
 
-## 导航
+**1.2.4 / 220040 · 2026-10-28**
 
-- [功能亮点](#功能亮点)
-- [下载与安装](#下载与安装)
-- [系统要求](#系统要求)
-- [功能清单](#功能清单)
-- [架构](#架构)
-- [资源目录](#资源目录)
-- [致谢](#致谢--credits)
+- **提示词随手存、随时用。** 正向提示词标题右侧新增「笔记本、复制、展开」，常用 tag 与提示词组合可以命名保存、搜索、编辑和复用。
+- **圆形遮罩，画到哪里选到哪里。** 圆形笔刷不再额外扩展遮罩，涂抹边缘有蓝色高亮；画笔弹窗支持圆形、方形和 1–10 档大小。
+- **修正重绘边缘杂色。** 请求与合成使用各自适合的遮罩，羽化只在选区内生效；删除绘制目标选择，画笔直接编辑遮罩。
+- **工作区更集中。** 分辨率与换图入口放到左上方，扩展、羽化、重绘强度、色彩校正和忽略原图集中到可展开的工作区菜单。
 
-## 功能亮点
+[查看完整发布说明](docs/releases/2026-10-28-220040.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
 
+## 界面展示
+
+<p align="center">
+  <a href="docs/images/creation.png"><img src="docs/images/creation.png" width="260" align="top" alt="创作页：生成结果、图片保存、参数入口和底部导航" /></a>
+  <a href="docs/images/inpaint-workspace.png"><img src="docs/images/inpaint-workspace.png" width="260" align="top" alt="局部重绘：输出框、圆形蓝色遮罩、绘图工具及独立提示词" /></a>
+  <a href="docs/images/prompt-notebook.png"><img src="docs/images/prompt-notebook.png" width="260" align="top" alt="提示词笔记本：搜索、标题与内容预览、复制和导入" /></a>
+</p>
+
+- **创作与结果预览**：查看结果、调整参数、保存图片。
+- **局部重绘工作区**：移动原图与输出框，直接涂抹需要重绘的区域。
+- **提示词笔记本**：把常用提示词保存成可以反复使用的笔记。
+
+<details>
+<summary><b>展开查看：画笔弹窗、工作区设置与提示词快捷操作</b></summary>
+<br />
 <table>
-<tr>
-<td width="50%" valign="top">
-
-### NovelAI 专业生图
-多角色提示词、坐标控制、Vibe Transfer、独立 Precise Reference、涂改重绘、批量队列与完整高级参数。
-
-</td>
-<td width="50%" valign="top">
-
-### 大白话提示词 Agent
-用自然语言描述画面，Agent 自动检索真实 Danbooru tag、编排提示词并在确认后执行生图。
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 图片后期工作台
-集成 Director Tools、WD-Tagger、NAI 元数据解析，以及 Real-ESRGAN / RealCUGAN 本地超分。
-
-</td>
-<td width="50%" valign="top">
-
-### 完整发布工作流
-本地历史、提示词记忆、风格与艺术家预设，并支持 Pixiv 上传队列和自动标题、标签处理。
-
-</td>
-</tr>
+  <tr>
+    <th width="33%">画笔设置</th>
+    <th width="33%">工作区菜单</th>
+    <th width="33%">提示词快捷操作</th>
+  </tr>
+  <tr>
+    <td valign="top"><img src="docs/images/brush-settings.png" width="100%" alt="画笔弹窗中的圆形、方形笔刷与 1–10 档大小滑块" /></td>
+    <td valign="top"><img src="docs/images/workspace-settings.png" width="100%" alt="展开的工作区菜单，集中展示遮罩与重绘设置" /></td>
+    <td valign="top"><img src="docs/images/prompt-actions.png" width="100%" alt="正向提示词标题右侧的笔记本、复制、展开按钮" /></td>
+  </tr>
 </table>
+</details>
 
-## 下载与安装
+<sub>点击截图可查看大图。截图由当前版本的 Flutter 界面组件渲染，使用仓库内示例图片与演示数据；不包含账号信息。截图复现方法见 <a href="docs/images/README.md">展示资源说明</a>。</sub>
 
-### 推荐：直接下载安装包
+## 安装与开始使用
+
+1. 下载 [最新版 app-release.apk](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)，在 Android 上安装并打开「NAI 绘世」。
+2. 进入 **工具 → API 配置**，在「API 与账号」页配置生成渠道和模型。官方账号与中转平台的填法见下方说明。
+3. 回到 **创作**，填写正向、负向提示词，按需添加角色提示词；通过右上角的参数按钮调整尺寸、采样和数量。
+4. 点击生成，查看结果并保存。需要修改局部时切换到 **局部重绘**，选择图片后涂抹遮罩。
+5. 想用自然语言整理提示词，可进入 **AI 助手**，先在右上角设置中配置可用的聊天模型。
+
+| 安装包信息 | 当前版本 |
+| --- | --- |
+| Android | 7.0 及以上（最低 API 24） |
+| CPU 架构 | `arm64-v8a` |
+| 版本 | `1.2.4`，Android versionCode `220040` |
+| 文件大小 | 52,689,264 字节，约 50.2 MiB |
+| 包名 | `com.naihuishi.nai_huishi` |
+| 签名 | 沿用项目现有 Android Debug 证书，APK v2 校验通过 |
+| 校验文件 | 发布页中的 `SHA256SUMS.txt` |
+
+当前发布的是 Android 安装包。生成和 AI 助手需要自行配置相应服务；应用不附带 API Key 或模型服务额度。
+
+## 功能说明
+
+### 图像创作
+
+- **文生图与图生图**：编辑正负提示词，导入图片，并控制图生图强度。
+- **多角色提示词**：为角色分别设置描述、负面词和位置；可用能力随模型与渠道而变化。
+- **生成参数**：分辨率、步数、采样器、噪声调度、CFG、种子及批量数量。
+- **参考图**：Vibe Transfer、Vibe 编码库与独立 Precise Reference 配置。
+- **生成预览与历史**：支持流式中间预览、批量结果切换、画廊回看和参数复用。查看旧图时保留选择，选中最新结果后恢复跟随。
+- **V5 Medium / High**：支持对应模型的等级切换；具体模型命名和参数约束见 [渠道说明](docs/v5_effort_channels.md)。
+
+### 局部重绘
+
+工作区把原图、输出框和遮罩放在一起。可以移动图像、调整输出区域，再绘制需要重新生成的部分。
+
+| 操作 | 行为 |
+| --- | --- |
+| 点击「画笔」 | 从底部弹出设置，选择圆形 / 方形笔刷及 1–10 档大小 |
+| 圆形笔刷 | 遮罩保留实际涂抹范围，不额外扩展；边缘以蓝色高亮 |
+| 方形笔刷 | 适合块状区域，可配合工作区中的方形遮罩扩展 |
+| 橡皮与撤销 / 重做 | 修整笔迹或恢复工作区操作 |
+| 工作区菜单 | 集中设置扩展、羽化、强度、色彩校正、忽略原图及清空笔迹与遮罩 |
+| 重绘提示词 | 保留独立的正向、负向提示词和多角色设置 |
+| 候选结果 | 对比候选图片，选择后应用到工作区，再保存合成结果 |
+
+### 提示词笔记本
+
+入口在 **创作 → 正向提示词标题右侧的书本图标**。
+
+- 保存单个 tag，或把一整组提示词命名收藏。
+- 按标题和内容搜索，列表直接显示标题与内容缩略预览。
+- 一键复制，或导入当前正向提示词；导入时自动处理衔接处的逗号，保留内部权重和换行。
+- 支持编辑、删除；笔记保存在设备本地，关闭应用后仍可使用。
+
+### AI 助手与学习记忆
+
+- 用自然语言描述画面，辅助整理提示词与角色设定。
+- 输入栏的 **「+」** 收纳照片、文档和画风收藏入口。
+- 左上角进入会话历史，右上角新建会话或打开设置；**学习记忆**位于会话历史面板内。
+- 主模型与识图模型可分别配置；角色姓名、别名和标准穿搭可存入本地记忆。
+- 候选记忆经确认后参与后续会话召回。详见 [助手记忆说明](docs/mobile_assistant_memory.md)。
+
+### 工具与素材
+
+| 功能 | 用途 |
+| --- | --- |
+| 图片解析 | 读取 NovelAI 元数据、调用 WD-Tagger，提取或复用提示词 |
+| 元数据编辑 | 修改或清除支持格式中的元数据，另存副本 |
+| 导演工具 | 背景处理、线稿、草图、上色与表情等图像操作 |
+| 官方 Upscale | NovelAI 官方图像放大 |
+| 在线图库 | 浏览公开作品，查看并复用提示词 |
+| 画师串与 Vibe 编码库 | 管理画风描述、权重和已保存的氛围编码 |
+| 漫画生成 | 管理分镜项目、候选主图与本地对白后期 |
+| 主题与外观 | 切换明暗主题和毛玻璃效果 |
+
+## API 配置
+
+打开 **工具 → API 配置 → NovelAI 官方 → 设置 URL 与 API Key**。
+
+| 配置 | 官方渠道 | 自定义原生中转 |
+| --- | --- | --- |
+| URL | 留空；界面以暗色提示 `https://image.novelai.net` | 填写平台提供的 URL |
+| 凭据 | NovelAI Persistent API Token | 该中转平台的 API Key |
+| 模型 | 选择可用模型，也可点击「新增模型」手动填写名称 | 填写平台实际支持的模型名称 |
+| 流式传输 | 通过「启用流式传输」开关控制 | 平台支持时开启；不支持时关闭 |
+| 用量显示 | 有效官方账号可查看接口返回的体力与 Anlas 信息 | 不显示官方体力或积分 |
+
+**自定义 URL 使用的是兼容 NovelAI 原生协议的渠道。** 其他协议的服务应使用对应的渠道配置；填写模型名称本身不会赋予账号该模型的调用权限。官方与不同自定义地址分别保存凭据。
+
+精密参考当前使用非流式请求。第三方平台的模型、流式、图生图和重绘支持情况以其实现为准。
+
+AI 助手的模型在 **AI 助手 → 右上角设置 → 模型配置**中管理，支持 OpenAI 兼容接口，并可分别绑定主模型与识图模型。
+
+## 常见问题
+
+<details>
+<summary><b>升级会保留笔记、历史和配置吗？</b></summary>
+
+同包名、同签名的覆盖安装通常会保留应用数据。本仓库当前 APK 沿用同一签名；不要为了升级先卸载旧版，卸载或清除应用数据会删除本地保存的内容。
+
+</details>
+
+<details>
+<summary><b>为什么中转平台没有显示官方体力与积分？</b></summary>
+
+填写自定义 URL 后按自定义渠道处理，不查询或展示官方账户配额。平台自己的额度请在相应平台查看。
+
+</details>
+
+<details>
+<summary><b>开启流式后没有中间预览怎么办？</b></summary>
+
+确认渠道和模型支持流式生成。自定义平台不支持时可关闭流式，使用完整结果返回模式；精密参考也使用非流式接口。
+
+</details>
+
+<details>
+<summary><b>提示词笔记本与学习记忆有什么区别？</b></summary>
+
+笔记本用于手动收藏、搜索和插入提示词。学习记忆用于让 AI 助手在后续会话中召回角色设定等已确认内容，两者入口和用途不同。
+
+</details>
+
+## 开发与构建
+
+项目使用 Flutter / Dart，Android 配置位于 `android/`。以下命令从仓库根目录运行，需要先配置 Flutter、JDK 和 Android SDK：
+
+```sh
+git clone https://github.com/sakiko0901/NAI-WorldPainter.git
+cd NAI-WorldPainter
+flutter pub get
+flutter test --no-pub --concurrency 2 --timeout 120s
+flutter build apk --release --no-pub --split-per-abi --target-platform android-arm64
+```
+
+ARM64 输出：`build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`。GitHub Releases 中将它命名为 `app-release.apk`。首次下载依赖后保留 `pubspec.lock`；当前 Android 工程使用 SDK 36 / NDK 28.2.13676358。
+
+| 目录 | 内容 |
+| --- | --- |
+| `lib/presentation/` | 页面、界面组件、控制器与 ViewModel |
+| `lib/domain/` | 业务实体、用例与重绘等领域服务 |
+| `lib/data/` | 本地数据库、API 服务及仓库实现 |
+| `lib/core/` | 依赖注入、队列、网络与通用工具 |
+| `test/` | 业务、组件、请求协议与图像遮罩测试 |
+| `docs/` | 功能说明、开发记录与发布说明 |
+
+本次完整回归 **502 项通过、1 项跳过**；最终画笔样式调整后，14 项工作区页面测试再次通过。检查覆盖本地数据持久化、组件交互、模拟请求和遮罩像素，不代表真实付费 API 或全部 Android 设备均已验证。
+
+## 文档导航
+
+- [本次发布：笔记本与重绘工作区](docs/releases/2026-10-28-220040.md)
+- [上一轮发布：界面与 NovelAI 渠道](docs/releases/2026-10-27-1.2.4.md)
+- [V5 Medium / High 渠道说明](docs/v5_effort_channels.md)
+- [在线图库](docs/online_gallery_mobile.md)
+- [助手学习记忆](docs/mobile_assistant_memory.md)
+- [架构地图](docs/architecture_map.md)与[前端开发指南](FRONTEND_GUIDE.md)（包含历史实现记录）
+
+## 致谢
+
+绘世是独立客户端项目，与 NovelAI 官方无隶属关系。感谢以下项目与作者提供的接口方案、标签检索和图像处理能力：
+
+- [tt-P607/novelai-gateway](https://github.com/tt-P607/novelai-gateway) 与 [tt-P607/new-api](https://github.com/tt-P607/new-api)：NovelAI 兼容网关与接口方案参考。
+- [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)：Danbooru 标签搜索与共现推荐；[在线服务](https://huggingface.co/spaces/SAkizuki/DanbooruSearch)、[数据库管线](https://github.com/SuzumiyaAkizuki/danbooru-tag-pipeline)、[上游许可证](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline/blob/main/LICENSE)。
+- [SmilingWolf](https://huggingface.co/SmilingWolf)：WD-Tagger 模型。
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) 与 [RealCUGAN-NCNN](https://github.com/nihui/realcugan-ncnn-vulkan)：项目中原生超分实现所使用的相关组件。
 
 <div align="center">
 
-[![Download APK](https://img.shields.io/badge/下载-最新版_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)
-
-[所有版本与更新说明](https://github.com/sakiko0901/NAI-WorldPainter/releases)
-
-</div>
-
-1. 下载 `app-release.apk`。
-2. 在 Android 系统中允许浏览器或文件管理器“安装未知应用”。
-3. 安装并启动绘世。
-4. 打开「设置 → API 配置」，填写 NovelAI 兼容网关的 Base URL、API Key 与模型。
-
-> Android 若提示“文件可能有害”，这是侧载 APK 的通用提示。请从本仓库 Releases 下载，并核对发布者为 `sakiko0901`。
-
-## 系统要求
-
-| 项目 | 要求 |
-|---|---|
-| **系统** | Android 设备 |
-| **架构** | arm64-v8a |
-| **版本** | 1.2.4+218037（ARM64 versionCode 220037） |
-| **安装包** | 约 50 MB |
-| **网络** | 使用云端生图、LLM、打标及 Pixiv 功能时需要网络 |
-| **必要配置** | NovelAI 兼容网关 Base URL、API Key、可用模型 |
-| **可选配置** | OpenAI 兼容 LLM、Pixiv Cookie、代理等 |
-
-## 架构
-
-Clean Architecture 分层，每层职责清晰：
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  presentation/   页面 · viewmodel · widget               │
-├──────────────────────────────────────────────────────────┤
-│  domain/         实体 · 用例 · 仓库接口 · Agent 工具      │
-├──────────────────────────────────────────────────────────┤
-│  data/           数据源 · 仓库实现 · 模型                │
-├──────────────────────────────────────────────────────────┤
-│  core/           DI · 常量 · 网络 · 错误处理             │
-└──────────────────────────────────────────────────────────┘
-```
-
-**关键依赖：**
-
-| 依赖 | 用途 |
-|---|---|
-| `dio` | HTTP / API 调用 |
-| `sqflite` | 历史 / 提示词记忆 / 聊天持久化 |
-| `image_gallery_saver_plus` | 保存到相册 |
-| `flutter_foreground_task` + `wakelock_plus` | 生图时后台保活与亮屏 |
-| `image` | PNG 元数据处理 |
-| `image_picker` | 选图 |
-| `html` | DuckDuckGo Lite HTML 解析 |
-| `google_fonts` | 排版 |
-
-## 功能清单
-
-### 1. NovelAI 图像生成（核心）
-
-> 全功能生图工作台，支持权重语法、涂改重绘、批量生成与后台保活。
-
-- 正/负向提示词编辑，支持 NAI 权重语法 `{}` / `[]` / `()`
-- 本地涂改重绘（mask 画板），支持 inpaint 正/负向提示词
-- 模型选择（从配置的 NAI 兼容网关拉取可用模型列表）
-- Vibe Transfer 与独立 Precise Reference（参考类型、强度、忠实度）
-- 多角色提示词、负向提示词与坐标控制
-- 分辨率、采样器、噪声调度、CFG scale、seed 全可调
-- 单次批量 1–30 张
-- 预览、全屏查看、一键保存到相册
-- 串行生成队列 + Android 前台服务通知，避免后台被杀
-- 结果持久化到 SQLite，可在「历史」页回看
-
-### 2. LLM 提示词助手（抽屉式）
-
-> 在生成页侧滑抽屉里调出聊天界面，用大白话就能得到高质量提示词。
-
-- OpenAI 兼容接口，可接入任意 LLM Provider
-- 主模型负责 Agent 循环与最终回复，识图模型由系统在用户上传图片时自动调用
-- 聊天历史持久化到本地 SQLite
-- 联网搜索手动开关（跨会话持久化）
-- 多 Provider 管理与角色绑定（见 [§7](#7-llm-provider-多供应商管理)）
-
-### 3. Danbooru 标签智能校准
-
-> LLM 每次回复后自动对正向提示词做一次校准，让 LLM 不再胡编 tag。
-
-| 能力 | 说明 |
-|---|---|
-| **标签标准化** | 把 LLM 写的非标准词替换成 Danbooru 真实存在的标签，规避角色名/作品名幻觉 |
-| **共现补充** | 基于 NPMI 共现统计补充常一同出现的细节标签 |
-| **元数据展示** | 每个 tag 附带中文名、wiki 释义、热度，悬浮可见 |
-
-**双端点自动故障转移：** ModelScope 创空间端点（国内直连）→ HuggingFace Space 备份端点。两个端点都是公共免费服务，无需 API Key。
-
-**设置入口：** LLM 抽屉齿轮 → 「Danbooru 校准」，可启用/关闭、自定义 Base URL（可填自托管地址）。校准结果显示在 LLM 消息底部，与全局 NSFW 开关联动。
-
-### 4. Agent 工具循环
-
-> LLM 可在多步对话中串联调用以下工具，覆盖从查询到生图到上传的全链路。
-
-| 工具 | 说明 | 需确认 |
-|---|---|:---:|
-| `read_current_prompts` | 读取 4 个提示词框 + 6 个角色槽 + 涂改重绘模式 | 否 |
-| `write_prompt` | 写入提示词框（positive / negative / inpaint_positive / inpaint_negative），支持 append / replace | 否 |
-| `search_danbooru` | 直查 Danbooru 真实 tag 池，单次返回最多 30 个 | 否 |
-| `web_search` | DuckDuckGo Lite（免费、无 API Key） | 否 |
-| `generate_image` | 用当前生成页配置生图 | 是 |
-| `save_image` | 保存到相册 | 是 |
-| `upscale_image` | 调用原生超分通道（Real-ESRGAN / RealCUGAN） | 是 |
-| `upload_to_pixiv` | 上传 1–30 张到 Pixiv（需标题、tag、可选正文、R18） | 是 |
-| `save_memory` | 保存到本地记忆库（默认 `pendingLlmCandidate` 状态） | 否 |
-| `get_memories` | 模糊匹配用户文本，返回相关记忆 | 否 |
-| `remove_character` / `clear_characters` | 删除角色槽 | 否 |
-
-**记忆库分类：**
-
-| 类型 type | 取值 |
-|---|---|
-| 8 类 | `characterName` · `characterFeature` · `style` · `other` · `fact` · `preference` · `observation` · `decision` |
-| 4 来源 source | `manual` · `userInstruction` · `llmCandidate` · `pendingLlmCandidate` |
-
-### 5. Pixiv 上传队列
-
-> 全自动 Pixiv 上传流水线，从元数据剥离到标题生成到冷却风控一应俱全。
-
-**页面：**
-- `pixiv_upload_page` — 上传表单：选图、标题/正文/tag 编辑、R18 开关
-- `pixiv_queue_page` — 队列监控：暂停/继续，单任务状态 `pending` / `uploading` / `cooldown` / `completed` / `failed` / `canceled`
-- `pixiv_settings_page` — 配置页
-
-**核心实现：**
-
-| 模块 | 说明 |
-|---|---|
-| **元数据剥离** | `PixivImageCloaker` 移除 PNG tEXt/iTXt 块并用 stealth alpha LSB 重编码，大图走 Isolate 避免卡 UI |
-| **标题生成** | `PixivTitleGenerator` 用 `assets/pixiv/characters.json` 与 `surroundings.json` 匹配提示词，自动生成中文标题（如"角色名~"或"和角色名在场景涩涩~"） |
-| **Tag 建议** | 调用 Pixiv `/rpc/suggest_tags_by_image.php`（需有效 cookie） |
-| **冷却** | 基础分钟数 ±5 分钟随机抖动，避免风控 |
-| **代理** | 支持 HTTP / SOCKS 代理 |
-
-**必填项：** `Cookie` 与 `x-csrf-token`（从浏览器登录 Pixiv 后提取）。缺少任一项会以 `PixivAuthException` 失败。
-
-**配置字段：** cookie · csrfToken · 代理 · 正文前缀 · 默认 tag · R18 默认 · 允许编辑 tag · 剥离元数据 · 启用 tag 建议 · 冷却分钟数 · tag 替换百分比 · 垃圾文本填充
-
-### 6. 图片打标与元数据解析
-
-> 两种分析来源可组合使用，从图片反向提取 prompt 与 tag。
-
-**NAI 元数据解析：**
-- 读取 PNG tEXt/iTXt 块（`Title` / `Description` / `Software` / `Source` / `Comment`）
-- 支持 stealth alpha LSB 回退（magic: `stealth_pngcomp`）
-- 兼容 v3 与 v4 多角色格式（`v4_prompt.caption.char_captions`）
-- 可还原 prompt、negative prompt、seed、steps、sampler、scale、cfg_rescale、noise_schedule、宽高
-
-**原图数据编辑与清除：**
-- 工具 → 图片解析 → 选择图片后，点击「修改原图数据」或「抹去原图数据」，直接带入当前图片。
-- 编辑基础正负提示词、软件、来源及生成参数；数字字段留空可移除，角色与其他参数可展开 JSON 编辑。基础提示词会同步到 Description、Comment 和 v4 基础 caption。
-- 清除模式移除文本、EXIF 及已识别的 alpha/RGB 隐写元数据，不写入假提示词。读取兼容 tEXt、zTXt、iTXt 及 NovelAI stealth 格式；修改结果用标准 UTF-8 iTXt 保存，支持中文及小图。
-- 输出以 PNG 原字节保存到相册，不经 JPEG 转码；始终另存副本，保留源文件。数据编辑不会重新生成画面；清除已识别隐写时，仅处理承载数据的最低位。
-- 支持不超过 16 Mi 像素的静态 PNG；超限、损坏文件和 APNG 会提示错误，不输出可能残留旧数据或丢失动画的文件。带隐写数据的 16 位 PNG 暂不支持重写。
-
-格式依据：[W3C PNG 规范](https://www.w3.org/TR/png-3/)、[NovelAI 元数据格式说明](https://github.com/NovelAI/novelai-image-metadata)。
-
-**WD-Tagger：**
-
-| 项目 | 详情 |
-|---|---|
-| 模型 | HuggingFace Space 上 SmilingWolf 维护的 WD-Tagger |
-| 预置 | SwinV2 v3 · ConvNext v3 · ViT v3 · MOAT v2 · SwinV2 v2 · ConvNextV2 v2 |
-| 协议 | Gradio 6.x SSE（upload → submit → poll） |
-| 重试 | 503/502/429 冷启动自动指数退避（最多 8 次，约 4 分钟） |
-| 输出 | general / character / rating 三类 tag 与置信度，阈值可调 |
-
-选中 tag 可复制到剪贴板或一键送入生成页提示词框。
-
-### 7. LLM Provider 多供应商管理
-
-> 一套应用支持多个 LLM 服务商，主模型与识图模型可分别绑定。
-
-- 多 Provider 列表，每个 Provider 含名称、API Key、Base URL、模型列表
-- 角色绑定：主模型（chat）与识图模型（vision）各绑定到指定 Provider ID
-- 接口协议：OpenAI 兼容 chat completions，文本与多模态任务共用
-- 入口：设置 → API 配置 → LLM Tab
-
-### 8. 图片超分增强
-
-> 原生 NCNN 集成，通过 `MethodChannel` / `EventChannel` 与 Flutter 通信。
-
-| 模型 | 放大倍率 | 特点 |
-|---|:---:|---|
-| Real-ESRGAN (anime) | 4x | 动漫画风，线条锐利，强降噪 |
-| RealCUGAN | 2x | 保守，保留自然细节 |
-| RealCUGAN | 4x | 保守，4 倍放大 |
-
-**流程：** 相册选图 → 选模型与倍率 → 运行 → 拖拽对比前后 → 保存到相册
-
-**技术细节：** 模型文件位于 `filesDir/sr_models/`。ELF 改名 `.so` 放 jniLibs 以绕过 Android W^X 限制，模型走原生 assets 分发。
-
-### 9. 风格预设
-
-> 24 个预置风格，一键应用。
-
-24 个预置风格（`assets/style_presets/style_001.jpg` ~ `style_024.jpg`），元数据存于 `style_presets.json`。浏览预览图、查看与编辑 prompt 字符串、一键应用到生成页。
-
-### 10. 艺术家提示词管理
-
-> 137 个艺术家参考图，分类浏览与权重调整。
-
-137 个艺术家参考图（`assets/artist_prompts/artist_001.jpg` ~ `artist_137.jpg`），元数据存于 `artist_prompts.json`。分类浏览、调整权重、生成 NAI 艺术家风提示词串。
-
-### 11. Danbooru 标签搜索页
-
-> 直查 Danbooru tag 数据库。
-
-结果显示 tag 名、中文名、分类、热度。可单独复制。复用 §3 的 `DanbooruApiService`。
-
-### 12. 提示词记忆库
-
-> SQFLite 持久化的 trigger→content 映射，Agent 可读写。
-
-- 每条记忆含 id、trigger、content、type（8 类）、source（4 来源）、hitCount、createdAt、updatedAt
-- Agent 通过 `save_memory` / `get_memories` 工具读写
-- 独立管理页可手动 CRUD 与查看命中次数
-
-### 13. 提示词胶囊库
-
-> ~6747 条 tag 条目，分类覆盖创作全场景。
-
-~6747 条 tag 条目（`lib/core/constants/prompt_capsule_library.dart`），紧凑编码（`|` 与 `=` 分隔）。在生成页通过底部 sheet 浏览并插入 tag。
-
-**分类覆盖：**
-
-```
-人物  ·  服饰  ·  姿势动作  ·  场景  ·  画质画风  ·  光影色彩  ·  …
-```
-
-`assets/pixiv/characters.json` 与 `surroundings.json` 还兼任 Pixiv 标题生成的字典。
-
-### 14. 历史记录
-
-> 全部生成结果持久化到 SQLite，随时回看与复用。
-
-- **列表页：** 缩略图、状态、时间戳
-- **详情页：** 完整 prompt、negative prompt、参数（seed / steps / sampler / scale / cfg_rescale / noise_schedule / 宽高）、全屏图、保存/分享
-
-### 15. API 配置
-
-> 三 Tab 配置，覆盖所有外部服务。
-
-| Tab | 配置项 |
-|---|---|
-| **NovelAI** | 端点、API Key、模型选择（拉取在线模型列表） |
-| **LLM** | 端点、API Key、模型（与 §7 的 Provider 管理互补） |
-| **Nano Banana** | 独立的 Nano Banana 网关端点与 API Key |
-
-### 16. Director Tools
-
-> 直接在应用内完成 NovelAI Director 图像处理。
-
-- 去杂物、背景移除、线稿化与草图化
-- 智能上色与表情调整
-- 支持源图预览、参数编辑、处理结果查看与保存
-
-### 17. 主题与全局 UI
-
-- 浅/深色主题切换（生成页左上角动画切换按钮，sun ↔ moon）
-- 持久化到 SharedPreferences
-- 全局 UI 反馈走悬浮窗，浅/深色与选中态全局一致
-
-## 资源目录
-
-| 路径 | 内容 |
-|---|---|
-| `assets/style_presets/` | 24 张风格预览 JPG + `style_presets.json` |
-| `assets/artist_prompts/` | 137 张艺术家参考 JPG + `artist_prompts.json` |
-| `assets/pixiv/` | `characters.json`、`surroundings.json`（标题生成字典） |
-| `assets/icons/` | `app_icon.png` 启动图标 |
-| `lib/assets/` | `nsfw_knowledge.json`（NSFW 参考数据，编译期打包） |
-
-## 致谢 / Credits
-
-本项目的 NovelAI 绘图接口适配基于/参考了 [tt-P607](https://github.com/tt-P607) 的相关项目：
-
-- [novelai-gateway](https://github.com/tt-P607/novelai-gateway)
-- [new-api](https://github.com/tt-P607/new-api)
-
-感谢原作者提供 NovelAI 绘图转 New API 相关接口方案。本项目主要提供 Android APK 客户端封装与界面实现，接口相关能力与原始方案归原作者所有。
-
-提示词辅助写手的 Danbooru 校准与标签检索能力接入了 **SuzumiyaAkizuki** 开源的 [DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 项目。感谢作者提供基于语义匹配的 Danbooru 标签搜索、共现关联推荐及公开 API 服务。
-
-- **项目主页：** [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)
-- **在线服务：** [DanbooruSearch](https://huggingface.co/spaces/SAkizuki/DanbooruSearch)
-- **数据库管线：** [danbooru-tag-pipeline](https://github.com/SuzumiyaAkizuki/danbooru-tag-pipeline)
-- **上游许可证：** [GNU GPLv3](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline/blob/main/LICENSE)
-
-图片打标功能基于 [SmilingWolf](https://huggingface.co/SmilingWolf) 的 WD-Tagger 模型（HuggingFace Space 托管）。
-
-图片超分功能基于 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) 与 [RealCUGAN-NCNN](https://github.com/nihui/realcugan-ncnn-vulkan) 的 NCNN 推理实现。
-
----
-
-<div align="center">
-
-**[↑ 返回顶部](#nai-worldpainter)**
+[下载最新 APK](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) · [报告问题](https://github.com/sakiko0901/NAI-WorldPainter/issues) · [查看源码](https://github.com/sakiko0901/NAI-WorldPainter/tree/master/lib)
 
 </div>
