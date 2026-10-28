@@ -13,7 +13,7 @@ import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
 class InpaintMaskController extends ChangeNotifier {
   static const int _pictureGroupSize = 32;
   static const int _maxCachedGeometries = 128;
-  static const double _outlineRadius = 1;
+  static const double _outlineRadius = 2;
 
   static const Color _maskColor = Color(0x802196F3);
   static const Color _outlineColor = Color(0xFF80D8FF);
@@ -144,24 +144,18 @@ class InpaintMaskController extends ChangeNotifier {
     );
     canvas.restore();
 
-    // Dilate the already-composited mask, then remove the original mask from
-    // the isolated result. This exposes only the union boundary, including
-    // eraser-created holes, without drawing every stroke's internal edge.
+    // Highlight the inside of the union boundary, including eraser holes.
+    // Keeping the contour inside avoids visually enlarging a round selection.
     canvas.saveLayer(bounds, ui.Paint());
+    _drawMaskGeometry(canvas, transform);
     canvas.saveLayer(
       bounds,
       ui.Paint()
-        ..imageFilter = ui.ImageFilter.dilate(
+        ..blendMode = ui.BlendMode.dstOut
+        ..imageFilter = ui.ImageFilter.erode(
           radiusX: _outlineRadius,
           radiusY: _outlineRadius,
         ),
-    );
-    _drawMaskGeometry(canvas, transform);
-    canvas.restore();
-
-    canvas.saveLayer(
-      bounds,
-      ui.Paint()..blendMode = ui.BlendMode.dstOut,
     );
     _drawMaskGeometry(canvas, transform);
     canvas.restore();

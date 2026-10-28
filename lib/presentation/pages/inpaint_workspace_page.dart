@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:nai_huishi/presentation/widgets/inpaint_brush_sheet.dart';
+import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -88,7 +90,9 @@ class _RasterizeResult {
   final Uint8List basePng;
   final Uint8List maskPng;
   final Uint8List comparisonBasePng;
-  const _RasterizeResult(this.basePng, this.maskPng, this.comparisonBasePng);
+  final Uint8List requestMaskPng;
+  const _RasterizeResult(
+      this.basePng, this.maskPng, this.comparisonBasePng, this.requestMaskPng);
 }
 
 _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
@@ -107,6 +111,7 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
     outputHeight: input.outputHeight,
     strokes: input.strokes,
     expandPixels: input.expandPixels,
+    preserveRoundBrush: true,
   );
   final comparisonBase = img.Image.from(result.image);
   for (final entry in input.comparisonLayers) {
@@ -124,8 +129,9 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
   }
   return _RasterizeResult(
     Uint8List.fromList(img.encodePng(result.image)),
-    rasterizer.encodeMask(result.mask),
+    rasterizer.encodeMask(result.mask, alignToLatentGrid: false),
     Uint8List.fromList(img.encodePng(comparisonBase)),
+    rasterizer.encodeMask(result.mask),
   );
 }
 
@@ -173,6 +179,7 @@ _CandidateImages _maskLayerIsolate(_MaskLayerInput input) {
     mask: mask,
     outwardFeatherPixels: input.featherPixels,
     base: base,
+    clipToMask: true,
   );
   img.compositeImage(base, layer);
   return _CandidateImages(
@@ -213,26 +220,7 @@ Uint8List _composeWorkspaceIsolate(_CompositeWorkspaceInput input) {
   return Uint8List.fromList(img.encodePng(composite));
 }
 
-/// 等比例放大图片分辨率。
-class _ResizeImageInput {
-  final Uint8List sourcePng;
-  final int scale;
-  const _ResizeImageInput(this.sourcePng, this.scale);
-}
-
-Uint8List _resizeImageIsolate(_ResizeImageInput input) {
-  final source = img.decodePng(input.sourcePng);
-  if (source == null) throw const FormatException('无法读取图片');
-  final resized = img.copyResize(
-    source,
-    width: source.width * input.scale,
-    height: source.height * input.scale,
-    interpolation: img.Interpolation.cubic,
-  );
-  return Uint8List.fromList(img.encodePng(resized));
-}
-
-/// 遮罩预览：透明度采样 → latent 对齐 → 着色 PNG，后台单任务执行。
+/// 遮罩预览与提交共用精确轮廓，后台完成采样与蓝色边缘着色。
 class _MaskPreviewInput {
   final Uint8List? sourcePng;
   final InpaintSourceTransparency transparency;
@@ -265,6 +253,7 @@ Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
       outputHeight: input.outputHeight,
       strokes: input.strokes,
       expandPixels: input.expandPixels,
+      preserveRoundBrush: true,
     );
   } else {
     final source = img.decodePng(input.sourcePng!);
@@ -279,10 +268,11 @@ Uint8List _maskPreviewIsolate(_MaskPreviewInput input) {
           outputHeight: input.outputHeight,
           strokes: input.strokes,
           expandPixels: input.expandPixels,
+          preserveRoundBrush: true,
         )
         .mask;
   }
-  final aligned = ImageUtils.alignNovelAiMask(mask);
+  final aligned = mask;
   final preview = img.Image(
     width: aligned.width,
     height: aligned.height,
@@ -332,7 +322,9 @@ class InpaintWorkspaceCard extends StatefulWidget {
 }
 
 class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
-    with AutomaticKeepAliveClientMixin<InpaintWorkspaceCard> {
+    with
+        AutomaticKeepAliveClientMixin<InpaintWorkspaceCard>,
+        SingleTickerProviderStateMixin {
   static const double _boxMinSize = 48;
   static const double _snapTolerancePx = 8;
 
@@ -360,24 +352,24 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   final List<InpaintStroke> _strokes = [];
   final List<List<InpaintStroke>> _undo = [];
   final List<List<InpaintStroke>> _redo = [];
-  final List<List<InpaintStroke>> _maskUndo = [];
-  final List<List<InpaintStroke>> _maskRedo = [];
   final List<InpaintResultLayer> _resultLayers = [];
   final List<_ReviewCandidate> _candidates = [];
   String? _selectedCandidateId;
   bool _reviewOpen = false;
-  InpaintPaintTarget _target = InpaintPaintTarget.mask;
-  double _brushSize = 48;
+  int _brushSizeLevel = 3;
+  double get _brushSize => _brushSizeLevel * 16.0;
+  bool _brushSheetOpen = false;
   int _expandPixels = 8;
   int _featherPixels = 8;
   double _inpaintStrength = 0.96;
   bool _showMask = true;
   bool _disabledOriginalImage = false;
   bool _colorCorrect = true;
-  bool _promptExpanded = true;
   bool _charactersExpanded = false;
   final Set<int> _expandedInpaintCharacters = {};
-  bool _paramsExpanded = false;
+  bool _workspaceMenuExpanded = false;
+  late final AnimationController _menuController;
+  late final CurvedAnimation _menuAnimation;
   bool _busy = false;
   InpaintStroke? _draft;
   final List<InpaintPoint> _draftPoints = [];
@@ -417,6 +409,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   @override
   void initState() {
     super.initState();
+    _menuController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _menuAnimation = CurvedAnimation(
+      parent: _menuController,
+      curve: Curves.easeInOutCubic,
+    );
     _generation = sl<GenerationViewModel>();
     _queue = sl<GenerationQueue>();
     _saveImage = sl<SaveImageUseCase>();
@@ -488,6 +488,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_generation.inpaintWorkspaceHandler == _prepareGeneration) {
       _generation.inpaintWorkspaceHandler = null;
     }
+    _menuAnimation.dispose();
+    _menuController.dispose();
     _maskPreviewScheduler.dispose();
     _promptController.dispose();
     _negativeController.dispose();
@@ -534,8 +536,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _strokesRevision++;
         _undo.clear();
         _redo.clear();
-        _maskUndo.clear();
-        _maskRedo.clear();
         _maskPreviewScheduler.invalidate();
         _maskPreviewSignature = null;
         _maskPreviewBytes = null;
@@ -580,16 +580,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _redo.clear();
   }
 
-  List<InpaintStroke> get _maskStrokes => _strokes
-      .where((stroke) => stroke.target == InpaintPaintTarget.mask)
-      .toList(growable: false);
-
-  void _saveMaskHistory() {
-    _maskUndo.add(_maskStrokes);
-    if (_maskUndo.length > 80) _maskUndo.removeAt(0);
-    _maskRedo.clear();
-  }
-
   List<InpaintStroke> get _allStrokes {
     final draft = _draft;
     if (draft == null) return List.of(_strokes);
@@ -628,21 +618,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_busy) return;
     if (_strokes.isEmpty) return;
     _saveHistory();
-    if (_maskStrokes.isNotEmpty) _saveMaskHistory();
     setState(() {
       _strokes.clear();
       _clearActiveStrokePreview();
-      _rebuildMaskPath();
-    });
-  }
-
-  void _clearCurrentLayer() {
-    if (_busy || !_strokes.any((stroke) => stroke.target == _target)) return;
-    _saveHistory();
-    if (_target == InpaintPaintTarget.mask) _saveMaskHistory();
-    setState(() {
-      _clearActiveStrokePreview();
-      _strokes.removeWhere((stroke) => stroke.target == _target);
       _rebuildMaskPath();
     });
   }
@@ -651,7 +629,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (_undo.isEmpty || _busy) return;
     _redo.add(List.of(_strokes));
     final previous = _undo.removeLast();
-    final currentMasks = _maskStrokes;
     setState(() {
       _strokes
         ..clear()
@@ -659,59 +636,16 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       _clearActiveStrokePreview();
       _rebuildMaskPath();
     });
-    _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: true);
   }
 
   void _redoStroke() {
     if (_redo.isEmpty || _busy) return;
     _undo.add(List.of(_strokes));
     final next = _redo.removeLast();
-    final currentMasks = _maskStrokes;
     setState(() {
       _strokes
         ..clear()
         ..addAll(next);
-      _clearActiveStrokePreview();
-      _rebuildMaskPath();
-    });
-    _recordGlobalMaskChange(currentMasks, _maskStrokes, undo: false);
-  }
-
-  void _recordGlobalMaskChange(
-    List<InpaintStroke> before,
-    List<InpaintStroke> after, {
-    required bool undo,
-  }) {
-    if (listEquals(before, after)) return;
-    final from = undo ? _maskRedo : _maskUndo;
-    final to = undo ? _maskUndo : _maskRedo;
-    from.add(before);
-    if (from.length > 80) from.removeAt(0);
-    to.add(after);
-    if (to.length > 80) to.removeAt(0);
-  }
-
-  void _undoMask() => _applyMaskHistory(_maskUndo, _maskRedo);
-
-  void _redoMask() => _applyMaskHistory(_maskRedo, _maskUndo);
-
-  void _applyMaskHistory(
-    List<List<InpaintStroke>> from,
-    List<List<InpaintStroke>> to,
-  ) {
-    if (_busy || from.isEmpty) return;
-    final current = _maskStrokes;
-    var target = from.removeLast();
-    while (from.isNotEmpty && listEquals(current, target)) {
-      target = from.removeLast();
-    }
-    if (listEquals(current, target)) return;
-    to.add(current);
-    if (to.length > 80) to.removeAt(0);
-    setState(() {
-      _strokes
-        ..removeWhere((stroke) => stroke.target == InpaintPaintTarget.mask)
-        ..addAll(target);
       _clearActiveStrokePreview();
       _rebuildMaskPath();
     });
@@ -949,7 +883,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final world = _screenToWorld(point);
     final firstPoint = InpaintPoint(world.dx, world.dy);
     final draft = InpaintStroke(
-      target: _target,
+      target: InpaintPaintTarget.mask,
       mode: _uiMode == InpaintUiMode.erase
           ? InpaintStrokeMode.erase
           : InpaintStrokeMode.paint,
@@ -981,9 +915,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     if (draft.type == InpaintStrokeType.path && _draftPoints.isEmpty) return;
     final completed = _strokeWithPoints(draft, _draftPoints);
     _saveHistory();
-    if (draft.target == InpaintPaintTarget.mask) {
-      _saveMaskHistory();
-    }
     _strokeCache.finishStroke(completed);
     setState(() {
       _strokes.add(completed);
@@ -1211,7 +1142,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       final beforePath = '${dir.path}${Platform.pathSeparator}'
           'inpaint_${timestamp}_${revision}_before.png';
       await File(basePath).writeAsBytes(raster.basePng, flush: true);
-      await File(maskPath).writeAsBytes(raster.maskPng, flush: true);
+      await File(maskPath).writeAsBytes(raster.requestMaskPng, flush: true);
       await File(beforePath)
           .writeAsBytes(raster.comparisonBasePng, flush: true);
       _sessionSourcePath = basePath;
@@ -1452,162 +1383,84 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final colors = Theme.of(context).colorScheme;
     // 遮罩预览开启时调度后台生成（签名防抖）。
     if (_showMask) _scheduleMaskPreview();
-    return FrostedSurface(
-      radius: 18,
-      child: Column(children: [
-        _buildHeader(colors),
-        _buildStage(),
-        if (_candidates.isNotEmpty) _buildCandidatePanel(colors),
-        _buildToolbar(colors),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FrostedSurface(
+          radius: 18,
+          child: Column(children: [
+            _buildHeader(colors),
+            _buildStage(),
+            if (_candidates.isNotEmpty) _buildCandidatePanel(colors),
+            _buildToolbar(colors),
+          ]),
+        ),
+        const SizedBox(height: 12),
         _buildPromptPanel(colors),
-      ]),
+        const SizedBox(height: 12),
+        _buildCharacterPrompts(colors),
+      ],
     );
   }
 
-  /// 画布上方只保留紧凑的图片状态、换图和输出分辨率入口。
+  /// Resolution and source replacement stay together at the top left.
   Widget _buildHeader(ColorScheme colors) {
     return Padding(
       key: const ValueKey('inpaint-workspace-header'),
       padding: const EdgeInsets.fromLTRB(10, 2, 8, 4),
       child: Row(
         children: [
-          const Icon(CupertinoIcons.photo, size: 15),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              _sourcePath == null
-                  ? '选择原图'
-                  : '${_sourceWidth} × ${_sourceHeight} px',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
-            ),
-          ),
+          Flexible(child: _resolutionButton(colors)),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: '更换图片',
-            visualDensity: VisualDensity.compact,
             onPressed: _busy ? null : _pickSource,
-            icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 18),
+            icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 19),
           ),
-          _resolutionButton(colors),
         ],
       ),
     );
   }
 
-  /// 正负提示词并列提供独立编辑区；参数仍由同一面板展开。
   Widget _buildPromptPanel(ColorScheme colors) {
-    return Column(
+    Widget editor({required bool negative}) => Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(negative ? '负向提示词' : '正向提示词',
+                  style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 12),
+              PromptEditorField(
+                fieldKey: ValueKey(negative
+                    ? 'inpaint-negative-prompt'
+                    : 'inpaint-positive-prompt'),
+                controller: negative ? _negativeController : _promptController,
+                enabled: !_busy,
+                hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',
+                onChanged: negative
+                    ? _generation.updateInpaintNegativePrompt
+                    : _generation.updateInpaintPrompt,
+                textColor: colors.onSurface,
+                editorTitle: negative ? '负向提示词' : '正向提示词',
+                onExpandedSubmit: negative
+                    ? _generation.updateInpaintNegativePrompt
+                    : _generation.updateInpaintPrompt,
+              ),
+            ],
+          ),
+        );
+    return FrostedSurface(
       key: const ValueKey('inpaint-prompt-panel'),
-      children: [
-        Material(
-          color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
-          child: InkWell(
-            onTap: () => setState(() => _promptExpanded = !_promptExpanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(children: [
-                Icon(CupertinoIcons.textformat_abc,
-                    size: 15, color: colors.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(
-                  '重绘提示词',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const Spacer(),
-                Icon(
-                  _promptExpanded
-                      ? CupertinoIcons.chevron_up
-                      : CupertinoIcons.chevron_down,
-                  size: 14,
-                  color: colors.onSurfaceVariant,
-                ),
-              ]),
-            ),
-          ),
-        ),
-        AnimatedCrossFade(
-          duration: const Duration(milliseconds: 180),
-          crossFadeState: _promptExpanded
-              ? CrossFadeState.showSecond
-              : CrossFadeState.showFirst,
-          firstChild: const SizedBox(width: double.infinity),
-          secondChild: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-            child: Column(children: [
-              _buildPromptField(
-                key: const ValueKey('inpaint-positive-prompt'),
-                controller: _promptController,
-                label: '正向提示词',
-                hint: '描述希望在框选区域生成的内容',
-                onChanged: (value) => _generation.updateInpaintPrompt(value),
-              ),
-              const SizedBox(height: 8),
-              _buildPromptField(
-                key: const ValueKey('inpaint-negative-prompt'),
-                controller: _negativeController,
-                label: '负向提示词',
-                hint: '描述希望排除的内容',
-                onChanged: (value) =>
-                    _generation.updateInpaintNegativePrompt(value),
-              ),
-              const SizedBox(height: 10),
-              _buildCharacterPrompts(colors),
-              if (_paramsExpanded) ...[
-                const SizedBox(height: 6),
-                _buildParams(),
-              ],
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () =>
-                      setState(() => _paramsExpanded = !_paramsExpanded),
-                  icon: Icon(
-                    _paramsExpanded
-                        ? CupertinoIcons.chevron_up
-                        : CupertinoIcons.slider_horizontal_3,
-                    size: 14,
-                  ),
-                  label: Text(
-                    _paramsExpanded ? '收起生成参数' : '生成参数',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPromptField({
-    Key? key,
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required ValueChanged<String> onChanged,
-  }) {
-    return TextField(
-      key: key,
-      controller: controller,
-      enabled: !_busy,
-      minLines: 3,
-      maxLines: 6,
-      textInputAction: TextInputAction.newline,
-      style: const TextStyle(fontSize: 13),
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: label,
-        hintText: hint,
-        alignLabelWithHint: true,
-        border: const OutlineInputBorder(),
+      radius: 18,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          editor(negative: false),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          editor(negative: true),
+        ],
       ),
-      onChanged: onChanged,
     );
   }
 
@@ -1793,17 +1646,19 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   }
 
   Widget _resolutionButton(ColorScheme colors) {
-    return OutlinedButton.icon(
-      style: OutlinedButton.styleFrom(
+    return TextButton.icon(
+      key: const ValueKey('inpaint-resolution'),
+      style: TextButton.styleFrom(
         visualDensity: VisualDensity.compact,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        side: BorderSide(color: colors.primary.withValues(alpha: 0.45)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
       onPressed: _busy ? null : _chooseResolution,
       icon: Icon(CupertinoIcons.crop, size: 14, color: colors.primary),
       label: Text(
         _generation.selectedResolution,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
@@ -2117,8 +1972,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
               child: _buildResultLayers(colors),
             );
     }
-    final isDrawing =
-        _uiMode == InpaintUiMode.brush || _uiMode == InpaintUiMode.erase;
     return Padding(
       key: const ValueKey('inpaint-workspace-toolbar'),
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
@@ -2127,11 +1980,13 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         children: [
           _buildToolstrip(colors),
           _buildToolContext(colors),
-          if (isDrawing) _buildBrushControls(colors),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
                   tooltip: '撤销笔迹',
                   visualDensity: VisualDensity.compact,
@@ -2144,50 +1999,18 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                   onPressed: _redo.isEmpty || _busy ? null : _redoStroke,
                   icon: const Icon(CupertinoIcons.arrow_uturn_right, size: 18),
                 ),
-                IconButton(
-                  tooltip: '撤销蒙版',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _maskUndo.isEmpty || _busy ? null : _undoMask,
-                  icon: const Icon(Icons.undo, size: 19),
-                ),
-                IconButton(
-                  tooltip: '重做蒙版',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _maskRedo.isEmpty || _busy ? null : _redoMask,
-                  icon: const Icon(Icons.redo, size: 19),
-                ),
-                IconButton(
-                  tooltip: _showMask ? '隐藏蒙版' : '显示蒙版',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() => _showMask = !_showMask),
-                  icon: Icon(
-                    _showMask ? CupertinoIcons.eye_fill : CupertinoIcons.eye,
-                    size: 18,
-                  ),
-                ),
-                IconButton(
-                  tooltip:
-                      _target == InpaintPaintTarget.mask ? '清空蒙版' : '清空图像笔迹',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _busy ? null : _clearCurrentLayer,
-                  icon: const Icon(CupertinoIcons.trash, size: 18),
-                ),
-                _cornerMenuButton(colors),
-                const SizedBox(width: 4),
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                  ),
-                  onPressed: _sourcePath == null || _busy || _addingLayer
-                      ? null
-                      : _saveCompositeToGallery,
-                  icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 15),
-                  label: const Text('保存合成', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
+              ]),
+              _cornerMenuButton(colors),
+              TextButton.icon(
+                onPressed: _sourcePath == null || _busy || _addingLayer
+                    ? null
+                    : _saveCompositeToGallery,
+                icon: const Icon(CupertinoIcons.photo_on_rectangle, size: 16),
+                label: const Text('保存合成', style: TextStyle(fontSize: 12)),
+              ),
+            ],
           ),
+          _buildWorkspaceMenu(colors),
           if (_resultLayers.isNotEmpty) _buildResultLayers(colors),
         ],
       ),
@@ -2235,13 +2058,6 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           TextButton(
             onPressed: _busy ? null : _resetFrame,
             child: const Text('重置框', style: TextStyle(fontSize: 10)),
-          )
-        else
-          IconButton(
-            tooltip: '适应窗口',
-            visualDensity: VisualDensity.compact,
-            onPressed: _sourcePath == null || _busy ? null : _fitStageToContent,
-            icon: const Icon(Icons.fit_screen, size: 17),
           ),
       ],
     );
@@ -2270,13 +2086,19 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                 borderRadius: BorderRadius.circular(9),
                 onTap: _busy
                     ? null
-                    : () => setState(() {
+                    : () {
+                        setState(() {
                           _uiMode = mode.$1;
                           if (mode.$1 == InpaintUiMode.brush ||
                               mode.$1 == InpaintUiMode.erase) {
                             _showMask = true;
                           }
-                        }),
+                        });
+                        if (mode.$1 == InpaintUiMode.brush ||
+                            mode.$1 == InpaintUiMode.erase) {
+                          _showBrushSettings();
+                        }
+                      },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   padding:
@@ -2441,94 +2263,43 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     );
   }
 
-  Widget _buildBrushControls(ColorScheme colors) {
-    final isErase = _uiMode == InpaintUiMode.erase;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 4,
-            runSpacing: 4,
-            children: [
-              Text(
-                '绘制',
-                style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+  Future<void> _showBrushSettings() async {
+    if (_busy || _brushSheetOpen) return;
+    _brushSheetOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        showDragHandle: true,
+        constraints: const BoxConstraints(maxWidth: 560),
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : const AnimationStyle(
+                duration: Duration(milliseconds: 280),
+                reverseDuration: Duration(milliseconds: 220),
               ),
-              const SizedBox(width: 6),
-              ChoiceChip(
-                label: const Text('蒙版'),
-                selected: _target == InpaintPaintTarget.mask,
-                visualDensity: VisualDensity.compact,
-                onSelected: _busy
-                    ? null
-                    : (_) => setState(() => _target = InpaintPaintTarget.mask),
-              ),
-              const SizedBox(width: 4),
-              ChoiceChip(
-                label: const Text('图像'),
-                selected: _target == InpaintPaintTarget.image,
-                visualDensity: VisualDensity.compact,
-                onSelected: _busy
-                    ? null
-                    : (_) => setState(() => _target = InpaintPaintTarget.image),
-              ),
-              ChoiceChip(
-                avatar: const Icon(Icons.circle, size: 13),
-                label: const Text('圆形'),
-                selected: !_squareBrush,
-                visualDensity: VisualDensity.compact,
-                onSelected:
-                    _busy ? null : (_) => setState(() => _squareBrush = false),
-              ),
-              const SizedBox(width: 4),
-              ChoiceChip(
-                avatar: const Icon(Icons.grid_4x4, size: 13),
-                label: const Text('方格'),
-                selected: _squareBrush,
-                visualDensity: VisualDensity.compact,
-                onSelected:
-                    _busy ? null : (_) => setState(() => _squareBrush = true),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              Text(
-                isErase ? '橡皮' : '笔刷',
-                style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
-              ),
-              Expanded(
-                child: Slider(
-                  value: _brushSize.clamp(8.0, 160.0),
-                  min: 8,
-                  max: 160,
-                  divisions: 38,
-                  label: _brushSize.round().toString(),
-                  onChanged: _busy
-                      ? null
-                      : (value) => setState(() => _brushSize = value),
-                ),
-              ),
-              SizedBox(
-                width: 44,
-                child: Text(
-                  _brushSize.round().toString() + ' px',
-                  textAlign: TextAlign.end,
-                  style: const TextStyle(fontSize: 11),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+        builder: (context) => InpaintBrushSheet(
+          square: _squareBrush,
+          sizeLevel: _brushSizeLevel,
+          erase: _uiMode == InpaintUiMode.erase,
+          onChanged: (square, sizeLevel) {
+            if (!mounted || _busy) return;
+            setState(() {
+              _squareBrush = square;
+              _brushSizeLevel = sizeLevel;
+            });
+          },
+        ),
+      );
+    } finally {
+      _brushSheetOpen = false;
+    }
   }
 
   Widget _buildResultLayers(ColorScheme colors) {
@@ -2613,118 +2384,115 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     );
   }
 
+  Duration get _menuDuration => MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 280);
+
   Widget _cornerMenuButton(ColorScheme colors) {
-    return PopupMenuButton<String>(
-      tooltip: '工作区菜单',
-      padding: EdgeInsets.zero,
-      icon: const Icon(CupertinoIcons.ellipsis_circle, size: 20),
-      onSelected: _busy
-          ? null
-          : (value) {
-              switch (value) {
-                case 'fit':
-                  _fitStageToContent();
-                case 'clear_mask':
-                  _clearAllStrokes();
-                case 'pick':
-                  _pickSource();
-                case 'upscale_px':
-                  _upscalePixels();
-              }
-            },
-      itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: 'fit',
-          child: Row(children: [
-            Icon(CupertinoIcons.fullscreen, size: 18),
-            SizedBox(width: 8),
-            Text('重置视图', style: TextStyle(fontSize: 13)),
-          ]),
+    return Semantics(
+      expanded: _workspaceMenuExpanded,
+      child: TextButton.icon(
+        key: const ValueKey('inpaint-workspace-menu-toggle'),
+        onPressed: () => setState(() {
+          _workspaceMenuExpanded = !_workspaceMenuExpanded;
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _menuController.value = _workspaceMenuExpanded ? 1 : 0;
+          } else if (_workspaceMenuExpanded) {
+            _menuController.forward();
+          } else {
+            _menuController.reverse();
+          }
+        }),
+        icon: AnimatedRotation(
+          turns: _workspaceMenuExpanded ? 0.5 : 0,
+          duration: _menuDuration,
+          curve: Curves.easeInOutCubic,
+          child: const Icon(CupertinoIcons.chevron_down, size: 14),
         ),
-        PopupMenuItem(
-          value: 'clear_mask',
-          enabled: _strokes.isNotEmpty && !_busy,
-          child: Row(children: [
-            Icon(CupertinoIcons.trash, size: 18, color: colors.error),
-            const SizedBox(width: 8),
-            Text('清空全部遮罩',
-                style: TextStyle(
-                    fontSize: 13,
-                    color: _strokes.isNotEmpty ? colors.error : null)),
-          ]),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'pick',
-          enabled: !_busy,
-          child: Row(children: [
-            Icon(CupertinoIcons.photo, size: 18),
-            SizedBox(width: 8),
-            Text('导入图片', style: TextStyle(fontSize: 13)),
-          ]),
-        ),
-        PopupMenuItem(
-          value: 'upscale_px',
-          enabled: _sourcePath != null && !_busy,
-          child: Row(children: [
-            const Icon(CupertinoIcons.arrow_up_right_square, size: 18),
-            const SizedBox(width: 8),
-            Text('放大图片分辨率', style: TextStyle(fontSize: 13)),
-          ]),
-        ),
-      ],
+        label: const Text('工作区', style: TextStyle(fontSize: 12)),
+      ),
     );
   }
 
-  Future<void> _upscalePixels() async {
-    final path = _sourcePath;
-    if (path == null || _busy) return;
-    final scale = await showModalBottomSheet<int>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(
-            leading: const Icon(CupertinoIcons.arrow_up_right_square),
-            title: const Text('等比例放大 2x'),
-            onTap: () => Navigator.pop(context, 2),
+  Widget _buildWorkspaceMenu(ColorScheme colors) {
+    return AnimatedBuilder(
+      animation: _menuAnimation,
+      builder: (context, child) => Offstage(
+        offstage: _menuController.isDismissed,
+        child: SizeTransition(
+          key: const ValueKey('inpaint-workspace-menu-animation'),
+          sizeFactor: _menuAnimation,
+          axisAlignment: -1,
+          child: FadeTransition(
+            opacity: _menuAnimation,
+            child: IgnorePointer(
+              ignoring: !_workspaceMenuExpanded,
+              child: ExcludeFocus(
+                excluding: !_workspaceMenuExpanded,
+                child: child!,
+              ),
+            ),
           ),
-          ListTile(
-            leading: const Icon(CupertinoIcons.arrow_up_right_square),
-            title: const Text('等比例放大 3x'),
-            onTap: () => Navigator.pop(context, 3),
-          ),
-        ]),
+        ),
+      ),
+      child: Container(
+        key: const ValueKey('inpaint-workspace-menu'),
+        margin: const EdgeInsets.only(top: 8, bottom: 4),
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 12,
+              children: [
+                TextButton.icon(
+                  onPressed:
+                      _sourcePath == null || _busy ? null : _fitStageToContent,
+                  icon: const Icon(CupertinoIcons.fullscreen, size: 17),
+                  label: const Text('重置视图'),
+                ),
+                TextButton.icon(
+                  onPressed: _busy ? null : _pickSource,
+                  icon: const Icon(CupertinoIcons.photo, size: 17),
+                  label: const Text('导入图片'),
+                ),
+              ],
+            ),
+            ListTile(
+              key: const ValueKey('inpaint-clear-strokes'),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              minLeadingWidth: 20,
+              enabled: _strokes.isNotEmpty && !_busy,
+              onTap: _strokes.isNotEmpty && !_busy ? _clearAllStrokes : null,
+              leading: Icon(CupertinoIcons.trash,
+                  size: 18,
+                  color: _strokes.isNotEmpty && !_busy
+                      ? colors.error
+                      : colors.onSurface.withValues(alpha: 0.38)),
+              title: const Text('清空笔迹与遮罩', style: TextStyle(fontSize: 13)),
+            ),
+            const Divider(height: 20),
+            _buildParams(),
+          ],
+        ),
       ),
     );
-    if (scale == null || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      // 后台 isolate 放大，避免大图阻塞主线程。
-      final resizedPng = await compute<_ResizeImageInput, Uint8List>(
-        _resizeImageIsolate,
-        _ResizeImageInput(await File(path).readAsBytes(), scale),
-      );
-      final dir = await ImageUtils.getImageDirectory();
-      final output = File(
-          '${dir.path}${Platform.pathSeparator}inpaint_${DateTime.now().millisecondsSinceEpoch}_${scale}x.png');
-      await output.writeAsBytes(resizedPng, flush: true);
-      await _loadImage(output.path);
-      if (mounted) showFloatingToast(context, '图片已等比例放大 ${scale}x');
-    } catch (error) {
-      if (mounted) showFloatingToast(context, '图片放大失败：$error');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Widget _buildParams() {
     return Column(children: [
-      _paramSlider('扩展', _expandPixels.toDouble(), 0, 32,
-          (v) => _expandPixels = v.round()),
+      _paramSlider('方形遮罩扩展', _expandPixels.toDouble(), 0, 32,
+          (v) => _expandPixels = v.round(),
+          divisions: 32, unit: 'px'),
       _paramSlider('羽化', _featherPixels.toDouble(), 0, 32,
-          (v) => _featherPixels = v.round()),
+          (v) => _featherPixels = v.round(),
+          divisions: 32, unit: 'px'),
       _paramSlider(
-        '强度',
+        '重绘强度',
         _inpaintStrength,
         0.01,
         1,
@@ -2733,34 +2501,33 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           _generation.updateInpaintStrength(v);
         },
         divisions: 99,
+        fractional: true,
       ),
-      Row(children: [
-        Checkbox(
-          visualDensity: VisualDensity.compact,
-          value: _disabledOriginalImage,
-          onChanged: _busy
-              ? null
-              : (value) => setState(() {
-                    _disabledOriginalImage = value ?? false;
-                    _generation.updateInpaintOptions(
-                        disabledOriginalImage: _disabledOriginalImage);
-                  }),
-        ),
-        const Text('忽略原图', style: TextStyle(fontSize: 12)),
-        const SizedBox(width: 12),
-        Checkbox(
-          visualDensity: VisualDensity.compact,
-          value: _colorCorrect,
-          onChanged: _busy
-              ? null
-              : (value) => setState(() {
-                    _colorCorrect = value ?? true;
-                    _generation.updateInpaintOptions(
-                        colorCorrect: _colorCorrect);
-                  }),
-        ),
-        const Text('色彩校正', style: TextStyle(fontSize: 12)),
-      ]),
+      SwitchListTile.adaptive(
+        key: const ValueKey('inpaint-color-correct'),
+        contentPadding: EdgeInsets.zero,
+        title: const Text('色彩校正', style: TextStyle(fontSize: 13)),
+        value: _colorCorrect,
+        onChanged: _busy
+            ? null
+            : (value) => setState(() {
+                  _colorCorrect = value;
+                  _generation.updateInpaintOptions(colorCorrect: value);
+                }),
+      ),
+      SwitchListTile.adaptive(
+        key: const ValueKey('inpaint-ignore-original'),
+        contentPadding: EdgeInsets.zero,
+        title: const Text('忽略原图', style: TextStyle(fontSize: 13)),
+        value: _disabledOriginalImage,
+        onChanged: _busy
+            ? null
+            : (value) => setState(() {
+                  _disabledOriginalImage = value;
+                  _generation.updateInpaintOptions(
+                      disabledOriginalImage: value);
+                }),
+      ),
     ]);
   }
 
@@ -2771,25 +2538,32 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     double max,
     ValueChanged<double> onChanged, {
     int? divisions,
+    String unit = '',
+    bool fractional = false,
   }) {
-    return Row(children: [
-      SizedBox(
-          width: 36,
-          child: Text(label,
-              style: const TextStyle(fontSize: 12, color: Colors.grey))),
-      Expanded(
-        child: Slider(
+    final display =
+        fractional ? value.toStringAsFixed(2) : '${value.round()} $unit';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+          Text(display,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ]),
+        Slider(
+          key: ValueKey('inpaint-setting-$label'),
           value: value.clamp(min, max),
           min: min,
           max: max,
           divisions: divisions,
-          label: label == '强度'
-              ? value.toStringAsFixed(2)
-              : value.round().toString(),
+          label: display,
           onChanged: _busy ? null : (v) => setState(() => onChanged(v)),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 
   /// 遮罩预览签名：框位置/尺寸/笔迹/参数任一变化即重新生成（防抖 250ms）。
@@ -2856,7 +2630,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         ),
         debugLabel: 'inpaint-mask-preview',
       );
-    }, (signature, bytes) {
+    }, (signature, bytes) async {
       if (!mounted ||
           _maskPreviewCurrentSignature != signature ||
           _pointers.isNotEmpty ||
@@ -2864,6 +2638,17 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           _busy) {
         return;
       }
+      // Keep the live contour visible until the replacement image is decoded.
+      var decoded = true;
+      await precacheImage(MemoryImage(bytes), context,
+          onError: (_, __) => decoded = false);
+      if (!mounted ||
+          !decoded ||
+          _maskPreviewCurrentSignature != signature ||
+          _pointers.isNotEmpty ||
+          _draft != null ||
+          _busy ||
+          _reviewOpen) return;
       setState(() {
         _maskPreviewSignature = signature;
         _maskPreviewBytes = bytes;

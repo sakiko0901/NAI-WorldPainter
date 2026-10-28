@@ -1,4 +1,8 @@
 import 'dart:io';
+import 'package:nai_huishi/core/utils/prompt_text.dart';
+import 'package:nai_huishi/domain/usecases/manage_prompt_templates.dart';
+import 'package:nai_huishi/presentation/widgets/prompt_notebook_dialog.dart';
+import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -655,106 +659,6 @@ class _GeneratePageState extends State<GeneratePage> {
     return applied;
   }
 
-  Future<void> _openExpandedPromptEditor({
-    required String title,
-    required String initialValue,
-    required Future<void> Function(String value) onSubmitted,
-  }) async {
-    final controller = TextEditingController(text: initialValue);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
-        final theme = Theme.of(ctx);
-        return Padding(
-          padding: EdgeInsets.only(bottom: bottom),
-          child: Container(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(ctx).height * 0.88,
-            ),
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.35,
-                      ),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.of(ctx).pop(),
-                        icon: const Icon(CupertinoIcons.xmark),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      autofocus: true,
-                      minLines: null,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      style: const TextStyle(fontSize: 15, height: 1.6),
-                      decoration: const InputDecoration(
-                        hintText: '请输入提示词...',
-                        alignLabelWithHint: true,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: () async {
-                        await onSubmitted(controller.text);
-                        if (!ctx.mounted) return;
-                        Navigator.of(ctx).pop();
-                      },
-                      icon: const Icon(CupertinoIcons.check_mark),
-                      label: const Text('完成'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-    controller.dispose();
-  }
-
   Widget _buildPromptField({
     required TextEditingController controller,
     required FocusNode focusNode,
@@ -763,53 +667,75 @@ class _GeneratePageState extends State<GeneratePage> {
     required Color textColor,
     required String editorTitle,
     required Future<void> Function(String value) onExpandedSubmit,
+    bool showExpandButton = true,
   }) {
-    return Stack(
+    return PromptEditorField(
+      controller: controller,
+      focusNode: focusNode,
+      hintText: hintText,
+      onChanged: onChanged,
+      textColor: textColor,
+      editorTitle: editorTitle,
+      onExpandedSubmit: onExpandedSubmit,
+      showExpandButton: showExpandButton,
+    );
+  }
+
+  Future<void> _openPromptNotebook() async {
+    _promptFocusNode.unfocus();
+    await showPromptNotebook(
+      context: context,
+      templates: sl<ManagePromptTemplatesUseCase>(),
+      onImport: (content) async {
+        if (!mounted) return;
+        await _vm.updatePrompt(
+            appendPromptFragment(_promptController.text, content));
+      },
+    );
+  }
+
+  Future<void> _copyPositivePrompt() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _promptController.text));
+      if (mounted) _showToast('已复制正向提示词');
+    } catch (_) {
+      if (mounted) _showToast('复制失败，请重试');
+    }
+  }
+
+  Widget _positivePromptHeading() {
+    return Row(
+      key: const ValueKey('positive-prompt-actions'),
       children: [
-        TextField(
-          controller: controller,
-          focusNode: focusNode,
-          minLines: 6,
-          maxLines: 14,
-          style: TextStyle(fontSize: 14, height: 1.5, color: textColor),
-          decoration: InputDecoration(
-            hintText: hintText,
-            hintStyle: TextStyle(
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.55),
-            ),
-            fillColor: Colors.transparent,
-            border: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            contentPadding: const EdgeInsets.only(right: 48),
-          ),
-          onChanged: onChanged,
+        Expanded(
+            child:
+                Text('正向提示词', style: Theme.of(context).textTheme.titleSmall)),
+        IconButton(
+          key: const ValueKey('positive-prompt-notebook'),
+          tooltip: '提示词笔记本',
+          visualDensity: VisualDensity.compact,
+          onPressed: _openPromptNotebook,
+          icon: const Icon(CupertinoIcons.book, size: 18),
         ),
-        Positioned(
-          top: 0,
-          right: -4,
-          child: IconButton(
-            onPressed: () => _openExpandedPromptEditor(
-              title: editorTitle,
-              initialValue: controller.text,
-              onSubmitted: onExpandedSubmit,
-            ),
-            tooltip: '放大编辑',
-            visualDensity: VisualDensity.standard,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            icon: Icon(
-              CupertinoIcons.arrow_up_left_arrow_down_right,
-              size: 15,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.45),
-            ),
+        IconButton(
+          key: const ValueKey('positive-prompt-copy'),
+          tooltip: '复制正向提示词',
+          visualDensity: VisualDensity.compact,
+          onPressed: _copyPositivePrompt,
+          icon: const Icon(CupertinoIcons.doc_on_doc, size: 17),
+        ),
+        IconButton(
+          key: const ValueKey('positive-prompt-expand'),
+          tooltip: '放大编辑',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => PromptEditorField.openExpandedEditor(
+            context: context,
+            title: '正向提示词',
+            initialValue: _promptController.text,
+            onSubmitted: _vm.updatePrompt,
           ),
+          icon: const Icon(CupertinoIcons.arrow_up_left_arrow_down_right,
+              size: 16),
         ),
       ],
     );
@@ -821,10 +747,13 @@ class _GeneratePageState extends State<GeneratePage> {
           padding: const EdgeInsets.all(16),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text(negative ? '负向提示词' : '正向提示词',
-                style: theme.textTheme.titleSmall),
+            if (negative)
+              Text('负向提示词', style: theme.textTheme.titleSmall)
+            else
+              _positivePromptHeading(),
             const SizedBox(height: 12),
             _buildPromptField(
+              showExpandButton: negative,
               controller: negative ? _negativeController : _promptController,
               focusNode: negative ? _negativeFocusNode : _promptFocusNode,
               hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',

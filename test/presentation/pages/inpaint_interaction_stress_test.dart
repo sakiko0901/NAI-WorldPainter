@@ -88,7 +88,7 @@ void main() {
       );
 
       await tester.ensureVisible(find.text('画笔'));
-      await tester.tap(find.text('画笔'));
+      await _selectDrawingTool(tester, '画笔');
       await tester.pump();
       await tester.ensureVisible(stage);
 
@@ -138,7 +138,7 @@ void main() {
       expect(paintedArm, isNot(equals(baselineArm)));
 
       await tester.ensureVisible(find.text('橡皮'));
-      await tester.tap(find.text('橡皮'));
+      await _selectDrawingTool(tester, '橡皮');
       await tester.pump();
       await tester.ensureVisible(stage);
 
@@ -196,8 +196,8 @@ void main() {
 
       // Undo restores the arm sample; redo removes it again. The center stays
       // erased by the seven earlier crossing strokes.
-      await tester.ensureVisible(find.byTooltip('撤销蒙版'));
-      await tester.tap(find.byTooltip('撤销蒙版'));
+      await tester.ensureVisible(find.byTooltip('撤销笔迹'));
+      await tester.tap(find.byTooltip('撤销笔迹'));
       await tester.pump();
       painter = _painter(tester, maskCanvas);
       controller = _controller(painter);
@@ -219,8 +219,8 @@ void main() {
       expect(restoredArm, isNot(equals(baselineArm)));
       expect(stillErasedCenter, equals(baselineCenter));
 
-      await tester.ensureVisible(find.byTooltip('重做蒙版'));
-      await tester.tap(find.byTooltip('重做蒙版'));
+      await tester.ensureVisible(find.byTooltip('重做笔迹'));
+      await tester.tap(find.byTooltip('重做笔迹'));
       await tester.pump();
       painter = _painter(tester, maskCanvas);
       controller = _controller(painter);
@@ -501,4 +501,17 @@ class _UnusedGenerationRepository implements GenerationRepository {
 class _UnusedHistoryRepository implements HistoryRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<void> _selectDrawingTool(WidgetTester tester, String label,
+    {bool close = true}) async {
+  await tester.ensureVisible(find.text(label));
+  await tester.tap(find.text(label));
+  await tester.pumpAndSettle();
+  if (close) {
+    final done = find.byKey(const ValueKey('inpaint-brush-done'));
+    await tester.ensureVisible(done);
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+  }
 }

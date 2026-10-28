@@ -102,6 +102,22 @@ void main() {
     controller.dispose();
   });
 
+  test('round brush highlights the inside edge without enlarging coverage',
+      () async {
+    final round = _maskStroke(
+        mode: InpaintStrokeMode.paint,
+        size: 24,
+        points: const [InpaintPoint(40, 40)]);
+    final controller = InpaintMaskController()..replaceStrokes([round]);
+    final pixels = await _render(controller);
+    expect(_pixel(pixels, 52, 40)[3], 0);
+    expect(_pixel(pixels, 51, 40)[2], greaterThan(200));
+    expect(_pixel(pixels, 51, 40)[1], greaterThan(190));
+    expect(_pixel(pixels, 51, 40)[3], greaterThan(200));
+    expect(_pixel(pixels, 40, 40)[3], lessThan(200));
+    controller.dispose();
+  });
+
   test('erase updates the hole immediately and contour follows the union',
       () async {
     final base = _maskStroke(

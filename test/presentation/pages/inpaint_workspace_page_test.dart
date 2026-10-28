@@ -93,12 +93,189 @@ void main() {
     expect(tester.getTopLeft(stage).dy, greaterThan(header.dy));
     expect(toolbar.dy, greaterThan(tester.getTopLeft(stage).dy));
     expect(promptPanel.dy, greaterThan(toolbar.dy));
-    expect(find.textContaining('px'), findsOneWidget);
+    expect(find.text('选择原图'), findsNothing);
+    expect(find.text('重绘提示词'), findsNothing);
+    final resolution = find.byKey(const ValueKey('inpaint-resolution'));
+    expect(tester.getTopLeft(resolution).dx,
+        lessThan(tester.getTopLeft(find.byTooltip('更换图片')).dx));
+    expect(find.byTooltip('撤销蒙版'), findsNothing);
+    expect(find.byTooltip('重做蒙版'), findsNothing);
+    expect(find.byTooltip('隐藏蒙版'), findsNothing);
+    expect(find.byTooltip('适应窗口'), findsNothing);
+    expect(find.byTooltip('清空蒙版'), findsNothing);
     expect(find.byType(TextField), findsNWidgets(2));
     for (final field in tester.widgetList<TextField>(find.byType(TextField))) {
-      expect(field.minLines, 3);
-      expect(field.maxLines, 6);
+      expect(field.minLines, 6);
+      expect(field.maxLines, 14);
+      expect(field.decoration!.border, InputBorder.none);
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('brush sheet slides up and retains shape and all ten sizes',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 852);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpWidget(_host(
+      const SingleChildScrollView(child: InpaintWorkspaceCard()),
+    ));
+    await _loadWorkspaceImage(tester, vm);
+    await tester.ensureVisible(find.text('画笔'));
+    await tester.tap(find.text('画笔'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+    final midwayTop = tester.getTopLeft(find.byType(BottomSheet)).dy;
+    await tester.pumpAndSettle();
+    expect(
+        midwayTop, greaterThan(tester.getTopLeft(find.byType(BottomSheet)).dy));
+    final slider = find.byKey(const ValueKey('inpaint-brush-size'));
+    expect(find.text('绘制到'), findsNothing);
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(tester.widget<Slider>(slider).min, 1);
+    expect(tester.widget<Slider>(slider).max, 10);
+    expect(tester.widget<Slider>(slider).divisions, 9);
+    await tester.ensureVisible(slider);
+    await tester.drag(slider, const Offset(500, 0));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Slider>(slider).value, 10);
+    final square = find.byKey(const ValueKey('inpaint-brush-square'));
+    await tester.ensureVisible(square);
+    await tester.tap(square);
+    final done = find.byKey(const ValueKey('inpaint-brush-done'));
+    await tester.ensureVisible(done);
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(stage);
+    await tester.drag(stage, const Offset(20, 0));
+    await tester.pumpAndSettle();
+    final cache = (tester
+            .widget<CustomPaint>(
+                find.byKey(const ValueKey('inpaint-live-mask')))
+            .painter! as InpaintCanvasPainter)
+        .maskController!;
+    expect(cache.strokes.single.square, isTrue);
+    expect(cache.strokes.single.size, 160);
+    await _selectDrawingTool(tester, '画笔', close: false);
+    expect(tester.widget<Slider>(slider).value, 10);
+    await tester.ensureVisible(slider);
+    await tester.drag(slider, const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Slider>(slider).value, 1);
+    final round = find.byKey(const ValueKey('inpaint-brush-round'));
+    await tester.ensureVisible(round);
+    await tester.tap(round);
+    await tester.ensureVisible(done);
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(stage);
+    await tester.drag(stage, const Offset(20, 0));
+    await tester.pumpAndSettle();
+    expect(cache.strokes.last.square, isFalse);
+    expect(cache.strokes.last.size, 16);
+    expect(cache.strokes.first.square, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('workspace menu animates and retains settings for generation',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 1400);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    _setDocumentsDirectory(tester, outputDirectory);
+    await tester.pumpWidget(_host(const MediaQuery(
+      data: MediaQueryData(
+          size: Size(320, 1400), textScaler: TextScaler.linear(2)),
+      child: SingleChildScrollView(child: InpaintWorkspaceCard()),
+    )));
+    await _loadWorkspaceImage(tester, vm);
+    final toggle = find.byKey(const ValueKey('inpaint-workspace-menu-toggle'));
+    final animation =
+        find.byKey(const ValueKey('inpaint-workspace-menu-animation'));
+    expect(find.text('重绘强度'), findsNothing);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final halfwayHeight = tester.getSize(animation).height;
+    await tester.pumpAndSettle();
+    expect(halfwayHeight, greaterThan(0));
+    expect(halfwayHeight, lessThan(tester.getSize(animation).height));
+    expect(find.text('放大图片分辨率'), findsNothing);
+    expect(find.text('生成参数'), findsNothing);
+    expect(find.text('清空笔迹与遮罩'), findsOneWidget);
+    final strength = find.byKey(const ValueKey('inpaint-setting-重绘强度'));
+    await tester.ensureVisible(strength);
+    await tester.tapAt(tester.getCenter(strength));
+    await tester.pumpAndSettle();
+    expect(vm.inpaintStrength, closeTo(0.51, 0.02));
+    final expectedStrength = vm.inpaintStrength;
+    for (final key in ['inpaint-color-correct', 'inpaint-ignore-original']) {
+      final setting = find.byKey(ValueKey(key));
+      await tester.ensureVisible(setting);
+      await tester.tap(setting);
+      await tester.pumpAndSettle();
+    }
+    expect(vm.colorCorrect, isFalse);
+    expect(vm.disabledOriginalImage, isTrue);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('重绘强度'), findsNothing);
+    await _openWorkspaceMenu(tester);
+    expect(tester.widget<Slider>(strength).value, expectedStrength);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
+    await tester.pumpAndSettle();
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(stage);
+    await tester.drag(stage, const Offset(20, 0));
+    await tester.pumpAndSettle();
+    expect(await _generateWhilePumping(tester, vm.inpaintWorkspaceHandler!),
+        isTrue);
+    final task = generationRepository.submittedTasks.single;
+    expect(task.inpaintStrength, expectedStrength);
+    expect(task.colorCorrect, isFalse);
+    expect(task.disabledOriginalImage, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('expanded inpaint editor saves to the inpaint prompt only',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1200);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    vm.prompt = 'text to image prompt';
+    await tester.pumpWidget(_host(
+      const SingleChildScrollView(child: InpaintWorkspaceCard()),
+    ));
+    final expand = find.byTooltip('放大编辑').first;
+    await tester.ensureVisible(expand);
+    await tester.tap(expand);
+    await tester.pumpAndSettle();
+    final editor = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(TextField));
+    await tester.enterText(editor, 'silver hair, blue eyes');
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+    expect(vm.inpaintPrompt, 'silver hair, blue eyes');
+    expect(vm.prompt, 'text to image prompt');
+    expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const ValueKey('inpaint-positive-prompt')))
+            .controller!
+            .text,
+        vm.inpaintPrompt);
     expect(tester.takeException(), isNull);
   });
 
@@ -315,7 +492,7 @@ void main() {
       ),
     );
     await _loadWorkspaceImage(tester, vm);
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
 
     final stageRect = tester.getRect(
@@ -334,8 +511,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'square brush stays square during dragging and mask can be hidden',
+  testWidgets('square brush stays square through drawing and unified undo redo',
       (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(320, 1600);
@@ -350,12 +526,14 @@ void main() {
     );
     await _loadWorkspaceImage(tester, vm);
     await tester.ensureVisible(find.text('画笔'));
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
-    final squareChip = find.widgetWithText(ChoiceChip, '方格');
+    await _selectDrawingTool(tester, '画笔', close: false);
+    final squareChip = find.byKey(const ValueKey('inpaint-brush-square'));
     await tester.ensureVisible(squareChip);
     await tester.pumpAndSettle();
     await tester.tap(squareChip);
+    await tester.tap(find.byKey(const ValueKey('inpaint-brush-done')));
     await tester.pumpAndSettle();
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
@@ -386,27 +564,17 @@ void main() {
     expect(cache.strokes.single.square, isTrue);
     expect(cache.activeStroke, isNull);
 
-    final undoMask = find.byTooltip('撤销蒙版');
+    final undoMask = find.byTooltip('撤销笔迹');
     await tester.ensureVisible(undoMask);
     await tester.tap(undoMask);
     await tester.pumpAndSettle();
     expect(cache.strokes, isEmpty);
-    final redoMask = find.byTooltip('重做蒙版');
+    final redoMask = find.byTooltip('重做笔迹');
     await tester.ensureVisible(redoMask);
     await tester.tap(redoMask);
     await tester.pumpAndSettle();
     expect(cache.strokes.single.square, isTrue);
 
-    await tester.ensureVisible(find.byTooltip('隐藏蒙版'));
-    await tester.tap(find.byTooltip('隐藏蒙版'));
-    await tester.pumpAndSettle();
-    expect(painter().showMask, isFalse);
-    expect(
-      tester
-          .widgetList<Image>(find.byType(Image))
-          .where((image) => image.image is MemoryImage),
-      isEmpty,
-    );
     expect(tester.takeException(), isNull);
   });
 
@@ -420,7 +588,7 @@ void main() {
       const SingleChildScrollView(child: InpaintWorkspaceCard()),
     ));
     await _loadWorkspaceImage(tester, vm);
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
@@ -459,8 +627,11 @@ void main() {
       const SingleChildScrollView(child: InpaintWorkspaceCard()),
     ));
     await _loadWorkspaceImage(tester, vm);
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
+    await _openWorkspaceMenu(tester);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-workspace-stage')));
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.drag(stage, const Offset(25, 0));
     await tester.pumpAndSettle();
@@ -473,7 +644,7 @@ void main() {
     await tester.pump();
     await held.moveBy(const Offset(-25, 10));
     await tester.pump();
-    await tester.tap(find.byTooltip('清空蒙版'));
+    await tester.tap(find.byKey(const ValueKey('inpaint-clear-strokes')));
     await tester.pump();
     await held.up();
     await tester.pumpAndSettle();
@@ -518,7 +689,7 @@ void main() {
     );
     await _loadWorkspaceImage(tester, vm);
     await tester.ensureVisible(find.text('画笔'));
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byKey(const ValueKey('inpaint-workspace-stage')),
@@ -589,11 +760,13 @@ void main() {
     expect(find.text('结果图层 2'), findsNothing);
 
     vm.batchCount = 1;
-    await tester.ensureVisible(find.byTooltip('清空蒙版'));
-    await tester.tap(find.byTooltip('清空蒙版'));
+    await _openWorkspaceMenu(tester);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('inpaint-clear-strokes')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-clear-strokes')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('画笔'));
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔');
     await tester.pumpAndSettle();
     final nextStage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(nextStage);
@@ -661,6 +834,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
+    final screenKey = GlobalKey();
     final preloadKey = const ValueKey('inpaint-capture-preload');
     _setDocumentsDirectory(tester, outputDirectory);
 
@@ -672,17 +846,22 @@ void main() {
       );
     });
     await tester.pumpWidget(
-      _host(
-        SingleChildScrollView(
-          child: RepaintBoundary(
-            key: key,
-            child: const InpaintWorkspaceCard(),
+      RepaintBoundary(
+        key: screenKey,
+        child: _host(
+          SingleChildScrollView(
+            child: RepaintBoundary(
+              key: key,
+              child: const InpaintWorkspaceCard(),
+            ),
           ),
         ),
       ),
     );
     await _loadWorkspaceImage(tester, vm);
-    await tester.tap(find.text('画笔'));
+    await _selectDrawingTool(tester, '画笔', close: false);
+    await _captureBoundary(tester, screenKey, 'inpaint-brush-sheet.png');
+    await tester.tap(find.byKey(const ValueKey('inpaint-brush-done')));
     await tester.pumpAndSettle();
     final stage = tester.getRect(
       find.byKey(const ValueKey('inpaint-workspace-stage')),
@@ -691,7 +870,13 @@ void main() {
     await brush.moveBy(const Offset(42, 0));
     await brush.up();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, '方格'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 600)));
+    await tester.pumpAndSettle();
+    await _captureBoundary(tester, key, 'inpaint-round-brush.png');
+    await _selectDrawingTool(tester, '画笔', close: false);
+    await tester.tap(find.byKey(const ValueKey('inpaint-brush-square')));
+    await tester.tap(find.byKey(const ValueKey('inpaint-brush-done')));
     await tester.pumpAndSettle();
     final square =
         await tester.startGesture(stage.center - const Offset(50, 60));
@@ -708,6 +893,13 @@ void main() {
           .any((image) => image.image is MemoryImage)) break;
     }
     await _captureBoundary(tester, key, 'inpaint-mask-revision.png');
+    await _openWorkspaceMenu(tester);
+    await _captureBoundary(tester, key, 'inpaint-workspace-menu.png');
+    await tester.ensureVisible(
+        find.byKey(const ValueKey('inpaint-workspace-menu-toggle')));
+    await tester
+        .tap(find.byKey(const ValueKey('inpaint-workspace-menu-toggle')));
+    await tester.pumpAndSettle();
     await _generateWhilePumping(tester, vm.inpaintWorkspaceHandler!);
     await tester.pumpAndSettle();
     await _settleFileImages(tester);
@@ -722,6 +914,17 @@ void main() {
     expect(find.text('结果图层 1'), findsOneWidget);
     await _captureBoundary(tester, key, 'inpaint-applied-revision.png');
   });
+}
+
+Future<void> _openWorkspaceMenu(WidgetTester tester) async {
+  if (find
+      .byKey(const ValueKey('inpaint-workspace-menu'))
+      .evaluate()
+      .isNotEmpty) return;
+  final toggle = find.byKey(const ValueKey('inpaint-workspace-menu-toggle'));
+  await tester.ensureVisible(toggle);
+  await tester.tap(toggle);
+  await tester.pumpAndSettle();
 }
 
 Future<bool?> _generateWhilePumping(
@@ -809,6 +1012,7 @@ Future<void> _settleFileImages(WidgetTester tester) async {
 }
 
 Widget _host(Widget child) => MaterialApp(
+      debugShowCheckedModeBanner: false,
       theme: buildNaiHuishiTheme(Brightness.dark),
       home: Scaffold(body: child),
     );
@@ -930,6 +1134,20 @@ class _InpaintGenerationFake extends FrontendGenerationFake {
   }
 
   @override
+  void updateInpaintStrength(double value) {
+    inpaintStrength = value;
+    notifyListeners();
+  }
+
+  @override
+  void updateInpaintOptions({bool? disabledOriginalImage, bool? colorCorrect}) {
+    this.disabledOriginalImage =
+        disabledOriginalImage ?? this.disabledOriginalImage;
+    this.colorCorrect = colorCorrect ?? this.colorCorrect;
+    notifyListeners();
+  }
+
+  @override
   Future<void> updateInpaintPrompt(String value) async {
     inpaintPrompt = value;
     notifyListeners();
@@ -986,4 +1204,17 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
 class _UnusedHistoryRepository implements HistoryRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<void> _selectDrawingTool(WidgetTester tester, String label,
+    {bool close = true}) async {
+  await tester.ensureVisible(find.text(label));
+  await tester.tap(find.text(label));
+  await tester.pumpAndSettle();
+  if (close) {
+    final done = find.byKey(const ValueKey('inpaint-brush-done'));
+    await tester.ensureVisible(done);
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+  }
 }

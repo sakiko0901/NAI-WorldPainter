@@ -43,6 +43,7 @@ class InpaintRasterizer {
     required int outputHeight,
     required List<InpaintStroke> strokes,
     int expandPixels = 0,
+    bool preserveRoundBrush = false,
   }) {
     final image =
         img.Image(width: outputWidth, height: outputHeight, numChannels: 4);
@@ -79,18 +80,21 @@ class InpaintRasterizer {
       }
     }
 
-    for (final stroke in strokes) {
-      if (stroke.target == InpaintPaintTarget.mask) {
-        _drawStroke(mask, stroke, worldRect, scaleX, scaleY);
-      }
-    }
-    if (expandPixels > 0) {
-      _dilate(mask, expandPixels);
-    }
+    _applyMaskStrokes(mask, strokes, worldRect, scaleX, scaleY,
+        expandPixels: expandPixels, preserveRoundBrush: preserveRoundBrush);
     return InpaintRasterResult(image, mask);
   }
 
-  Uint8List encodeMask(img.Image mask) => ImageUtils.encodeNovelAiMask(mask);
+  Uint8List encodeMask(img.Image mask, {bool alignToLatentGrid = true}) {
+    if (alignToLatentGrid) return ImageUtils.encodeNovelAiMask(mask);
+    // Keep the full-resolution selection, still sending a single grayscale channel.
+    final gray =
+        img.Image(width: mask.width, height: mask.height, numChannels: 1);
+    for (final pixel in mask) {
+      gray.setPixelR(pixel.x, pixel.y, pixel.r);
+    }
+    return Uint8List.fromList(img.encodePng(gray));
+  }
 
   /// The same mask as [rasterize] for mask-only edits, without decoding or
   /// copying source RGB or allocating an unused output image.
@@ -101,6 +105,7 @@ class InpaintRasterizer {
     required int outputHeight,
     required List<InpaintStroke> strokes,
     int expandPixels = 0,
+    bool preserveRoundBrush = false,
   }) {
     if (strokes.any((stroke) => stroke.target == InpaintPaintTarget.image)) {
       throw ArgumentError('Image edits require the composed source alpha');
@@ -125,11 +130,114 @@ class InpaintRasterizer {
         }
       }
     }
-    for (final stroke in strokes) {
-      _drawStroke(mask, stroke, worldRect, scaleX, scaleY);
-    }
-    if (expandPixels > 0) _dilate(mask, expandPixels);
+    _applyMaskStrokes(mask, strokes, worldRect, scaleX, scaleY,
+        expandPixels: expandPixels, preserveRoundBrush: preserveRoundBrush);
     return mask;
+  }
+
+  /// The workspace preserves round strokes exactly. Square strokes and empty
+  /// canvas still support expansion; erase/paint ordering applies to both.
+  void _applyMaskStrokes(
+    img.Image mask,
+    List<InpaintStroke> strokes,
+    InpaintViewport rect,
+    double sx,
+    double sy, {
+    required int expandPixels,
+    required bool preserveRoundBrush,
+  }) {
+    if (!preserveRoundBrush) {
+      for (final stroke in strokes) {
+        if (stroke.target == InpaintPaintTarget.mask) {
+          _drawStroke(mask, stroke, rect, sx, sy);
+        }
+      }
+      if (expandPixels > 0) _dilate(mask, expandPixels);
+      return;
+    }
+
+    void mergeExpanded(img.Image selection) {
+      if (expandPixels > 0) _dilate(selection, expandPixels);
+      final aligned = ImageUtils.alignNovelAiMask(selection);
+      for (final pixel in aligned) {
+        if (pixel.r > 0) {
+          mask.setPixelRgba(pixel.x, pixel.y, 255, 255, 255, 255);
+        }
+      }
+    }
+
+    if (mask.any((pixel) => pixel.r > 0)) {
+      mergeExpanded(mask);
+    }
+    // Consecutive square strokes share a single dilation/alignment pass.
+    img.Image? pendingSquare;
+    void flushSquare() {
+      final pending = pendingSquare;
+      if (pending == null) return;
+      mergeExpanded(pending);
+      pendingSquare = null;
+    }
+
+    for (final stroke in strokes) {
+      if (stroke.target != InpaintPaintTarget.mask) continue;
+      final round = !stroke.square && stroke.type == InpaintStrokeType.path;
+      if (!round && stroke.mode == InpaintStrokeMode.paint) {
+        pendingSquare ??=
+            img.Image(width: mask.width, height: mask.height, numChannels: 4);
+        _drawStroke(pendingSquare!, stroke, rect, sx, sy);
+        continue;
+      }
+      flushSquare();
+      if (round) {
+        _drawPreciseRoundStroke(mask, stroke, rect, sx, sy);
+      } else {
+        _drawStroke(mask, stroke, rect, sx, sy);
+      }
+    }
+    flushSquare();
+  }
+
+  /// Pixel-center coverage of round-ended segments, using the same source-space
+  /// radius as the live canvas. No expansion, grid snapping or squared caps.
+  void _drawPreciseRoundStroke(img.Image mask, InpaintStroke stroke,
+      InpaintViewport rect, double sx, double sy) {
+    final points = stroke.points;
+    final radius = math.max(0.5, stroke.size / 2);
+    final radiusSquared = radius * radius;
+    final value = stroke.mode == InpaintStrokeMode.erase ? 0 : 255;
+    for (var index = 0; index < points.length; index++) {
+      final from = points[index == 0 ? 0 : index - 1];
+      final to = points[index];
+      final dx = to.x - from.x;
+      final dy = to.y - from.y;
+      final lengthSquared = dx * dx + dy * dy;
+      final left = ((math.min(from.x, to.x) - radius - rect.x) * sx)
+          .floor()
+          .clamp(0, mask.width);
+      final right = ((math.max(from.x, to.x) + radius - rect.x) * sx)
+          .ceil()
+          .clamp(0, mask.width);
+      final top = ((math.min(from.y, to.y) - radius - rect.y) * sy)
+          .floor()
+          .clamp(0, mask.height);
+      final bottom = ((math.max(from.y, to.y) + radius - rect.y) * sy)
+          .ceil()
+          .clamp(0, mask.height);
+      for (var y = top; y < bottom; y++) {
+        final py = rect.y + (y + 0.5) / sy - from.y;
+        for (var x = left; x < right; x++) {
+          final px = rect.x + (x + 0.5) / sx - from.x;
+          final t = lengthSquared == 0
+              ? 0.0
+              : ((px * dx + py * dy) / lengthSquared).clamp(0.0, 1.0);
+          final distanceX = px - t * dx;
+          final distanceY = py - t * dy;
+          if (distanceX * distanceX + distanceY * distanceY <= radiusSquared) {
+            mask.setPixelRgba(x, y, value, value, value, value);
+          }
+        }
+      }
+    }
   }
 
   img.Image composeBase({
@@ -158,6 +266,7 @@ class InpaintRasterizer {
     required int outwardFeatherPixels,
     img.Image? base,
     int? inwardFeatherPixels,
+    bool clipToMask = false,
   }) {
     if (generated.width != mask.width || generated.height != mask.height) {
       throw ArgumentError('生成图与遮罩尺寸不一致');
@@ -172,6 +281,26 @@ class InpaintRasterizer {
       inwardFeatherPixels: inwardFeatherPixels,
       base: base,
     );
+    // An upstream response may contain arbitrary colors outside its generated
+    // region. Exact brush selections blend inward and never sample that ring.
+    if (clipToMask) {
+      final distances = outwardFeatherPixels > 0
+          ? _squaredMaskDistances(mask, boundaryOnly: true)
+          : null;
+      for (var y = 0; y < mask.height; y++) {
+        for (var x = 0; x < mask.width; x++) {
+          if (mask.getPixel(x, y).r == 0) {
+            alpha[y][x] = 0;
+          } else if (distances != null &&
+              (base == null || base.getPixel(x, y).a > 0)) {
+            final distance = math.sqrt(distances[y * mask.width + x]);
+            alpha[y][x] = ((distance + 0.5) / outwardFeatherPixels * 255)
+                .round()
+                .clamp(1, 255);
+          }
+        }
+      }
+    }
     final layer = img.Image(
       width: generated.width,
       height: generated.height,
