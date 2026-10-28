@@ -10,7 +10,7 @@
 
 [![下载 APK](https://img.shields.io/badge/下载_APK-1.2.4_%C2%B7_220040-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
 
-[本次更新](#本次更新) · [界面展示](#界面展示) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
+[本次更新](#本次更新) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
 
 </div>
 
@@ -24,37 +24,6 @@
 - **工作区更集中。** 分辨率与换图入口放到左上方，扩展、羽化、重绘强度、色彩校正和忽略原图集中到可展开的工作区菜单。
 
 [查看完整发布说明](docs/releases/2026-10-28-220040.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
-
-## 界面展示
-
-<p align="center">
-  <a href="docs/images/creation.png"><img src="docs/images/creation.png" width="260" align="top" alt="创作页：生成结果、图片保存、参数入口和底部导航" /></a>
-  <a href="docs/images/inpaint-workspace.png"><img src="docs/images/inpaint-workspace.png" width="260" align="top" alt="局部重绘：输出框、圆形蓝色遮罩、绘图工具及独立提示词" /></a>
-  <a href="docs/images/prompt-notebook.png"><img src="docs/images/prompt-notebook.png" width="260" align="top" alt="提示词笔记本：搜索、标题与内容预览、复制和导入" /></a>
-</p>
-
-- **创作与结果预览**：查看结果、调整参数、保存图片。
-- **局部重绘工作区**：移动原图与输出框，直接涂抹需要重绘的区域。
-- **提示词笔记本**：把常用提示词保存成可以反复使用的笔记。
-
-<details>
-<summary><b>展开查看：画笔弹窗、工作区设置与提示词快捷操作</b></summary>
-<br />
-<table>
-  <tr>
-    <th width="33%">画笔设置</th>
-    <th width="33%">工作区菜单</th>
-    <th width="33%">提示词快捷操作</th>
-  </tr>
-  <tr>
-    <td valign="top"><img src="docs/images/brush-settings.png" width="100%" alt="画笔弹窗中的圆形、方形笔刷与 1–10 档大小滑块" /></td>
-    <td valign="top"><img src="docs/images/workspace-settings.png" width="100%" alt="展开的工作区菜单，集中展示遮罩与重绘设置" /></td>
-    <td valign="top"><img src="docs/images/prompt-actions.png" width="100%" alt="正向提示词标题右侧的笔记本、复制、展开按钮" /></td>
-  </tr>
-</table>
-</details>
-
-<sub>点击截图可查看大图。截图由当前版本的 Flutter 界面组件渲染，使用仓库内示例图片与演示数据；不包含账号信息。截图复现方法见 <a href="docs/images/README.md">展示资源说明</a>。</sub>
 
 ## 安装与开始使用
 
