@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -7,6 +8,28 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 /// A presentation-only fixture: never configures services or sends requests.
 class FrontendGenerationFake extends ChangeNotifier
     implements GenerationViewModel {
+  @override
+  int? seed;
+  @override
+  int steps = 28;
+  @override
+  double scale = 5;
+  @override
+  double cfgRescale = 0;
+  @override
+  String selectedSampler = 'k_euler';
+  @override
+  String selectedNoiseSchedule = 'karras';
+  @override
+  bool isStepsLocked = false;
+  @override
+  List<String> customResolutions = [];
+  @override
+  String? img2imgSourceImagePath;
+  @override
+  Img2ImgMode img2ImgMode = Img2ImgMode.normal;
+  @override
+  double img2imgStrength = 0.7;
   @override
   String prompt = '';
   @override
@@ -110,6 +133,12 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   Future<void> updateEffort(GenerationEffort value) async {
     effort = value;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> updateBatchCount(int value) async {
+    batchCount = value.clamp(1, 30);
     notifyListeners();
   }
 

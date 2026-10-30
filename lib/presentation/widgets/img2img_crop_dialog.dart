@@ -63,6 +63,7 @@ class Img2ImgCropDialog extends StatefulWidget {
   final int imageWidth;
   final int imageHeight;
   final int initialTargetIndex;
+  final (int, int)? initialTarget;
 
   const Img2ImgCropDialog({
     super.key,
@@ -70,6 +71,7 @@ class Img2ImgCropDialog extends StatefulWidget {
     required this.imageWidth,
     required this.imageHeight,
     this.initialTargetIndex = 1,
+    this.initialTarget,
   });
 
   @override
@@ -77,7 +79,7 @@ class Img2ImgCropDialog extends StatefulWidget {
 }
 
 class _Img2ImgCropDialogState extends State<Img2ImgCropDialog> {
-  static const _targets = <(int, int)>[
+  final _targets = <(int, int)>[
     (832, 1216),
     (1024, 1024),
     (1216, 832),
@@ -104,6 +106,11 @@ class _Img2ImgCropDialogState extends State<Img2ImgCropDialog> {
   void initState() {
     super.initState();
     _targetIndex = widget.initialTargetIndex.clamp(0, _targets.length - 1);
+    final initial = widget.initialTarget;
+    if (initial != null && initial.$1 > 0 && initial.$2 > 0) {
+      if (!_targets.contains(initial)) _targets.add(initial);
+      _targetIndex = _targets.indexOf(initial);
+    }
   }
 
   double get _baseScale {
@@ -438,25 +445,26 @@ class _Img2ImgCropDialogState extends State<Img2ImgCropDialog> {
               child: Row(
                 children: [
                   Expanded(
-                    child: SegmentedButton<int>(
-                      segments: const [
-                        ButtonSegment(value: 0, label: Text('纵向')),
-                        ButtonSegment(value: 1, label: Text('方形')),
-                        ButtonSegment(value: 2, label: Text('横向')),
-                      ],
-                      selected: {_targetIndex},
-                      onSelectionChanged: (selection) {
-                        setState(() {
-                          final center = _cropRect.center;
-                          _targetIndex = selection.first;
-                          _cropRect = largestCropRectForRatio(
-                            _imageRect.intersect(Offset.zero & _stageSize),
-                            _targetRatio,
-                            center: center,
-                          );
-                        });
-                      },
-                    ),
+                    child: Wrap(spacing: 6, runSpacing: 4, children: [
+                      for (final entry in _targets.asMap().entries)
+                        ChoiceChip(
+                          label: Text(switch (entry.key) {
+                            0 => '纵向',
+                            1 => '方形',
+                            2 => '横向',
+                            _ => '${entry.value.$1} × ${entry.value.$2}',
+                          }),
+                          selected: _targetIndex == entry.key,
+                          onSelected: (_) => setState(() {
+                            final center = _cropRect.center;
+                            _targetIndex = entry.key;
+                            _cropRect = largestCropRectForRatio(
+                                _imageRect.intersect(Offset.zero & _stageSize),
+                                _targetRatio,
+                                center: center);
+                          }),
+                        ),
+                    ]),
                   ),
                   const SizedBox(width: 10),
                   IconButton(

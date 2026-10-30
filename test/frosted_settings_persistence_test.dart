@@ -127,6 +127,7 @@ Future<void> _openAppearance(WidgetTester tester) async {
       matching: find.byType(Scrollable),
     ),
   );
+  await tester.pumpAndSettle();
   await tester.tap(entry);
   await tester.pumpAndSettle();
   expect(find.byType(ThemeAppearancePage), findsOneWidget);

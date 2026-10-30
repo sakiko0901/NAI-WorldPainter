@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_brush_sheet.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
 import 'package:flutter/foundation.dart';
@@ -1306,11 +1307,9 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         _composeWorkspaceIsolate,
         input,
       );
-      final dir = await ImageUtils.getImageDirectory();
-      final path = '${dir.path}${Platform.pathSeparator}'
-          'inpaint_composite_${DateTime.now().millisecondsSinceEpoch}.png';
-      await File(path).writeAsBytes(composite, flush: true);
-      final saved = await _saveImage.saveToGallery(path);
+      // Export-only bytes must not accumulate in the persistent image directory.
+      // This helper owns a unique temporary file and removes it in finally.
+      final saved = await _saveImage.savePngBytesToGallery(composite);
       if (mounted) {
         showFloatingToast(
           context,
@@ -1965,12 +1964,13 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   /// 工作区下边工具栏：五种操作模式、笔刷参数、历史与图层管理。
   Widget _buildToolbar(ColorScheme colors) {
     if (_reviewOpen) {
-      return _resultLayers.isEmpty
-          ? const SizedBox.shrink()
-          : Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: _buildResultLayers(colors),
-            );
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        child: Column(children: [
+          if (_resultLayers.isNotEmpty) _buildResultLayers(colors),
+          _buildBatchControl(),
+        ]),
+      );
     }
     return Padding(
       key: const ValueKey('inpaint-workspace-toolbar'),
@@ -1980,6 +1980,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         children: [
           _buildToolstrip(colors),
           _buildToolContext(colors),
+          _buildBatchControl(),
           Wrap(
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -2016,6 +2017,19 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       ),
     );
   }
+
+  Widget _buildBatchControl() => AnimatedBuilder(
+        animation: _generation,
+        builder: (context, _) => BatchGenerationControl(
+          key: const ValueKey('inpaint-batch-control'),
+          sliderKey: const ValueKey('inpaint-batch-slider'),
+          value: _generation.batchCount,
+          onChanged: _busy || _addingLayer || _officialUpscaling ||
+                  _generation.isGenerating || _generation.isProcessingImage
+              ? null
+              : _generation.updateBatchCount,
+        ),
+      );
 
   Widget _buildToolContext(ColorScheme colors) {
     final hint = switch (_uiMode) {
@@ -2094,11 +2108,18 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                             _showMask = true;
                           }
                         });
-                        if (mode.$1 == InpaintUiMode.brush ||
-                            mode.$1 == InpaintUiMode.erase) {
-                          _showBrushSettings();
-                        }
                       },
+                onLongPress: !_busy &&
+                        (mode.$1 == InpaintUiMode.brush ||
+                            mode.$1 == InpaintUiMode.erase)
+                    ? () {
+                        setState(() {
+                          _uiMode = mode.$1;
+                          _showMask = true;
+                        });
+                        _showBrushSettings();
+                      }
+                    : null,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   padding:

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +10,7 @@ import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 typedef GenerationResultAction = FutureOr<void> Function(GenerationTask task);
 
-enum _ResultMoreAction { inpaint, upscale, enhance }
+enum _ResultMoreAction { inpaint, director, upscale, enhance }
 
 /// Shows the selected generation result and actions for that exact task.
 /// Draft parameters are never used as metadata for an existing image.
@@ -28,9 +27,11 @@ class GenerationResultCard extends StatefulWidget {
   final VoidCallback? onPreview;
   final VoidCallback? onImport;
   final VoidCallback? onSave;
+  final Widget? batchControl;
   final GenerationResultAction? onInpaint;
   final GenerationResultAction? onUpscale;
   final GenerationResultAction? onEnhance;
+  final GenerationResultAction? onDirector;
 
   /// Optional image-stage height selected by the parent page. When omitted,
   /// the stage grows with the available window height and remains capped.
@@ -61,9 +62,11 @@ class GenerationResultCard extends StatefulWidget {
     this.onPreview,
     this.onImport,
     this.onSave,
+    this.batchControl,
     this.onInpaint,
     this.onUpscale,
     this.onEnhance,
+    this.onDirector,
     this.onDelete,
     this.workspaceHeight,
     this.effort,
@@ -183,8 +186,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
               _buildThumbnails(context, theme, current),
             ],
             const SizedBox(height: 8),
-            _buildActions(context, current),
           ],
+          if (widget.batchControl != null) widget.batchControl!,
+          if (current != null && !(isPlaceholder && widget.generating))
+            _buildActions(context, current),
         ],
       ),
     );
@@ -495,7 +500,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return Semantics(
       container: true,
       label:
-          '图像工作区，点按全屏查看，双指缩放，Seed ${current.seed ?? '未记录'}，${current.width} × ${current.height}',
+          '图像工作区，点按全屏查看，双指缩放，Seed ${current.seed ?? '无'}，${current.width} × ${current.height}',
       child: ClipRRect(
         borderRadius: BorderRadius.circular(13),
         child: SizedBox(
@@ -662,7 +667,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           children: [
             Flexible(
               child: Text(
-                'Seed ${current.seed ?? '未记录'}',
+                'Seed ${current.seed ?? '无'}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: metadataStyle,
@@ -813,56 +818,101 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           ),
         ),
         const SizedBox(width: 8),
-        PopupMenuButton<_ResultMoreAction>(
+        IconButton(
           key: const ValueKey('result-more-button'),
           tooltip: '更多图片操作',
-          onSelected: (action) {
-            final callback = switch (action) {
-              _ResultMoreAction.inpaint => widget.onInpaint,
-              _ResultMoreAction.upscale => widget.onUpscale,
-              _ResultMoreAction.enhance => widget.onEnhance,
-            };
-            if (callback != null) {
-              unawaited(Future.sync(() => callback(current)));
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: _ResultMoreAction.inpaint,
-              enabled: widget.onInpaint != null,
-              child: const Text('导入到局部重绘'),
+          onPressed: () => _showMoreActions(context, current),
+          style: IconButton.styleFrom(
+            fixedSize: const Size(44, 44),
+            backgroundColor: glass.raised,
+            foregroundColor: theme.colorScheme.onSurfaceVariant,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(11),
+              side: BorderSide(color: glass.border),
             ),
-            PopupMenuItem(
-              value: _ResultMoreAction.upscale,
-              enabled: widget.onUpscale != null,
-              child: const Text('Upscale'),
-            ),
-            PopupMenuItem(
-              value: _ResultMoreAction.enhance,
-              enabled: widget.onEnhance != null,
-              child: const Text('Enhance'),
-            ),
-          ],
-          child: SizedBox(
-            height: 44,
-            width: 44,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: glass.raised,
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(
-                  color: glass.border,
-                ),
-              ),
-              child: Icon(
-                Icons.more_horiz,
-                color: theme.colorScheme.onSurfaceVariant,
+          ),
+          icon: const Icon(Icons.more_horiz),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showMoreActions(
+      BuildContext context, GenerationTask current) async {
+    final callbacks = <_ResultMoreAction, GenerationResultAction?>{
+      _ResultMoreAction.inpaint: widget.onInpaint,
+      _ResultMoreAction.director: widget.onDirector,
+      _ResultMoreAction.upscale: widget.onUpscale,
+      _ResultMoreAction.enhance: widget.onEnhance,
+    };
+    final selected = await showModalBottomSheet<_ResultMoreAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      showDragHandle: false,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: FrostedSurface(
+            radius: 22,
+            padding: const EdgeInsets.all(12),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 4, 6, 12),
+                    child: Text('图片操作',
+                        style: Theme.of(sheetContext).textTheme.titleMedium),
+                  ),
+                  for (final (action, label, icon) in [
+                    (
+                      _ResultMoreAction.inpaint,
+                      '导入到局部重绘',
+                      Icons.brush_outlined
+                    ),
+                    (_ResultMoreAction.director, '导演工具', Icons.movie_outlined),
+                    (_ResultMoreAction.upscale, 'Upscale', Icons.zoom_out_map),
+                    (_ResultMoreAction.enhance, 'Enhance', Icons.auto_fix_high),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: OutlinedButton.icon(
+                        onPressed: callbacks[action] == null
+                            ? null
+                            : () => Navigator.pop(sheetContext, action),
+                        icon: Icon(icon, size: 20),
+                        label: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(label)),
+                        style: OutlinedButton.styleFrom(
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14),
+                          backgroundColor: FrostedTheme.of(sheetContext).field,
+                          foregroundColor:
+                              Theme.of(sheetContext).colorScheme.onSurface,
+                          side: BorderSide(
+                              color: FrostedTheme.of(sheetContext).border),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
         ),
-      ],
+      ),
     );
+    if (selected == null || !mounted) return;
+    final callback = callbacks[selected];
+    if (callback != null) await callback(current);
   }
 }
 

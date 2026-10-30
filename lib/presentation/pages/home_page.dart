@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/navigation/app_destination.dart';
@@ -9,8 +8,8 @@ import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/history_page.dart';
 import 'package:nai_huishi/presentation/pages/settings_page.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
-import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
-import 'package:nai_huishi/presentation/widgets/fountain_pen_icon.dart';
+import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
+import 'package:nai_huishi/presentation/widgets/studio_tab_view.dart';
 
 class HomePage extends StatefulWidget {
   static const initialIndex = 0;
@@ -45,6 +44,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _destination = destination;
       if (destination == AppDestination.assistant) {
@@ -99,100 +99,48 @@ class _HomePageState extends State<HomePage> {
     _selectDestination(AppDestination.create);
   }
 
-  Widget _withDestinationTicker(AppDestination destination, Widget child) {
-    return TickerMode(enabled: destination == _destination, child: child);
-  }
-
   @override
   Widget build(BuildContext context) {
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Scaffold(
+      extendBody: true,
       resizeToAvoidBottomInset: true,
-      body: IndexedStack(
+      body: StudioTabView(
+        key: const ValueKey('home-destinations'),
         index: _destination.index,
         children: [
-          _withDestinationTicker(
-            AppDestination.create,
-            GeneratePage(
-              onNavigate: _handleLegacyNavigation,
-              onOpenAssistant: () =>
-                  _selectDestination(AppDestination.assistant),
-            ),
+          GeneratePage(
+            onNavigate: _handleLegacyNavigation,
+            onOpenAssistant: () => _selectDestination(AppDestination.assistant),
           ),
-          _withDestinationTicker(
-            AppDestination.assistant,
-            _hasVisitedAssistant
-                ? ChatDrawer(
-                    key: const ValueKey('assistant-destination'),
-                    embedded: true,
-                    active: _destination == AppDestination.assistant,
-                    title: 'AI 助手',
-                    onClose: () => _selectDestination(AppDestination.create),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          _withDestinationTicker(
-            AppDestination.tools,
-            _hasVisitedTools
-                ? SettingsPage(
-                    key: const ValueKey('tools-destination'),
-                    appearanceMode: widget.appearanceMode,
-                    onAppearanceChanged: widget.onAppearanceChanged,
-                    frostedGlassEnabled: widget.frostedGlassEnabled,
-                    onFrostedGlassChanged: widget.onFrostedGlassChanged,
-                    onNavigateToGenerate: _returnToCreate,
-                  )
-                : const SizedBox.shrink(),
-          ),
+          _hasVisitedAssistant
+              ? ChatDrawer(
+                  key: const ValueKey('assistant-destination'),
+                  embedded: true,
+                  active: _destination == AppDestination.assistant,
+                  title: 'AI 助手',
+                  onClose: () => _selectDestination(AppDestination.create),
+                )
+              : const SizedBox.shrink(),
+          _hasVisitedTools
+              ? SettingsPage(
+                  key: const ValueKey('tools-destination'),
+                  appearanceMode: widget.appearanceMode,
+                  onAppearanceChanged: widget.onAppearanceChanged,
+                  frostedGlassEnabled: widget.frostedGlassEnabled,
+                  onFrostedGlassChanged: widget.onFrostedGlassChanged,
+                  onNavigateToGenerate: _returnToCreate,
+                )
+              : const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar: keyboardOpen
           ? null
-          : FrostedSurface(
-              radius: 0,
-              blur: 18,
-              child: NavigationBar(
-                height: 52 +
-                    ((MediaQuery.textScalerOf(context).scale(11) - 11) * 1.5)
-                        .clamp(0, 24),
-                animationDuration: Duration(
-                    milliseconds:
-                        MediaQuery.disableAnimationsOf(context) ? 0 : 200),
-                selectedIndex: _destination.index,
-                onDestinationSelected: (index) =>
-                    _selectDestination(AppDestination.values[index]),
-                destinations: [
-                  NavigationDestination(
-                    label: AppDestination.create.label,
-                    tooltip: AppDestination.create.label,
-                    icon: const FountainPenIcon(),
-                    selectedIcon: FountainPenIcon(
-                        color: Theme.of(context).colorScheme.primary),
-                  ),
-                  _navigationDestination(
-                    label: AppDestination.assistant.label,
-                    icon: CupertinoIcons.sparkles,
-                  ),
-                  _navigationDestination(
-                    label: AppDestination.tools.label,
-                    icon: CupertinoIcons.square_grid_2x2,
-                  ),
-                ],
-              )),
-    );
-  }
-
-  NavigationDestination _navigationDestination({
-    required String label,
-    required IconData icon,
-  }) {
-    final colors = Theme.of(context).colorScheme;
-    return NavigationDestination(
-      icon: Icon(icon, size: 20, color: colors.onSurfaceVariant),
-      selectedIcon: Icon(icon, size: 20, color: colors.primary),
-      label: label,
-      tooltip: label,
+          : StudioNavigationBar(
+              selected: _destination,
+              onSelected: _selectDestination,
+            ),
     );
   }
 }

@@ -12,6 +12,7 @@ import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/nai_model.dart';
 import 'package:nai_huishi/domain/entities/preset.dart';
+import 'package:nai_huishi/domain/entities/image_tag_result.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
@@ -23,6 +24,116 @@ import 'package:sqflite/sqflite.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+      'seed and selected metadata persist without changing unselected settings',
+      () async {
+    final settings = _MemorySettings(
+        selectedModel: _modelId(
+            AppConstants.novelAiOfficialEndpointId, 'nai-diffusion-5-full'),
+        sampler: 'k_dpm_2',
+        steps: 23);
+    final vm = _createViewModel(settings);
+    await vm.loadModels();
+    vm.updateSeed(123);
+    await vm.importReferenceMetadata(
+        const ImageTagResult(source: TagSource.naiMetadata, metadata: {
+          'seed': 456,
+          'steps': 12,
+          'sampler': 'k_euler',
+          'cfg_rescale': 0.6
+        }),
+        {'seed', 'cfg_rescale'});
+    final restored = _createViewModel(settings);
+    await restored.loadModels();
+    expect(restored.seed, 456);
+    expect(restored.steps, 23);
+    expect(restored.selectedSampler, 'k_dpm_2');
+    expect(restored.cfgRescale, 0.6);
+    restored.updateSeed(null);
+    final random = _createViewModel(settings);
+    await random.loadModels();
+    expect(random.seed, isNull);
+  });
+
+  for (final endpoint in [
+    AppConstants.novelAiOfficialEndpointId,
+    AppConstants.novelAiImageGenerationsEndpointId,
+    AppConstants.novelAiChatCompletionsEndpointId
+  ]) {
+    test('V5 accepts and restores 50 steps on $endpoint', () async {
+      final settings = _MemorySettings(
+          selectedModel: _modelId(endpoint, 'nai-diffusion-5-full'),
+          sampler: 'k_euler');
+      final vm = _createViewModel(settings);
+      await vm.loadModels();
+      await vm.updateSteps(50);
+      expect(vm.steps, 50);
+      final task = vm.buildInpaintTask(
+          sourcePath: 'source.png',
+          maskPath: 'mask.png',
+          prompt: 'test',
+          negativePrompt: '',
+          strength: 1,
+          disabledOriginalImage: false,
+          colorCorrect: true);
+      expect(task.steps, 50);
+      final restored = _createViewModel(settings);
+      await restored.loadModels();
+      expect(restored.steps, 50);
+      await restored.updateSteps(0);
+      expect(restored.steps, 1);
+      await restored.updateSteps(99);
+      expect(restored.steps, 50);
+    });
+  }
+
+  test('zero estimate includes 1024 square and still requires under 28 steps',
+      () async {
+    final settings = _MemorySettings(
+        selectedModel: _modelId(
+            AppConstants.novelAiOfficialEndpointId, 'nai-diffusion-5-full'),
+        sampler: 'k_euler',
+        steps: 27);
+    final vm = _createViewModel(settings);
+    await vm.loadModels();
+    await vm.updateSelectedResolution('832x1216');
+    expect(vm.officialCostPerImage, 0);
+    await vm.updateSteps(28);
+    expect(vm.officialCostPerImage, greaterThan(0));
+    await vm.updateSteps(27);
+    await vm.updateSelectedResolution('1024x1024');
+    expect(vm.officialCostPerImage, 0);
+    await vm.updateSteps(28);
+    expect(vm.officialCostPerImage, greaterThan(0));
+    await vm.updateSteps(27);
+    await vm.updateSelectedResolution('1024x1536');
+    expect(vm.officialCostPerImage, greaterThan(0));
+    await vm.updateSelectedResolution('1216x832');
+    expect(vm.officialCostPerImage, 0);
+  });
+
+  test('custom resolutions can be deleted without removing built-in presets',
+      () async {
+    final settings = _MemorySettings(
+        selectedModel: _modelId(
+            AppConstants.novelAiOfficialEndpointId, 'nai-diffusion-5-full'),
+        sampler: 'k_euler');
+    final vm = _createViewModel(settings);
+    await vm.loadModels();
+    final presets = List.of(vm.availableResolutions);
+    expect(await vm.addCustomResolution(704, 960), isNull);
+    final restored = _createViewModel(settings);
+    await restored.loadModels();
+    expect(restored.availableResolutions, contains('704x960'));
+    await restored.removeCustomResolution('704x960');
+    expect(restored.availableResolutions, containsAll(presets));
+    expect(restored.availableResolutions, isNot(contains('704x960')));
+    expect(restored.selectedResolution, isNot('704x960'));
+    final deleted = _createViewModel(settings);
+    await deleted.loadModels();
+    expect(deleted.availableResolutions, isNot(contains('704x960')));
+  });
 
   test('Medium runtime constraints preserve High settings across restart',
       () async {
@@ -337,6 +448,8 @@ class _MemorySettings implements SettingsRepository {
     this.samplerReadStarted,
   });
 
+  int? seed;
+  List<String> customResolutions = [];
   String? selectedModel;
   String sampler;
   int steps;
@@ -408,6 +521,11 @@ class _MemorySettings implements SettingsRepository {
       case 'setCfgRescaleDraft':
         cfgRescale = args[0] as double;
         return Future<void>.value();
+      case 'getSeedDraft':
+        return Future<int?>.value(seed);
+      case 'setSeedDraft':
+        seed = args[0] as int?;
+        return Future<void>.value();
       case 'getStepsDraft':
         return Future<int>.value(steps);
       case 'setStepsDraft':
@@ -437,7 +555,10 @@ class _MemorySettings implements SettingsRepository {
       case 'getBatchCount':
         return Future<int>.value(1);
       case 'getCustomResolutions':
-        return Future<List<String>>.value(const []);
+        return Future<List<String>>.value(customResolutions);
+      case 'setCustomResolutions':
+        customResolutions = List.of(args[0] as List<String>);
+        return Future<void>.value();
       case 'getEndpoints':
         return Future<List<ApiEndpoint>>.value(
           args[0] == ImageProviderType.novelAi ? endpoints : const [],

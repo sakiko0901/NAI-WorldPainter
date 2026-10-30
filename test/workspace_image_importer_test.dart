@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:nai_huishi/data/datasources/local/reference_image_importer.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -10,6 +11,35 @@ void main() {
   setUp(
       () => folder = Directory.systemTemp.createTempSync('workspace-import-'));
   tearDown(() => folder.deleteSync(recursive: true));
+
+  test('reference compression preserves original metadata for selective import',
+      () async {
+    final original = img.Image(width: 2200, height: 1100)
+      ..textData = {
+        'Software': 'NovelAI',
+        'Comment': jsonEncode({
+          'prompt': 'silver hair',
+          'seed': 0,
+          'steps': 23,
+          'width': 2200,
+          'height': 1100
+        }),
+      };
+    final file = File('${folder.path}/source.png');
+    await file.writeAsBytes(img.encodePng(original));
+    final result = await prepareReferenceImage((
+      source: file.path,
+      target: '${folder.path}/prepared.png',
+      preserveSize: false
+    ));
+    expect(result.width, 2048);
+    expect(result.height, 1024);
+    expect(result.metadata!.metadata!['seed'], 0);
+    expect(result.metadata!.metadata!['width'], 2200);
+    expect(result.metadata!.selectedGeneralTags, 'silver hair');
+    expect(img.decodePng(await file.readAsBytes())!.width, 2200);
+    expect(img.decodePng(await File(result.path).readAsBytes())!.width, 2048);
+  });
 
   test('plain imported image records actual size without inventing seed',
       () async {

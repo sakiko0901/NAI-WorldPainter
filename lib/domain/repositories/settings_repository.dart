@@ -65,6 +65,8 @@ abstract class SettingsRepository {
   Future<void> setCfgRescaleDraft(double value);
 
   Future<int> getStepsDraft();
+  Future<int?> getSeedDraft();
+  Future<void> setSeedDraft(int? value);
   Future<void> setStepsDraft(int value);
 
   Future<bool> getStepsLocked();

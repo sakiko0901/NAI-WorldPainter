@@ -3,9 +3,28 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data' as typed_data;
 import 'package:image/image.dart' as img;
+import 'package:flutter/foundation.dart' show compute;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:nai_huishi/core/constants/app_constants.dart';
+
+typed_data.Uint8List _cropReferenceBytes(
+        ({
+          typed_data.Uint8List bytes,
+          int x,
+          int y,
+          int width,
+          int height,
+          int targetWidth,
+          int targetHeight,
+        }) input) =>
+    ImageUtils.cropImg2ImgBytes(input.bytes,
+        cropX: input.x,
+        cropY: input.y,
+        cropWidth: input.width,
+        cropHeight: input.height,
+        targetWidth: input.targetWidth,
+        targetHeight: input.targetHeight);
 
 class ImageUtils {
   ImageUtils._();
@@ -192,15 +211,15 @@ class ImageUtils {
     required int targetWidth,
     required int targetHeight,
   }) async {
-    final encoded = cropImg2ImgBytes(
-      await source.readAsBytes(),
-      cropX: cropX,
-      cropY: cropY,
-      cropWidth: cropWidth,
-      cropHeight: cropHeight,
+    final encoded = await compute(_cropReferenceBytes, (
+      bytes: await source.readAsBytes(),
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
       targetWidth: targetWidth,
       targetHeight: targetHeight,
-    );
+    ));
     final dir = await getTemporaryDirectory();
     final target = File(p.join(
       dir.path,

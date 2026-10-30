@@ -506,12 +506,13 @@ class _UnusedHistoryRepository implements HistoryRepository {
 Future<void> _selectDrawingTool(WidgetTester tester, String label,
     {bool close = true}) async {
   await tester.ensureVisible(find.text(label));
-  await tester.tap(find.text(label));
+  if (close) {
+    await tester.tap(find.text(label));
+  } else {
+    await tester.longPress(find.text(label));
+  }
   await tester.pumpAndSettle();
   if (close) {
-    final done = find.byKey(const ValueKey('inpaint-brush-done'));
-    await tester.ensureVisible(done);
-    await tester.tap(done);
-    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
   }
 }

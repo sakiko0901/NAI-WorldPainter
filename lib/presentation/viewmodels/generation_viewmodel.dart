@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
@@ -28,6 +27,8 @@ import 'package:nai_huishi/domain/usecases/manage_settings.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:uuid/uuid.dart';
+import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
+import 'package:nai_huishi/domain/entities/image_tag_result.dart';
 
 /// 生图页模型选项（聚合多供应商）
 class ImageModelOption {
@@ -186,8 +187,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   String _officialBaseUrl = ApiConstants.officialImageBaseUrl;
 
   bool get isCustomNovelAiEndpoint =>
-      isOfficialEndpoint &&
-      NovelAiConnection.isCustomBaseUrl(_officialBaseUrl);
+      isOfficialEndpoint && NovelAiConnection.isCustomBaseUrl(_officialBaseUrl);
 
   bool get isV5Model {
     final model =
@@ -410,10 +410,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     final res = _parseResolution(selectedResolution);
+    if (steps < 28 && res.$1 * res.$2 <= 1024 * 1024) return 0;
     return OfficialCostCalculator.calculateCost(
       width: res.$1,
       height: res.$2,
-      steps: isV5Model ? steps.clamp(1, 28) : steps.clamp(1, 50),
+      steps: steps.clamp(1, 50),
       model: model,
       strength: img2imgSourceImagePath != null ? img2imgStrength : 1.0,
     );
@@ -560,8 +561,11 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     scale = await _manageSettings.getScaleDraft();
     cfgRescale = await _manageSettings.getCfgRescaleDraft();
     steps = await _manageSettings.getStepsDraft();
+    final savedSeed = await _manageSettings.getSeedDraft();
+    if (!_seedUserEdited) seed = savedSeed;
     isStepsLocked = await _manageSettings.getStepsLocked();
-    if (isStepsLocked &&
+    if (isIkunEndpoint &&
+        isStepsLocked &&
         !_selectedModelIsMediumEffort &&
         steps != ApiConstants.defaultSteps) {
       steps = ApiConstants.defaultSteps;
@@ -673,6 +677,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
           } catch (_) {
             completed = task;
           }
+          completed = await _parseResultMetadata(completed);
           _recordDailyStat(task.taskId, task.completedAt ?? task.createdAt);
           lastCompletedTask = completed;
           final existingIndex = sessionResults
@@ -1406,6 +1411,69 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     customResolutions = await _manageSettings.getCustomResolutions();
   }
 
+  Future<void> removeCustomResolution(String value) async {
+    if (!customResolutions.contains(value)) return;
+    customResolutions = [...customResolutions]..remove(value);
+    await _manageSettings.setCustomResolutions(customResolutions);
+    if (selectedResolution == value && !availableResolutions.contains(value)) {
+      await updateSelectedResolution(_defaultResolutionForCurrentProvider);
+    }
+    notifyListeners();
+  }
+
+  Future<void> importReferenceMetadata(
+      ImageTagResult tags, Set<String> fields) async {
+    await _defaultsLoaded;
+    final data = tags.metadata ?? {};
+    num? number(String key) => num.tryParse('${data[key]}');
+    if (fields.contains('prompt')) await updatePrompt(tags.selectedGeneralTags);
+    if (fields.contains('negative'))
+      await updateNegativePrompt(tags.negativePrompt ?? '');
+    if (fields.contains('characters') && tags.characters != null) {
+      characters = List.of(tags.characters!);
+      await _saveCharactersDraft();
+    }
+    if (fields.contains('size')) {
+      final width = number('width')?.toInt();
+      final height = number('height')?.toInt();
+      if (width != null && height != null) {
+        final size = '${width}x$height';
+        if (availableResolutions.contains(size)) {
+          await updateSelectedResolution(size);
+        } else {
+          await addCustomResolution(width, height);
+        }
+      }
+    }
+    if (fields.contains('seed') && number('seed') != null)
+      updateSeed(number('seed')!.toInt());
+    if (fields.contains('steps') && number('steps') != null) {
+      if (isIkunEndpoint && isStepsLocked && number('steps') != 28)
+        await toggleStepsLock();
+      await updateSteps(number('steps')!.toInt());
+    }
+    if (fields.contains('scale') && number('scale') != null) {
+      await updateScale(number('scale')!.toDouble().clamp(1, 10));
+    }
+    if (fields.contains('cfg_rescale') && number('cfg_rescale') != null) {
+      await updateCfgRescale(number('cfg_rescale')!.toDouble().clamp(0, 1));
+    }
+    final samplers = isIkunEndpoint
+        ? ApiConstants.ikunSupportedSamplers
+        : ApiConstants.supportedSamplers;
+    if (fields.contains('sampler') && samplers.contains(data['sampler'])) {
+      await updateSelectedSampler(data['sampler'] as String);
+    }
+    final schedules = isIkunEndpoint
+        ? ApiConstants.ikunSupportedNoiseSchedules
+        : ApiConstants.supportedNoiseSchedules;
+    if (fields.contains('noise_schedule') &&
+        schedules.contains(data['noise_schedule'])) {
+      await updateSelectedNoiseSchedule(data['noise_schedule'] as String);
+    }
+    notifyListeners();
+  }
+
   void updateSelectedNanoImageSize(String value) {
     selectedNanoImageSize = value;
     notifyListeners();
@@ -1464,11 +1532,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
     steps = isMediumEffort
         ? 14
-        : isV5Model
-            ? value.clamp(1, 28)
-            : isIkunEndpoint && isStepsLocked
-                ? ApiConstants.defaultSteps
-                : value.clamp(1, 50);
+        : isIkunEndpoint && isStepsLocked
+            ? ApiConstants.defaultSteps
+            : value.clamp(1, 50);
     _rememberHighEffortSampling();
     await _manageSettings.setStepsDraft(steps);
     notifyListeners();
@@ -1676,15 +1742,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  bool _seedUserEdited = false;
   void updateSeed(int? value) {
+    _seedUserEdited = true;
     seed = value;
+    unawaited(_manageSettings.setSeedDraft(value));
     notifyListeners();
   }
 
   void applySeed(int? value) {
     appliedSeed = value;
-    seed = value;
-    notifyListeners();
+    updateSeed(value);
   }
 
   void setGenerationMode(GenerationMode mode) {
@@ -2094,11 +2162,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       noiseSchedule: taskNoiseSchedule,
       steps: isMediumEffort
           ? 14
-          : isV5Model
-              ? steps.clamp(1, 28)
-              : isIkunEndpoint && isStepsLocked
-                  ? ApiConstants.defaultSteps
-                  : steps.clamp(1, 50),
+          : isIkunEndpoint && isStepsLocked
+              ? ApiConstants.defaultSteps
+              : steps.clamp(1, 50),
       useCoords: enabledCharacters.any(
         (character) => character.centerX != null && character.centerY != null,
       ),
@@ -2284,6 +2350,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     return true;
   }
 
+  /// A result's seed comes from its own file or server response, never the draft.
+  final Set<String> _parsedImagePaths = {};
+  Future<GenerationTask> _parseResultMetadata(GenerationTask task) async {
+    final path = task.imagePath;
+    if (path == null || _parsedImagePaths.contains(path)) return task;
+    try {
+      final parsed = await compute(WorkspaceImageImporter.read, path);
+      _parsedImagePaths.add(path);
+      return task.copyWith(seed: parsed.seed ?? task.seed);
+    } catch (_) {
+      return task;
+    }
+  }
+
   /// Accept an already completed edit, including transient inpaint candidates.
   /// This is allowed during generation; importing unrelated images is not.
   void addCompletedWorkspaceResult(GenerationTask task) {
@@ -2303,6 +2383,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     lastCompletedTask = task;
     _userPickedResult = false;
     errorMessage = null;
+    notifyListeners();
+    unawaited(_refreshCompletedMetadata(task));
+  }
+
+  Future<void> _refreshCompletedMetadata(GenerationTask task) async {
+    final parsed = await _parseResultMetadata(task);
+    if (_disposed || parsed.seed == task.seed) return;
+    final index = sessionResults.indexWhere((item) =>
+        item.taskId == task.taskId && item.imagePath == task.imagePath);
+    if (index < 0) return;
+    sessionResults = [...sessionResults]..[index] = parsed;
+    if (lastCompletedTask?.taskId == task.taskId) lastCompletedTask = parsed;
     notifyListeners();
   }
 
@@ -2342,13 +2434,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   Future<GenerationTask> _processedResult(
       GenerationTask source, String outputPath) async {
-    final dimensions = await compute(_processedImageDimensions, outputPath);
+    final parsed = await compute(WorkspaceImageImporter.read, outputPath);
+    _parsedImagePaths.add(outputPath);
     return source.copyWith(
       clearId: true,
       taskId: const Uuid().v4(),
-      width: dimensions.$1,
-      height: dimensions.$2,
-      size: '${dimensions.$1}x${dimensions.$2}',
+      width: parsed.width,
+      height: parsed.height,
+      size: '${parsed.width}x${parsed.height}',
+      seed: parsed.seed ?? source.seed,
       imagePath: outputPath,
       clearImageUrl: true,
       status: AppConstants.taskSuccess,
@@ -2848,6 +2942,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     }
     seed = task.seed;
     appliedSeed = task.seed;
+    _seedUserEdited = true;
+    await _manageSettings.setSeedDraft(seed);
     sourceImagePath =
         task.mode == GenerationMode.inpainting ? task.sourceImagePath : null;
     maskImagePath =
@@ -3112,10 +3208,4 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _previewUpdates.dispose();
     super.dispose();
   }
-}
-
-(int, int) _processedImageDimensions(String path) {
-  final image = img.decodeImage(File(path).readAsBytesSync());
-  if (image == null) throw const FormatException('无法读取处理后的图片');
-  return (image.width, image.height);
 }

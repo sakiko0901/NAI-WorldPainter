@@ -46,10 +46,10 @@ class OfficialNovelAiAccount {
   });
 }
 
-/// Opus V5 体力（免费额度）信息，来自 /user/data 的 usage 字段。
+/// 官方订阅信息与 Opus V5 体力，来自 /user/subscription。
 class OfficialNovelAiV5Usage {
   /// 剩余百分比（0-100），即官网汉堡菜单里那条体力条。
-  final double percent;
+  final double? percent;
 
   /// 是否已扣穿：true 时免费 V5 额度用完，再出图会开始扣 Anlas。
   final bool isNegative;
@@ -59,6 +59,9 @@ class OfficialNovelAiV5Usage {
 
   /// 订阅档位（3 = Opus）。
   final int? tier;
+
+  /// 已付费订阅周期的结束时间；取消自动续费后仍然有效。
+  final DateTime? expiresAt;
 
   /// 订阅赠送 Anlas（fixedTrainingStepsLeft）。
   final int? fixedTrainingStepsLeft;
@@ -79,6 +82,7 @@ class OfficialNovelAiV5Usage {
     required this.isNegative,
     this.nextRefill,
     this.tier,
+    this.expiresAt,
     this.fixedTrainingStepsLeft,
     this.purchasedTrainingSteps,
   });
@@ -167,9 +171,7 @@ class OfficialNovelAiApiService {
     }
   }
 
-  /// 查询 Opus V5 体力（免费额度剩余）。
-  /// 打 GET /user/data，从 subscription.usage 里取 percent / isNegative /
-  /// nextRefill；字段官方未写进公开文档，以实际响应为准，取不到时返回 null。
+  /// 查询官方订阅到期时间、Anlas 与 Opus V5 体力（免费额度剩余）。
   Future<OfficialNovelAiV5Usage?> fetchV5Usage(String token) async {
     if (_isCustom) return null;
     if (token.trim().isEmpty) {
@@ -177,14 +179,14 @@ class OfficialNovelAiApiService {
     }
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        ApiConstants.officialUserData,
+        ApiConstants.officialUserSubscription,
         options: _options(token, responseType: ResponseType.json),
       );
       final root = response.data ?? const <String, dynamic>{};
       final info = _map(root['information']) ?? _map(root['data']) ?? root;
       final subscription =
-          _map(info['subscription']) ?? _map(root['subscription']);
-      if (subscription == null) return null;
+          _map(info['subscription']) ?? _map(root['subscription']) ?? info;
+      if (subscription.isEmpty) return null;
       // usage 可能出现在 subscription.usage / subscription.activeExperiment
       // 等位置，逐层兜底解析。
       Map<String, dynamic>? usage = _map(subscription['usage']);
@@ -202,22 +204,28 @@ class OfficialNovelAiApiService {
           }
         }
       }
-      if (usage == null || !usage.containsKey('percent')) return null;
-      final percentValue = usage['percent'];
+      final percentValue = usage?['percent'];
       final percent = percentValue is num
           ? percentValue.toDouble()
           : double.tryParse('$percentValue');
-      if (percent == null) return null;
-      final nextRefillValue = usage['nextRefill'];
+      final nextRefillValue = usage?['nextRefill'];
       final training = _map(subscription['trainingStepsLeft']);
       int? parseNum(Object? value) => value is num
           ? value.round()
           : value != null
               ? int.tryParse('$value')
               : null;
+      final expiresAtSeconds = parseNum(subscription['expiresAt']);
       return OfficialNovelAiV5Usage(
-        percent: percent.clamp(0, 100),
-        isNegative: usage['isNegative'] == true,
+        percent:
+            percent != null && percent.isFinite ? percent.clamp(0, 100) : null,
+        isNegative: usage?['isNegative'] == true,
+        expiresAt: expiresAtSeconds != null &&
+                expiresAtSeconds > 0 &&
+                expiresAtSeconds <= 8640000000000
+            ? DateTime.fromMillisecondsSinceEpoch(expiresAtSeconds * 1000,
+                isUtc: true)
+            : null,
         nextRefill: nextRefillValue is int
             ? nextRefillValue
             : int.tryParse('$nextRefillValue'),

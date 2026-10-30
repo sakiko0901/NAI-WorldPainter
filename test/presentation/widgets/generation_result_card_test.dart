@@ -30,6 +30,8 @@ void main() {
                   dispatched.add('upscale:${task.taskId}'),
               onEnhance: (task) async =>
                   dispatched.add('enhance:${task.taskId}'),
+              onDirector: (task) async =>
+                  dispatched.add('director:${task.taskId}'),
             ),
           ),
         ),
@@ -49,10 +51,12 @@ void main() {
     expect(find.text('导入到局部重绘'), findsOneWidget);
     expect(find.text('Upscale'), findsOneWidget);
     expect(find.text('Enhance'), findsOneWidget);
+    expect(find.text('导演工具'), findsOneWidget);
     expect(find.text('Pixiv'), findsNothing);
 
     for (final (label, action) in [
       ('导入到局部重绘', 'inpaint'),
+      ('导演工具', 'director'),
       ('Upscale', 'upscale'),
       ('Enhance', 'enhance'),
     ]) {
@@ -66,6 +70,7 @@ void main() {
     }
     expect(dispatched, [
       'inpaint:${result.taskId}',
+      'director:${result.taskId}',
       'upscale:${result.taskId}',
       'enhance:${result.taskId}',
     ]);

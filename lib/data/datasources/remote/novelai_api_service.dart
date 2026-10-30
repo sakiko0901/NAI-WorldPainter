@@ -523,7 +523,7 @@ class NovelAiApiService {
       'params_version': 3,
       'width': task.width,
       'height': task.height,
-      'steps': task.steps.clamp(1, 28),
+      'steps': task.steps.clamp(1, 50),
       'scale': task.scale,
       'sampler': task.sampler,
       if (task.seed != null) 'seed': task.seed,

@@ -36,17 +36,23 @@ class DirectorToolsViewModel extends ChangeNotifier {
   String prompt = '';
   int defry = 5;
   bool isProcessing = false;
-  bool isLoadingModels = false;
-  List<String> availableModels = const [];
+  bool isLoading = false;
   String? selectedModel;
   String? errorMessage;
   ApiEndpoint? _endpoint7877;
   ApiEndpoint? _endpointIkun;
   ApiEndpoint? _endpointOfficial;
-  List<String> _models7877 = const [];
-  List<String> _modelsIkun = const [];
-  String? _model7877;
-  String? _modelIkun;
+  bool _disposed = false;
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   String get channelName => switch (selectedChannel) {
         DirectorChannel.gateway7877 => '7877',
@@ -66,9 +72,9 @@ class DirectorToolsViewModel extends ChangeNotifier {
       };
 
   Future<void> load() async {
-    isLoadingModels = true;
+    isLoading = true;
     errorMessage = null;
-    notifyListeners();
+    _notify();
     try {
       final endpoints = await _settings.getEndpoints(ImageProviderType.novelAi);
       _endpoint7877 = endpoints
@@ -83,8 +89,6 @@ class DirectorToolsViewModel extends ChangeNotifier {
           .where((endpoint) =>
               endpoint.id == AppConstants.novelAiOfficialEndpointId)
           .firstOrNull;
-      _models7877 = _availableModels(_endpoint7877);
-      _modelsIkun = _availableModels(_endpointIkun);
 
       final activeId =
           await _settings.getActiveEndpointId(ImageProviderType.novelAi);
@@ -93,131 +97,88 @@ class DirectorToolsViewModel extends ChangeNotifier {
           : activeId == AppConstants.novelAiImageGenerationsEndpointId
               ? DirectorChannel.ikun
               : DirectorChannel.gateway7877;
-      final activeModel =
-          await _settings.getActiveModel(ImageProviderType.novelAi);
-      _model7877 = _models7877.firstOrNull;
-      _modelIkun = _modelsIkun.firstOrNull;
-      if (selectedChannel == DirectorChannel.gateway7877 &&
-          _models7877.contains(activeModel)) {
-        _model7877 = activeModel;
-      }
-      if (selectedChannel == DirectorChannel.ikun &&
-          _modelsIkun.contains(activeModel)) {
-        _modelIkun = activeModel;
-      }
-      _syncSelectedModel();
+      selectedModel = await _settings.getActiveModel(ImageProviderType.novelAi);
+      _validateChannel();
     } catch (e) {
-      availableModels = const [];
       selectedModel = null;
-      errorMessage = '加载 $channelName 模型失败：$e';
+      errorMessage = '加载渠道失败：$e';
     } finally {
-      isLoadingModels = false;
-      notifyListeners();
+      isLoading = false;
+      _notify();
     }
   }
 
-  List<String> _availableModels(ApiEndpoint? endpoint) {
-    if (endpoint == null) return const [];
-    final seen = <String>{};
-    return endpoint.models.map((model) => model.trim()).where((model) {
-      final lower = model.toLowerCase();
-      return model.isNotEmpty &&
-          !lower.endsWith('-limit') &&
-          !lower.contains('inpaint') &&
-          seen.add(model);
-    }).toList();
-  }
-
-  void _syncSelectedModel() {
-    if (_usesOfficial) {
-      availableModels = const [];
-      selectedModel = null;
-    } else if (selectedChannel == DirectorChannel.gateway7877) {
-      availableModels = _models7877;
-      selectedModel = _model7877;
-    } else {
-      availableModels = _modelsIkun;
-      selectedModel = _modelIkun;
-    }
+  void _validateChannel() {
     final endpoint = _endpoint;
     if (endpoint == null ||
         (!_usesOfficial && endpoint.baseUrl.trim().isEmpty)) {
       errorMessage = '请先在 API 配置中配置 $channelName 渠道';
-    } else if (!_usesOfficial && selectedModel == null) {
-      errorMessage = '$channelName 渠道没有可用于导演工具的模型';
+    } else if (!_usesOfficial &&
+        (selectedModel == null || selectedModel!.trim().isEmpty)) {
+      errorMessage = '请先在生成页选择 NovelAI 模型';
     } else {
       errorMessage = null;
     }
   }
 
   Future<void> selectChannel(DirectorChannel channel) async {
-    if (channel == selectedChannel) return;
+    if (isProcessing || isLoading || channel == selectedChannel) return;
     selectedChannel = channel;
     outputPath = null;
-    _syncSelectedModel();
-    notifyListeners();
-  }
-
-  Future<void> selectModel(String? model) async {
-    if (model == null || !availableModels.contains(model)) return;
-    if (selectedChannel == DirectorChannel.gateway7877) {
-      _model7877 = model;
-    } else {
-      _modelIkun = model;
-    }
-    selectedModel = model;
-    outputPath = null;
-    errorMessage = null;
-    notifyListeners();
-    await _settings.setActiveModel(ImageProviderType.novelAi, model);
+    _validateChannel();
+    _notify();
   }
 
   void selectInput(String path) {
+    if (isProcessing) return;
     inputPath = path;
     outputPath = null;
     errorMessage = null;
-    notifyListeners();
+    _notify();
   }
 
   void selectTool(DirectorToolType tool) {
+    if (isProcessing) return;
     selectedTool = tool;
     outputPath = null;
     errorMessage = null;
-    notifyListeners();
+    _notify();
   }
 
   void updatePrompt(String value) => prompt = value;
 
   void updateDefry(int value) {
     defry = value.clamp(0, 5);
-    notifyListeners();
+    _notify();
   }
 
   Future<bool> process() async {
+    if (isProcessing || isLoading || _disposed) return false;
     final source = inputPath;
     if (source == null) {
       errorMessage = '请先选择图片';
-      notifyListeners();
+      _notify();
       return false;
     }
     final endpoint = _endpoint;
-    final model = selectedModel;
     if (endpoint == null ||
         (!_usesOfficial && endpoint.baseUrl.trim().isEmpty)) {
       errorMessage = '请先在 API 配置中配置 $channelName 渠道';
-      notifyListeners();
+      _notify();
       return false;
     }
-    if (!_usesOfficial && (model == null || model.isEmpty)) {
-      errorMessage = '请选择 $channelName NovelAI 模型';
-      notifyListeners();
-      return false;
-    }
-
     isProcessing = true;
     errorMessage = null;
-    notifyListeners();
+    _notify();
     try {
+      // The generation page owns the model; channel changes never overwrite it.
+      selectedModel = await _settings.getActiveModel(ImageProviderType.novelAi);
+      final model = selectedModel;
+      if (!_usesOfficial && (model == null || model.trim().isEmpty)) {
+        errorMessage = '请先在生成页选择 NovelAI 模型';
+        return false;
+      }
+      if (_disposed) return false;
       final bytes = _usesOfficial
           ? await _officialApi.forBaseUrl(endpoint.baseUrl).augmentImage(
                 imagePath: source,
@@ -255,7 +216,7 @@ class DirectorToolsViewModel extends ChangeNotifier {
       return false;
     } finally {
       isProcessing = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -278,7 +239,7 @@ class DirectorToolsViewModel extends ChangeNotifier {
       return await _saveImage.saveToGallery(path);
     } catch (e) {
       errorMessage = '保存失败：$e';
-      notifyListeners();
+      _notify();
       return false;
     }
   }

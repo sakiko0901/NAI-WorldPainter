@@ -59,7 +59,7 @@ void main() {
   });
 
   testWidgets(
-    'settings are a full page and edits preserve the creation draft and scroll',
+    'side settings preserve the creation draft and scroll',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(393, 844);
@@ -111,39 +111,28 @@ void main() {
         '/generation-settings',
       );
       expect(find.byType(BottomSheet), findsNothing);
-      expect(find.text('AI 模型'), findsOneWidget);
+      expect(find.text('模型选择'), findsOneWidget);
       expect(find.text('图像尺寸'), findsOneWidget);
-      expect(find.text('批量生成'), findsOneWidget);
-      final contentViewport = tester.getRect(
-        find.descendant(
-          of: settingsPage,
-          matching: find.byType(SingleChildScrollView),
-        ),
-      );
-      for (final label in ['图像尺寸', '批量生成']) {
-        final labelRect = tester.getRect(find.text(label));
-        expect(labelRect.top, greaterThanOrEqualTo(contentViewport.top));
-        expect(labelRect.bottom, lessThanOrEqualTo(contentViewport.bottom));
-      }
-
-      final batchSlider = find.descendant(
-        of: settingsPage,
-        matching: find.byType(Slider),
-      );
-      expect(batchSlider, findsOneWidget);
-      final sliderRect = tester.getRect(batchSlider);
-      await tester.tapAt(
-        Offset(sliderRect.right - 48, sliderRect.center.dy),
-      );
+      expect(tester.getRect(settingsPage).left, greaterThan(0));
+      expect(tester.getRect(settingsPage).right, closeTo(393, 0.1));
+      expect(find.descendant(of: settingsPage, matching: find.text('批量生成')),
+          findsNothing);
+      expect(
+          find.descendant(
+              of: settingsPage, matching: find.textContaining('预计')),
+          findsNothing);
+      await tester.ensureVisible(find.text('高级参数'));
       await tester.pumpAndSettle();
-      expect(vm.batchCount, greaterThan(1));
-      expect(vm.batchUpdateCount, greaterThan(0));
+      expect(find.text('Seed'), findsOneWidget);
+      expect(find.text('采样算法'), findsOneWidget);
+      vm.updateSeed(12345);
+      await tester.pump();
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('生成参数'), findsOneWidget);
-      expect(vm.batchCount, greaterThan(1));
+      expect(vm.seed, 12345);
       expect(vm.prompt, 'keep this prompt draft');
       expect(
         tester.widget<TextField>(promptField).controller!.text,
@@ -185,42 +174,33 @@ void main() {
           .first;
       final scrollState = tester.state<ScrollableState>(settingsScroll);
       expect(scrollState.position.maxScrollExtent, greaterThan(0));
-      await tester.ensureVisible(find.text('采样与高级参数'));
+      await tester.ensureVisible(find.text('高级参数'));
       await tester.pumpAndSettle();
       expect(scrollState.position.pixels, greaterThan(0));
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('advanced parameters return through settings to creation', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(393, 844);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
+  testWidgets('batch slider is in the workspace and spans 1 to 30',
+      (tester) async {
+    vm.receive(frontendResult(id: 'A'));
+    vm.receive(frontendResult(id: 'B'));
     await tester.pumpWidget(_host(const GeneratePage()));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('生成参数'));
+    final finder = find.byKey(const ValueKey('workspace-batch-slider'));
+    await tester.ensureVisible(finder);
     await tester.pumpAndSettle();
-
-    final settingsPage = find.byKey(const ValueKey('generation-settings-page'));
-    await tester.ensureVisible(find.text('采样与高级参数'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('采样与高级参数'));
-    await tester.pumpAndSettle();
-    expect(find.text('高级参数'), findsOneWidget);
-
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-    expect(settingsPage, findsOneWidget);
-
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('生成参数'), findsOneWidget);
-    expect(find.byType(GeneratePage), findsOneWidget);
-    expect(find.text('创作'), findsNothing);
+    final slider = tester.widget<Slider>(finder);
+    expect(tester.getTopLeft(finder).dy,
+        greaterThan(tester.getBottomLeft(find.byTooltip('第 1 张结果')).dy));
+    expect(tester.getBottomLeft(finder).dy,
+        lessThan(tester.getTopLeft(find.text('保存图片')).dy));
+    expect(slider.min, 1);
+    expect(slider.max, 30);
+    slider.onChanged!(30);
+    await tester.pump();
+    expect(vm.batchCount, 30);
+    expect(find.text('30 张'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -244,7 +224,7 @@ void main() {
       find.byKey(const ValueKey('generation-settings-page')),
       findsOneWidget,
     );
-    expect(find.text('AI 模型'), findsOneWidget);
+    expect(find.text('模型选择'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

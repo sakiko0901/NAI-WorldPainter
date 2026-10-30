@@ -141,16 +141,10 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: const Text('工具'),
-        centerTitle: true,
-        flexibleSpace:
-            const FrostedSurface(radius: 0, child: SizedBox.expand()),
-      ),
       body: Stack(children: [
         const Positioned.fill(child: StudioBackground()),
         SafeArea(
-          top: false,
+          top: true,
           child: BackdropGroup(
               child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
@@ -322,6 +316,7 @@ class _SettingsPageState extends State<SettingsPage> {
       staminaPercent: _v5Usage?.percent,
       isNegative: _v5Usage?.isNegative ?? false,
       tier: _v5Usage?.tier,
+      expiresAt: _v5Usage?.expiresAt,
       anlas: _anlas,
       onRefresh: _loadV5Usage,
     );

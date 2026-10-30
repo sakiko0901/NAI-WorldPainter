@@ -13,6 +13,7 @@ import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
+import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
 
 import 'support/frontend_generation_fake.dart';
 
@@ -69,7 +70,9 @@ void main() {
         await tester.tap(find.byTooltip('生成参数'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.tap(find.text('模型与基础参数'));
+        expect(find.text('模型选择'), findsOneWidget);
+        expect(find.text('模型与基础参数'), findsNothing);
+        await tester.tap(find.byTooltip('关闭生成参数'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       });
@@ -156,6 +159,7 @@ void main() {
     expect(vm.characters, isEmpty);
     await tester.scrollUntilVisible(find.byTooltip('添加角色'), 240,
         scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('添加角色'));
     await tester.pumpAndSettle();
     expect(vm.characters, hasLength(1));
@@ -204,8 +208,8 @@ void main() {
             appearanceMode: AppearanceMode.dark, onAppearanceChanged: (_) {}),
         scale: 2));
     await tester.pumpAndSettle();
-    final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
-    expect(nav.height, lessThan(80));
+    expect(
+        tester.getSize(find.byType(StudioNavigationBar)).height, lessThan(80));
     expect(find.text('AI 助手'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

@@ -29,6 +29,36 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+      'generation parses the returned file seed without changing the seed draft',
+      () async {
+    final folder = await Directory.systemTemp.createTemp('generated_seed_');
+    addTearDown(() => folder.delete(recursive: true));
+    final image = img.Image(width: 16, height: 16)
+      ..textData = {
+        'Software': 'NovelAI',
+        'Comment': jsonEncode({'seed': 987654321}),
+      };
+    final file = File('${folder.path}/result.png');
+    await file.writeAsBytes(img.encodePng(image));
+    final history = _MemoryHistoryRepository();
+    final repository = _CapturingGenerationRepository(file.path);
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+        saveImage: SaveImageUseCase(history),
+        queue: queue);
+    addTearDown(vm.dispose);
+    await vm.loadModels();
+    vm.prompt = 'test prompt';
+    await vm.generate();
+    expect(vm.sessionResults.single.seed, 987654321);
+    expect(vm.lastCompletedTask!.seed, 987654321);
+    expect(vm.seed, isNull);
+  });
+
   for (final mode in Img2ImgMode.values) {
     test('official $mode img2img retains enabled role prompts and coordinates',
         () async {
@@ -2109,7 +2139,7 @@ void main() {
     }
   });
 
-  test('7877 V5 禁用 Vibe 并限制步数画幅，但保留角色提示词', () async {
+  test('7877 V5 支持 50 步并限制画幅，保留角色提示词', () async {
     final settings = _SettingsRepository();
     final history = _MemoryHistoryRepository();
     final queue = GenerationQueue(
@@ -2139,7 +2169,7 @@ void main() {
     expect(viewModel.supportsVibeReferences, isFalse);
     expect(viewModel.supportsCharacterPrompts, isTrue);
     await viewModel.updateSteps(50);
-    expect(viewModel.steps, 28);
+    expect(viewModel.steps, 50);
     expect(viewModel.availableResolutions, contains('1024x1024'));
     expect(viewModel.availableResolutions, contains('832x1216'));
     expect(viewModel.availableResolutions, isNot(contains('1024x1536')));
@@ -3015,6 +3045,14 @@ class _MemoryHistoryRepository implements HistoryRepository {
 }
 
 class _SettingsRepository implements SettingsRepository {
+  int? savedSeed;
+  @override
+  Future<int?> getSeedDraft() async => savedSeed;
+  @override
+  Future<void> setSeedDraft(int? value) async {
+    savedSeed = value;
+  }
+
   List<CharacterReferenceImage> savedVibeReferences = const [];
   List<PreciseReferenceImage> savedPreciseReferences = const [];
   ReferenceMode savedReferenceMode = ReferenceMode.vibe;

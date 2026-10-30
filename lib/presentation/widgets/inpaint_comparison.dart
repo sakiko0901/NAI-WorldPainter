@@ -7,12 +7,22 @@ class InpaintComparison extends StatefulWidget {
   final String beforePath;
   final String afterPath;
   final ValueChanged<bool> onGestureActive;
+  final String beforeLabel;
+  final String afterLabel;
+  final BoxFit fit;
+  final String semanticsLabel;
+  final Color? afterBackgroundColor;
 
   const InpaintComparison({
     super.key,
     required this.beforePath,
     required this.afterPath,
     required this.onGestureActive,
+    this.beforeLabel = '重绘前',
+    this.afterLabel = '重绘后',
+    this.fit = BoxFit.fill,
+    this.semanticsLabel = '重绘前后滑动对比',
+    this.afterBackgroundColor,
   });
 
   @override
@@ -30,12 +40,12 @@ class _InpaintComparisonState extends State<InpaintComparison> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, constraints) => Semantics(
-          label: '重绘前后滑动对比',
-          value: '重绘后显示 ${(_position * 100).round()}%',
+          label: widget.semanticsLabel,
+          value: '${widget.afterLabel}显示 ${(_position * 100).round()}%',
           increasedValue:
-              '重绘后显示 ${((_position + 0.1).clamp(0.0, 1.0) * 100).round()}%',
+              '${widget.afterLabel}显示 ${((_position + 0.1).clamp(0.0, 1.0) * 100).round()}%',
           decreasedValue:
-              '重绘后显示 ${((_position - 0.1).clamp(0.0, 1.0) * 100).round()}%',
+              '${widget.afterLabel}显示 ${((_position - 0.1).clamp(0.0, 1.0) * 100).round()}%',
           onIncrease: () => setState(
             () => _position = (_position + 0.1).clamp(0.0, 1.0),
           ),
@@ -59,15 +69,21 @@ class _InpaintComparisonState extends State<InpaintComparison> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.file(File(widget.beforePath), fit: BoxFit.fill),
+                    Image.file(File(widget.beforePath), fit: widget.fit),
                     ClipRect(
                       key: const ValueKey('inpaint-comparison-reveal'),
                       clipper: InpaintRevealClipper(_position),
-                      child:
-                          Image.file(File(widget.afterPath), fit: BoxFit.fill),
+                      child: ColoredBox(
+                        color:
+                            widget.afterBackgroundColor ?? Colors.transparent,
+                        child:
+                            Image.file(File(widget.afterPath), fit: widget.fit),
+                      ),
                     ),
-                    const Positioned(left: 8, top: 8, child: _Label('重绘后')),
-                    const Positioned(right: 8, top: 8, child: _Label('重绘前')),
+                    Positioned(
+                        left: 8, top: 8, child: _Label(widget.afterLabel)),
+                    Positioned(
+                        right: 8, top: 8, child: _Label(widget.beforeLabel)),
                     Positioned(
                       left: constraints.maxWidth * _position - 1,
                       top: 0,

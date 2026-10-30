@@ -82,6 +82,8 @@ class ManageSettingsUseCase {
       _repo.setCfgRescaleDraft(value);
 
   Future<int> getStepsDraft() => _repo.getStepsDraft();
+  Future<int?> getSeedDraft() => _repo.getSeedDraft();
+  Future<void> setSeedDraft(int? value) => _repo.setSeedDraft(value);
   Future<void> setStepsDraft(int value) => _repo.setStepsDraft(value);
 
   Future<bool> getStepsLocked() => _repo.getStepsLocked();

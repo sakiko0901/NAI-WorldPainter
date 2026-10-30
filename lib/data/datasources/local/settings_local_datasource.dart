@@ -145,6 +145,14 @@ class SettingsLocalDatasource {
       _prefs.setDouble(AppConstants.keyCfgRescaleDraft, value);
 
   int getStepsDraft() => _prefs.getInt(AppConstants.keyStepsDraft) ?? 28;
+  int? getSeedDraft() => _prefs.getInt('generation_seed_draft');
+  Future<void> setSeedDraft(int? value) async {
+    if (value == null) {
+      await _prefs.remove('generation_seed_draft');
+    } else {
+      await _prefs.setInt('generation_seed_draft', value);
+    }
+  }
   Future<void> setStepsDraft(int value) async =>
       _prefs.setInt(AppConstants.keyStepsDraft, value.clamp(1, 50));
 

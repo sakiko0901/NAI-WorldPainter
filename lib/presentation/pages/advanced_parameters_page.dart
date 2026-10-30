@@ -1,12 +1,14 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nai_huishi/presentation/widgets/studio_select.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 class AdvancedParametersPage extends StatefulWidget {
-  const AdvancedParametersPage({super.key});
+  final bool embedded;
+  const AdvancedParametersPage({super.key, this.embedded = false});
 
   @override
   State<AdvancedParametersPage> createState() => _AdvancedParametersPageState();
@@ -44,137 +46,73 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Text('高级参数'),
-        leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_left),
-          onPressed: () => Navigator.of(context).pop(),
+    final controls = SliderTheme(
+        data: SliderTheme.of(context).copyWith(
+          trackHeight: 4,
+          activeTickMarkColor: Colors.transparent,
+          inactiveTickMarkColor: Colors.transparent,
+          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
         ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        children: [
-          if (!_vm.isIkunEndpoint && !_vm.is7877Endpoint) ...[
-            _directorCard(isDark),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _seedInput(),
+            const SizedBox(height: 24),
+            _stepsControl(),
             const SizedBox(height: 16),
-          ],
-          _card(
-            isDark,
-            children: [
-              _stepsControl(),
-              const SizedBox(height: 22),
-              _slider(
+            _slider(
                 title: '引导比例',
                 subtitle: 'CFG Scale',
                 value: _vm.scale,
                 min: 1,
                 max: 10,
                 divisions: 18,
-                onChanged: _vm.updateScale,
-              ),
-              const SizedBox(height: 22),
-              _slider(
+                onChanged: _vm.updateScale),
+            const SizedBox(height: 16),
+            _slider(
                 title: '提示词引导重缩放',
                 subtitle: 'Prompt Guidance Rescale',
                 value: _vm.cfgRescale,
                 min: 0,
                 max: 1,
                 divisions: 10,
-                onChanged: _vm.updateCfgRescale,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _card(
-            isDark,
-            children: [
-              _dropdown(
+                onChanged: _vm.updateCfgRescale),
+            const SizedBox(height: 16),
+            _dropdown(
                 title: '采样算法',
                 value: _vm.selectedSampler,
                 values: _vm.isIkunEndpoint
                     ? ApiConstants.ikunSupportedSamplers
                     : ApiConstants.supportedSamplers,
-                onChanged: _vm.updateSelectedSampler,
-              ),
-              const SizedBox(height: 20),
-              _dropdown(
+                onChanged: _vm.updateSelectedSampler),
+            const SizedBox(height: 20),
+            _dropdown(
                 title: '噪声调度',
                 value: _vm.selectedNoiseSchedule,
                 values: _vm.isIkunEndpoint
                     ? ApiConstants.ikunSupportedNoiseSchedules
                     : ApiConstants.supportedNoiseSchedules,
-                onChanged: _vm.updateSelectedNoiseSchedule,
-              ),
-              const SizedBox(height: 20),
-              _seedInput(),
-            ],
-          ),
-        ],
-      ),
+                onChanged: _vm.updateSelectedNoiseSchedule),
+          ],
+        ));
+    if (widget.embedded) return controls;
+    return Scaffold(
+      appBar: AppBar(title: const Text('高级参数')),
+      body: SingleChildScrollView(
+          padding: const EdgeInsets.all(20), child: controls),
     );
   }
-
-  Widget _directorCard(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1C1C21) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          Icon(CupertinoIcons.video_camera_solid,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.45)),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('导演工具',
-                    style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.55),
-                      fontWeight: FontWeight.w700,
-                    )),
-                const SizedBox(height: 3),
-                Text('即将推出',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurfaceVariant
-                          .withValues(alpha: 0.45),
-                    )),
-              ],
-            ),
-          ),
-          const Icon(CupertinoIcons.lock_fill, size: 16, color: Colors.grey),
-        ],
-      ),
-    );
-  }
-
-  Widget _card(bool isDark, {required List<Widget> children}) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1C1C21) : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(children: children),
-      );
 
   Widget _stepsControl() {
     final isIkun = _vm.isIkunEndpoint;
-    final isLocked = isIkun && _vm.isStepsLocked;
-    final value = isLocked ? ApiConstants.defaultSteps : _vm.steps;
+    final isLocked = (isIkun && _vm.isStepsLocked) || _vm.isMediumEffort;
+    const maxSteps = 50.0;
+    final value = _vm.isMediumEffort
+        ? 14
+        : isLocked
+            ? ApiConstants.defaultSteps
+            : _vm.steps;
     final colors = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -182,7 +120,7 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
         Row(
           children: [
             const Expanded(
-              child: Text('生成步数 (Steps)',
+              child: Text('步数',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
             ),
             if (isIkun)
@@ -206,10 +144,10 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
           ],
         ),
         Slider(
-          value: value.toDouble(),
+          value: value.toDouble().clamp(1, maxSteps),
           min: 1,
-          max: 50,
-          divisions: 49,
+          max: maxSteps,
+          divisions: maxSteps.toInt() - 1,
           onChanged: isLocked ? null : (next) => _vm.updateSteps(next.round()),
         ),
         if (isIkun && _vm.isStepsLocked)
@@ -262,7 +200,8 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
           min: min,
           max: max,
           divisions: divisions,
-          onChanged: onChanged,
+          onChanged:
+              title == '提示词引导重缩放' && _vm.isMediumEffort ? null : onChanged,
         ),
       ],
     );
@@ -280,23 +219,15 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
         Text(title,
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        InputDecorator(
-          decoration: const InputDecoration(),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: value,
-              isExpanded: true,
-              borderRadius: BorderRadius.circular(20),
-              items: values
-                  .map((item) =>
-                      DropdownMenuItem(value: item, child: Text(item)))
-                  .toList(),
-              onChanged: (next) {
-                if (next != null) onChanged(next);
-              },
-            ),
-          ),
-        ),
+        StudioSelect<String>(
+            id: title == '采样算法' ? 'generation-sampler' : 'generation-noise',
+            label: title,
+            value: value,
+            options: [
+              for (final item in values) StudioSelectOption(item, item)
+            ],
+            onChanged:
+                title == '采样算法' && _vm.isMediumEffort ? null : onChanged),
       ],
     );
   }
@@ -311,7 +242,7 @@ class _AdvancedParametersPageState extends State<AdvancedParametersPage> {
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
-              labelText: '种子',
+              labelText: 'Seed',
               helperText: '留空时随机生成',
             ),
             onChanged: (value) =>

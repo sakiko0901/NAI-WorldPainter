@@ -8,6 +8,7 @@ class ApiConstants {
   static const String officialImageBaseUrl = 'https://image.novelai.net';
   static const String officialApiBaseUrl = 'https://api.novelai.net';
   static const String officialUserData = '/user/data';
+  static const String officialUserSubscription = '/user/subscription';
   static const String officialGenerateImage = '/ai/generate-image';
   static const String officialGenerateImageStream = '/ai/generate-image-stream';
   static const String officialEncodeVibe = '/ai/encode-vibe';

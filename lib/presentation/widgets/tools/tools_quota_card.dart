@@ -2,9 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
-/// Shows only quota values returned by the official NovelAI account endpoint.
-/// Image-count estimates stay unavailable because generation cost depends on
-/// the selected model, canvas, and step count.
+/// Displays official subscription, quota, and an approximate image count.
 class ToolsQuotaCard extends StatelessWidget {
   final bool tokenConfigured;
   final bool isLoading;
@@ -13,6 +11,7 @@ class ToolsQuotaCard extends StatelessWidget {
   final bool isNegative;
   final int? tier;
   final int? anlas;
+  final DateTime? expiresAt;
   final VoidCallback? onRefresh;
 
   const ToolsQuotaCard({
@@ -24,6 +23,7 @@ class ToolsQuotaCard extends StatelessWidget {
     required this.isNegative,
     required this.tier,
     required this.anlas,
+    this.expiresAt,
     this.onRefresh,
   });
 
@@ -50,6 +50,12 @@ class ToolsQuotaCard extends StatelessWidget {
     final staminaBarColor =
         percent == null ? colors.primary : staminaColor(percent, colors);
     final estimate = percent == null ? null : estimateImages(percent);
+    final expiry = tokenConfigured ? expiresAt?.toLocal() : null;
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    final expiryValue = expiry == null
+        ? '—'
+        : '${expiry.year}-${twoDigits(expiry.month)}-${twoDigits(expiry.day)}'
+            ' ${twoDigits(expiry.hour)}:${twoDigits(expiry.minute)}';
     final String? accountStatus;
     if (isLoading) {
       accountStatus = '正在读取';
@@ -112,36 +118,71 @@ class ToolsQuotaCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _QuotaMetric(
-            label: tier == 3 ? 'Opus V5 体力' : 'V5 体力',
-            value: staminaValue,
-            valueColor:
-                percent == null ? colors.onSurface : staminaBarColor,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _QuotaMetric(
+                  label: tier == 3 ? 'Opus V5 体力' : 'V5 体力',
+                  value: staminaValue,
+                  valueColor:
+                      percent == null ? colors.onSurface : staminaBarColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '订阅到期时间',
+                      textAlign: TextAlign.end,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      expiryValue,
+                      textAlign: TextAlign.end,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurface,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           if (hasStamina) ...[
             const SizedBox(height: 10),
             // Anlas 显示在体力条右上角（与体力百分比同字号）
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(
-                  'Anlas ',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                Text(
-                  tokenConfigured && anlas != null ? '$anlas' : '—',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                ),
-              ],
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    'Anlas ',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  Text(
+                    tokenConfigured && anlas != null ? '$anlas' : '—',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: colors.onSurface,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 4),
             ClipRRect(

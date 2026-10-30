@@ -163,6 +163,12 @@ class SettingsRepositoryImpl implements SettingsRepository {
   Future<int> getStepsDraft() async => _local.getStepsDraft();
 
   @override
+  Future<int?> getSeedDraft() async => _local.getSeedDraft();
+
+  @override
+  Future<void> setSeedDraft(int? value) => _local.setSeedDraft(value);
+
+  @override
   Future<void> setStepsDraft(int value) => _local.setStepsDraft(value);
 
   @override

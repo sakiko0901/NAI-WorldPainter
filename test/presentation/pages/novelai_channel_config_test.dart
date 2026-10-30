@@ -183,6 +183,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('official subscription expiry loads and refreshes with quota',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: buildNaiHuishiTheme(Brightness.dark),
+      home: SettingsPage(
+        appearanceMode: AppearanceMode.dark,
+        onAppearanceChanged: (_) {},
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('2026-11-30 08:50'), findsOneWidget);
+    api.expiresAt = DateTime(2026, 12, 30, 8, 50);
+    await tester.tap(find.byKey(const ValueKey('tools-quota-refresh')));
+    await tester.pumpAndSettle();
+    expect(find.text('2026-12-30 08:50'), findsOneWidget);
+    expect(find.text('2026-11-30 08:50'), findsNothing);
+    expect(api.accountRequests, 2);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('switching to custom clears an already visible official quota',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
@@ -270,14 +290,16 @@ class _TokenStoreFake extends OfficialNovelAiTokenStore {
 
 class _OfficialApiFake extends OfficialNovelAiApiService {
   int accountRequests = 0;
+  DateTime expiresAt = DateTime(2026, 11, 30, 8, 50);
 
   @override
   Future<OfficialNovelAiV5Usage?> fetchV5Usage(String token) async {
     accountRequests++;
-    return const OfficialNovelAiV5Usage(
+    return OfficialNovelAiV5Usage(
       percent: 90,
       isNegative: false,
       tier: 3,
+      expiresAt: expiresAt,
       fixedTrainingStepsLeft: 1000,
     );
   }

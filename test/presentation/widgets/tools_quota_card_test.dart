@@ -29,7 +29,8 @@ void main() {
     expect(find.text('官方 Token 未配置'), findsOneWidget);
     expect(find.text('V5 体力'), findsOneWidget);
     expect(find.text('预计剩余 —'), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
+    expect(find.text('订阅到期时间'), findsOneWidget);
+    expect(find.text('—'), findsNWidgets(2));
   });
 
   testWidgets('shows stamina with image estimate and Anlas beside bar', (
@@ -139,7 +140,53 @@ void main() {
     );
 
     expect(find.text('查询失败'), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
+    expect(find.text('—'), findsNWidgets(2));
     expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+        'expiry stays beside stamina on a narrow screen at scale $scale',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 720);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await tester.pumpWidget(_host(MediaQuery(
+        data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+        child: ToolsQuotaCard(
+          tokenConfigured: true,
+          isLoading: false,
+          hasError: false,
+          staminaPercent: 46,
+          isNegative: false,
+          tier: 3,
+          anlas: 5168,
+          expiresAt: DateTime(2026, 11, 30, 8, 50).toUtc(),
+        ),
+      )));
+      expect(find.text('2026-11-30 08:50'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('订阅到期时间')).dx,
+          greaterThan(tester.getTopLeft(find.text('Opus V5 体力')).dx));
+      expect(tester.getTopLeft(find.text('订阅到期时间')).dy,
+          tester.getTopLeft(find.text('Opus V5 体力')).dy);
+    });
+  }
+
+  testWidgets('expiry is visible when subscription has no stamina usage',
+      (tester) async {
+    await tester.pumpWidget(_host(ToolsQuotaCard(
+      tokenConfigured: true,
+      isLoading: false,
+      hasError: false,
+      staminaPercent: null,
+      isNegative: false,
+      tier: 1,
+      anlas: 1000,
+      expiresAt: DateTime(2026, 11, 30, 8, 50),
+    )));
+    expect(find.text('2026-11-30 08:50'), findsOneWidget);
+    expect(find.text('—'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

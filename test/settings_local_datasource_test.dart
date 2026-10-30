@@ -8,6 +8,31 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test(
+      'all advanced draft values survive reload including seed zero and random',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final settings = SettingsLocalDatasource(prefs);
+    await settings.setSeedDraft(0);
+    await settings.setStepsDraft(21);
+    await settings.setScaleDraft(6.5);
+    await settings.setCfgRescaleDraft(0.4);
+    await settings.setSelectedSamplerDraft('k_dpm_2');
+    await settings.setSelectedNoiseScheduleDraft('karras');
+    await prefs.reload();
+    final restored = SettingsLocalDatasource(prefs);
+    expect(restored.getSeedDraft(), 0);
+    expect(restored.getStepsDraft(), 21);
+    expect(restored.getScaleDraft(), 6.5);
+    expect(restored.getCfgRescaleDraft(), 0.4);
+    expect(restored.getSelectedSamplerDraft(), 'k_dpm_2');
+    expect(restored.getSelectedNoiseScheduleDraft(), 'karras');
+    await restored.setSeedDraft(null);
+    await prefs.reload();
+    expect(SettingsLocalDatasource(prefs).getSeedDraft(), isNull);
+  });
+
   for (final baseUrl in [
     ApiConstants.officialImageBaseUrl,
     'https://relay.example/native',

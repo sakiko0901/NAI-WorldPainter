@@ -1,4 +1,9 @@
 import 'dart:io';
+import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
+import 'package:nai_huishi/presentation/widgets/studio_select.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:nai_huishi/data/datasources/local/reference_image_importer.dart';
+import 'package:nai_huishi/presentation/widgets/reference_metadata_dialog.dart';
 import 'package:nai_huishi/core/utils/prompt_text.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_templates.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_notebook_dialog.dart';
@@ -7,12 +12,12 @@ import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_tab_view.dart';
+import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/api_constants.dart';
-import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -25,11 +30,11 @@ import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
 import 'package:nai_huishi/presentation/widgets/img2img_crop_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
+import 'package:nai_huishi/presentation/pages/director_tools_page.dart';
 import 'package:nai_huishi/presentation/pages/advanced_parameters_page.dart';
 import 'package:nai_huishi/presentation/widgets/generation_result_card.dart';
 import 'package:nai_huishi/presentation/widgets/generation_preview_builder.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
-import 'package:nai_huishi/presentation/navigation/studio_page_route.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 import 'package:nai_huishi/data/datasources/local/workspace_image_importer.dart';
@@ -50,7 +55,9 @@ class _GeneratePageState extends State<GeneratePage> {
   late final GenerationViewModel _vm;
   late final ImagePicker _imagePicker;
   late final ScrollController _scrollController;
-  bool _isPreparingImg2Img = false;
+  final ValueNotifier<bool> _referencePreparing = ValueNotifier(false);
+  bool get _isPreparingImg2Img => _referencePreparing.value;
+  set _isPreparingImg2Img(bool value) => _referencePreparing.value = value;
   bool _isImportingWorkspaceImage = false;
   bool _isGenerationSettingsOpen = false;
   bool _hasOpenedInpaint = false;
@@ -207,6 +214,7 @@ class _GeneratePageState extends State<GeneratePage> {
     _inpaintPromptFocusNode.dispose();
     _inpaintNegativeFocusNode.dispose();
     _scrollController.dispose();
+    _referencePreparing.dispose();
     super.dispose();
   }
 
@@ -300,43 +308,51 @@ class _GeneratePageState extends State<GeneratePage> {
                     children: [
                       _buildModeSection(),
                       const SizedBox(height: 12),
-                      if (_vm.generationMode != GenerationMode.inpainting) ...[
-                        _buildResultSection(workspaceHeight: imageHeight),
-                        const SizedBox(height: 12),
-                        _buildPromptSection(),
-                        const SizedBox(height: 12),
-                        if (!_vm.isNonNovelAiProvider &&
-                            _vm.supportsCharacterPrompts) ...[
-                          _CharacterControlSection(
-                            vm: _vm,
-                            imageAspectRatio: _outputAspectRatio,
-                            onPositionGestureChanged: (active) {
-                              if (mounted &&
-                                  active != _characterPositionLocked) {
-                                setState(
-                                    () => _characterPositionLocked = active);
-                              }
-                            },
+                      StudioTabView(
+                        key: const ValueKey('creation-mode-transition'),
+                        index: _vm.generationMode == GenerationMode.inpainting
+                            ? 1
+                            : 0,
+                        expand: false,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildResultSection(workspaceHeight: imageHeight),
+                              const SizedBox(height: 12),
+                              _buildPromptSection(),
+                              const SizedBox(height: 12),
+                              if (!_vm.isNonNovelAiProvider &&
+                                  _vm.supportsCharacterPrompts) ...[
+                                _CharacterControlSection(
+                                  vm: _vm,
+                                  imageAspectRatio: _outputAspectRatio,
+                                  onPositionGestureChanged: (active) {
+                                    if (mounted &&
+                                        active != _characterPositionLocked) {
+                                      setState(() =>
+                                          _characterPositionLocked = active);
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              if (!_vm.isNonNovelAiProvider &&
+                                  (_vm.supportsVibeReferences ||
+                                      _vm.supportsPreciseReferences))
+                                _CharacterReferenceSection(
+                                    vm: _vm,
+                                    imagePicker: _imagePicker,
+                                    onShowMessage: _showToast),
+                              if (_vm.isNonNovelAiProvider)
+                                _buildGptReferenceImageSection(),
+                            ],
                           ),
-                          const SizedBox(height: 12),
+                          _hasOpenedInpaint
+                              ? _buildInpaintingSection()
+                              : const SizedBox.shrink(),
                         ],
-                        if (!_vm.isNonNovelAiProvider &&
-                            (_vm.supportsVibeReferences ||
-                                _vm.supportsPreciseReferences))
-                          _CharacterReferenceSection(
-                              vm: _vm,
-                              imagePicker: _imagePicker,
-                              onShowMessage: _showToast),
-                        if (_vm.isNonNovelAiProvider)
-                          _buildGptReferenceImageSection(),
-                      ],
-                      if (_hasOpenedInpaint)
-                        Offstage(
-                          key: const ValueKey('retained-inpaint-workspace'),
-                          offstage:
-                              _vm.generationMode != GenerationMode.inpainting,
-                          child: _buildInpaintingSection(),
-                        ),
+                      ),
                       const SizedBox(height: 16),
                     ],
                   ),
@@ -577,27 +593,34 @@ class _GeneratePageState extends State<GeneratePage> {
 
   Future<void> _pickImg2ImgSource() async {
     if (_isPreparingImg2Img) return;
-    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
-    if (picked == null || !mounted) return;
-    if (_vm.img2ImgMode == Img2ImgMode.tiled) {
-      await _useImg2ImgOriginal(picked.path);
-    } else {
-      final applied = await _cropImg2ImgSource(picked.path);
-      if (applied) _img2ImgOriginalPath = picked.path;
-    }
-  }
-
-  Future<void> _useImg2ImgOriginal(String sourcePath) async {
     setState(() => _isPreparingImg2Img = true);
     try {
-      final source = File(sourcePath);
-      final decoded = img.decodeImage(await source.readAsBytes());
-      if (decoded == null) {
-        throw const FormatException('无法读取图片，请选择有效的 PNG 或 JPEG 图片');
+      final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+      final dir = await getTemporaryDirectory();
+      final prepared = await compute(prepareReferenceImage, (
+        source: picked.path,
+        target:
+            '${dir.path}/reference_${DateTime.now().microsecondsSinceEpoch}.png',
+        preserveSize: _vm.img2ImgMode == Img2ImgMode.tiled,
+      ));
+      if (!mounted) return;
+      final fields = await showDialog<Set<String>>(
+        context: context,
+        builder: (_) => ReferenceMetadataDialog(image: prepared),
+      );
+      if (fields == null || !mounted) return;
+      if (prepared.metadata != null) {
+        await _vm.importReferenceMetadata(prepared.metadata!, fields);
       }
       if (!mounted) return;
-      _vm.setImg2ImgSourceImagePath(sourcePath);
-      _img2ImgOriginalPath = sourcePath;
+      if (_vm.img2ImgMode == Img2ImgMode.tiled) {
+        _vm.setImg2ImgSourceImagePath(prepared.path);
+        _img2ImgOriginalPath = prepared.path;
+      } else {
+        final applied = await _cropImg2ImgSource(prepared.path);
+        if (applied) _img2ImgOriginalPath = prepared.path;
+      }
     } catch (error) {
       if (mounted) _showToast('图片处理失败：$error');
     } finally {
@@ -616,10 +639,7 @@ class _GeneratePageState extends State<GeneratePage> {
     setState(() => _isPreparingImg2Img = true);
     try {
       final source = File(sourcePath);
-      final decoded = img.decodeImage(await source.readAsBytes());
-      if (decoded == null) {
-        throw const FormatException('无法读取图片，请选择有效的 PNG 或 JPEG 图片');
-      }
+      final decoded = await compute(WorkspaceImageImporter.read, sourcePath);
       if (!mounted) return false;
       setState(() => _isPreparingImg2Img = false);
       final crop = await showDialog<Img2ImgCropResult>(
@@ -629,6 +649,10 @@ class _GeneratePageState extends State<GeneratePage> {
           imagePath: sourcePath,
           imageWidth: decoded.width,
           imageHeight: decoded.height,
+          initialTarget: (
+            int.tryParse(_vm.selectedResolution.split('x').first) ?? 1024,
+            int.tryParse(_vm.selectedResolution.split('x').last) ?? 1024,
+          ),
           initialTargetIndex: switch (_vm.selectedResolution) {
             '832x1216' => 0,
             '1216x832' => 2,
@@ -647,6 +671,9 @@ class _GeneratePageState extends State<GeneratePage> {
         targetWidth: crop.targetWidth,
         targetHeight: crop.targetHeight,
       );
+      if (!mounted) return false;
+      await _vm
+          .updateSelectedResolution('${crop.targetWidth}x${crop.targetHeight}');
       if (!mounted) return false;
       _vm.setImg2ImgSourceImagePath(path);
       _showToast('源图已裁剪为 ${crop.targetWidth}×${crop.targetHeight}');
@@ -777,52 +804,6 @@ class _GeneratePageState extends State<GeneratePage> {
     );
   }
 
-  BoxDecoration _selectBoxDecoration(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return BoxDecoration(
-      color: isDark
-          ? Colors.white.withValues(alpha: 0.06)
-          : Colors.white.withValues(alpha: 0.92),
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.10)
-            : const Color(0xFFD8E3F3),
-        width: 1,
-      ),
-      boxShadow: isDark
-          ? null
-          : [
-              BoxShadow(
-                color: const Color(0xFF94A3B8).withValues(alpha: 0.10),
-                blurRadius: 14,
-                offset: const Offset(0, 6),
-              ),
-            ],
-    );
-  }
-
-  Color _dropdownColor(BuildContext context) {
-    return Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF1C1C21)
-        : Colors.white;
-  }
-
-  TextStyle _dropdownTextStyle(BuildContext context) {
-    return Theme.of(context).textTheme.bodyLarge!.copyWith(
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurface,
-        );
-  }
-
-  Widget _dropdownShell({required Widget child}) {
-    return Container(
-      decoration: _selectBoxDecoration(context),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: child,
-    );
-  }
-
   Widget _buildImg2ImgSection() {
     final path = _vm.img2imgSourceImagePath;
     final file = path == null ? null : File(path);
@@ -830,238 +811,166 @@ class _GeneratePageState extends State<GeneratePage> {
     final theme = Theme.of(context);
     final isTiled = _vm.img2ImgMode == Img2ImgMode.tiled;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '图生图',
-          style: TextStyle(
-            fontSize: 12,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 8),
-        SegmentedButton<Img2ImgMode>(
-          segments: const [
-            ButtonSegment(value: Img2ImgMode.normal, label: Text('普通图生图')),
-            ButtonSegment(value: Img2ImgMode.tiled, label: Text('分块高清重绘')),
-          ],
-          selected: {_vm.img2ImgMode},
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.selected)
-                  ? theme.colorScheme.primary.withValues(alpha: 0.18)
-                  : theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.45,
-                    ),
-            ),
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.selected)
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.onSurfaceVariant,
-            ),
-            side: WidgetStateProperty.resolveWith(
-              (states) => BorderSide(
-                color: states.contains(WidgetState.selected)
-                    ? theme.colorScheme.primary.withValues(alpha: 0.7)
-                    : theme.colorScheme.outline.withValues(alpha: 0.28),
-              ),
-            ),
-          ),
-          onSelectionChanged: (selection) =>
-              _vm.updateImg2ImgMode(selection.first),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.35,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: theme.colorScheme.outline.withValues(alpha: 0.2),
-            ),
-          ),
-          child: hasImage
-              ? Row(
-                  children: [
-                    InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => _openImagePreview(context, imagePath: path),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.file(
-                          file!,
-                          width: 72,
-                          height: 72,
-                          fit: BoxFit.cover,
+    return AnimatedSize(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 260),
+        curve: Curves.easeInOutCubic,
+        alignment: Alignment.topCenter,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnimatedSwitcher(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              child: Container(
+                key: ValueKey(path ?? 'reference-empty'),
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: theme.colorScheme.outlineVariant
+                          .withValues(alpha: 0.5)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: hasImage
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                            InkWell(
+                                onTap: () =>
+                                    _openImagePreview(context, imagePath: path),
+                                child: Image.file(file!,
+                                    height: 200,
+                                    fit: BoxFit.contain,
+                                    cacheWidth: 720)),
+                            Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                                child: Text(isTiled ? '已选择分块原图' : '已启用图生图',
+                                    style: theme.textTheme.labelLarge)),
+                            Wrap(
+                                spacing: 2,
+                                alignment: WrapAlignment.center,
+                                children: [
+                                  if (!isTiled)
+                                    TextButton(
+                                        onPressed: _isPreparingImg2Img
+                                            ? null
+                                            : _recropImg2ImgSource,
+                                        child: const Text('重新裁剪')),
+                                  TextButton(
+                                      onPressed: _isPreparingImg2Img
+                                          ? null
+                                          : _pickImg2ImgSource,
+                                      child: const Text('替换')),
+                                  TextButton(
+                                      onPressed: _isPreparingImg2Img
+                                          ? null
+                                          : () => _vm
+                                              .setImg2ImgSourceImagePath(null),
+                                      child: const Text('移除')),
+                                ]),
+                          ])
+                    : InkWell(
+                        onTap: _isPreparingImg2Img ? null : _pickImg2ImgSource,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 30),
+                          child: Column(children: [
+                            if (_isPreparingImg2Img)
+                              const SizedBox.square(
+                                  dimension: 28,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                            else
+                              Icon(Icons.add_photo_alternate_outlined,
+                                  size: 36, color: theme.colorScheme.primary),
+                            const SizedBox(height: 14),
+                            Text(_isPreparingImg2Img ? '正在解析与压缩…' : '导入参考图像',
+                                style: theme.textTheme.titleSmall),
+                            const SizedBox(height: 6),
+                            Text('读取原图参数 · 自选导入 · 裁剪画面',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant)),
+                          ]),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isTiled ? '已选择分块原图' : '已启用图生图',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            isTiled ? '将整张原图分块高清重绘，约放大 1.6 倍' : '点击缩略图可查看大图',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 4,
-                            children: [
-                              if (!isTiled)
-                                TextButton(
-                                  onPressed: _isPreparingImg2Img
-                                      ? null
-                                      : _recropImg2ImgSource,
-                                  child: const Text('重新裁剪'),
-                                ),
-                              TextButton(
-                                onPressed: _isPreparingImg2Img
-                                    ? null
-                                    : _pickImg2ImgSource,
-                                child: const Text('替换'),
-                              ),
-                              TextButton(
-                                onPressed: () =>
-                                    _vm.setImg2ImgSourceImagePath(null),
-                                child: const Text('移除'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                )
-              : OutlinedButton.icon(
-                  onPressed: _isPreparingImg2Img ? null : _pickImg2ImgSource,
-                  icon: _isPreparingImg2Img
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: RepaintBoundary(
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : const Icon(CupertinoIcons.photo_on_rectangle, size: 17),
-                  label: Text(
-                    _isPreparingImg2Img
-                        ? '正在压缩图片…'
-                        : (isTiled ? '上传分块原图' : '上传图生图源图'),
-                  ),
-                ),
-        ),
-        if (hasImage) ...[
-          const SizedBox(height: 12),
-          _PremiumSlider(
-            label: '图生图强度',
-            value: _vm.img2imgStrength,
-            min: isTiled ? 0.1 : 0.01,
-            max: isTiled ? 0.6 : 1.0,
-            divisions: isTiled ? 50 : 99,
-            onChanged: _vm.updateImg2ImgStrength,
-          ),
-          Text(
-            isTiled ? '数值过高会导致块间不一致，建议 0.2–0.4' : '数值越高，生成结果越偏离原图。',
-            style: TextStyle(
-              fontSize: 11,
-              color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
-          ),
-          if (isTiled)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                '自动按 640×640 分块、320 重叠，每块输出 1024×1024，处理耗时较长。',
+            const SizedBox(height: 12),
+            Text('参考方式', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 8),
+            StudioSelect<Img2ImgMode>(
+                id: 'reference-mode',
+                label: '参考方式',
+                value: _vm.img2ImgMode,
+                options: const [
+                  StudioSelectOption(Img2ImgMode.normal, '普通图生图'),
+                  StudioSelectOption(Img2ImgMode.tiled, '分块高清重绘')
+                ],
+                onChanged: _isPreparingImg2Img ? null : _vm.updateImg2ImgMode),
+            if (hasImage) ...[
+              const SizedBox(height: 12),
+              _PremiumSlider(
+                label: '图生图强度',
+                value: _vm.img2imgStrength,
+                min: isTiled ? 0.1 : 0.01,
+                max: isTiled ? 0.6 : 1.0,
+                divisions: isTiled ? 50 : 99,
+                onChanged: _vm.updateImg2ImgStrength,
+              ),
+              Text(
+                isTiled ? '数值过高会导致块间不一致，建议 0.2–0.4' : '数值越高，生成结果越偏离原图。',
                 style: TextStyle(
                   fontSize: 11,
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-            ),
-        ],
-      ],
-    );
+              if (isTiled)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '自动按 640×640 分块、320 重叠，每块输出 1024×1024，处理耗时较长。',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ));
   }
 
-  Widget _buildModelSection({bool initiallyExpanded = true}) {
-    return _PremiumAccordion(
-      title: '模型与基础参数',
-      icon: CupertinoIcons.cube_box,
-      initiallyExpanded: initiallyExpanded,
+  Widget _buildModelSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'AI 模型',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          '模型选择',
+          style: Theme.of(context).textTheme.titleMedium,
         ),
         SizedBox(height: 8),
-        _dropdownShell(
-          child: Builder(
-            builder: (context) {
-              final uniqueOptions = <String, ImageModelOption>{};
-              for (final opt in _vm.imageModelOptions) {
-                uniqueOptions.putIfAbsent(opt.modelId, () => opt);
-              }
-              final modelOptions = uniqueOptions.values.toList();
-              final modelIds = modelOptions.map((opt) => opt.modelId).toList();
-              final selectedModel = modelIds.contains(_vm.selectedModel)
-                  ? _vm.selectedModel
-                  : (modelIds.isNotEmpty ? modelIds.first : null);
-
-              return DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  isExpanded: true,
-                  borderRadius: BorderRadius.circular(22),
-                  value: selectedModel,
-                  icon: Icon(CupertinoIcons.chevron_down, size: 16),
-                  dropdownColor: _dropdownColor(context),
-                  style: _dropdownTextStyle(context),
-                  items: modelOptions.map((opt) {
-                    String tag;
-                    switch (opt.provider) {
-                      case ImageProviderType.gpt:
-                        tag = '[GPT] ';
-                      case ImageProviderType.nanoBanana:
-                        tag = '[Nano] ';
-                      case ImageProviderType.novelAi:
-                        tag = '';
-                    }
-                    final epName = (opt.endpointName != null &&
-                            opt.endpointName!.isNotEmpty)
-                        ? '[${opt.endpointName}] '
-                        : '';
-                    return DropdownMenuItem(
-                      value: opt.modelId,
-                      child: Text(
-                        '$tag$epName${opt.displayName}',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (v) {
-                    if (v != null) _vm.updateSelectedModel(v);
-                  },
-                ),
-              );
-            },
-          ),
-        ),
+        Builder(builder: (context) {
+          final unique = {
+            for (final option in _vm.imageModelOptions) option.modelId: option
+          };
+          return StudioSelect<String>(
+              id: 'generation-model',
+              label: '模型选择',
+              value: _vm.selectedModel,
+              options: [
+                for (final option in unique.values)
+                  StudioSelectOption(option.modelId,
+                      '${option.endpointName == null || option.endpointName!.isEmpty ? '' : '[${option.endpointName}] '}${option.displayName}')
+              ],
+              onChanged: _vm.updateSelectedModel);
+        }),
         SizedBox(height: 20),
         Wrap(
           alignment: WrapAlignment.spaceBetween,
@@ -1070,10 +979,7 @@ class _GeneratePageState extends State<GeneratePage> {
           children: [
             Text(
               '图像尺寸',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: Theme.of(context).textTheme.titleMedium,
             ),
             Text(
               _vm.selectedResolution,
@@ -1086,38 +992,42 @@ class _GeneratePageState extends State<GeneratePage> {
           ],
         ),
         SizedBox(height: 8),
-        GestureDetector(
-          onLongPress: _showCustomResolutionDialog,
-          child: _dropdownShell(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                isExpanded: true,
-                borderRadius: BorderRadius.circular(22),
-                value: _vm.availableResolutions.contains(_vm.selectedResolution)
-                    ? _vm.selectedResolution
-                    : null,
-                hint: Text(
-                  _vm.resolutionLabel(_vm.selectedResolution),
-                  style: _dropdownTextStyle(context),
-                ),
-                icon: Icon(CupertinoIcons.chevron_down, size: 16),
-                dropdownColor: _dropdownColor(context),
-                style: _dropdownTextStyle(context),
-                items: _vm.availableResolutions
-                    .map(
-                      (r) => DropdownMenuItem(
-                        value: r,
-                        child: Text(_vm.resolutionLabel(r)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (v) {
-                  if (v != null) _vm.updateSelectedResolution(v);
-                },
-              ),
-            ),
+        StudioSelect<String>(
+            id: 'generation-resolution',
+            label: '图像尺寸',
+            value: _vm.selectedResolution,
+            options: [
+              for (final size in _vm.availableResolutions)
+                StudioSelectOption(size, _vm.resolutionLabel(size),
+                    leading: ResolutionGlyph(size))
+            ],
+            onChanged: _vm.updateSelectedResolution),
+        if (!_vm.isNonNovelAiProvider) ...[
+          const SizedBox(height: 8),
+          Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _showCustomResolutionDialog,
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('新增分辨率'),
+              )),
+          AnimatedSize(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
+            curve: Curves.easeInOutCubic,
+            alignment: Alignment.topLeft,
+            child: Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final size in _vm.customResolutions)
+                InputChip(
+                    label: Text(size.replaceAll('x', ' × ')),
+                    selected: size == _vm.selectedResolution,
+                    onPressed: () => _vm.updateSelectedResolution(size),
+                    onDeleted: () => _vm.removeCustomResolution(size),
+                    deleteButtonTooltipMessage: '删除自定义分辨率'),
+            ]),
           ),
-        ),
+        ],
         if (_vm.isNanoProvider) ...[
           SizedBox(height: 16),
           Row(
@@ -1141,135 +1051,35 @@ class _GeneratePageState extends State<GeneratePage> {
             ],
           ),
           SizedBox(height: 8),
-          _dropdownShell(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                isExpanded: true,
-                borderRadius: BorderRadius.circular(22),
-                value: _vm.selectedNanoImageSize,
-                icon: Icon(CupertinoIcons.chevron_down, size: 16),
-                dropdownColor: _dropdownColor(context),
-                style: _dropdownTextStyle(context),
-                items: ApiConstants.nanoImageSizes
-                    .map(
-                      (s) => DropdownMenuItem(
-                        value: s,
-                        child: Text(_vm.nanoImageSizeLabel(s)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (v) {
-                  if (v != null) _vm.updateSelectedNanoImageSize(v);
-                },
-              ),
-            ),
-          ),
+          StudioSelect<String>(
+              id: 'nano-quality',
+              label: '图片质量',
+              value: _vm.selectedNanoImageSize,
+              options: [
+                for (final size in ApiConstants.nanoImageSizes)
+                  StudioSelectOption(size, _vm.nanoImageSizeLabel(size))
+              ],
+              onChanged: _vm.updateSelectedNanoImageSize),
         ],
-        if ((_vm.is7877Endpoint ||
-                _vm.isIkunEndpoint ||
-                _vm.isOfficialEndpoint) &&
-            _vm.generationMode == GenerationMode.textToImage) ...[
-          SizedBox(height: 20),
-          _buildImg2ImgSection(),
-        ],
-        if (_vm.is7877Endpoint)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              _vm.isV5Model
-                  ? 'V5 渠道固定单张生成，步数最多 28，画面总像素不超过 1024×1024；不支持 Vibe 与角色参考。'
-                  : '7877 Images',
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        SizedBox(height: 20),
-        if (_vm.isOfficialEndpoint && _vm.officialCostPerImage != null) ...[
-          Row(
-            children: [
-              Text(
-                '预计消耗',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                '${_vm.officialCostPerImage! * _vm.batchCount} Anlas'
-                '（${_vm.officialCostPerImage!}/张${_vm.batchCount > 1 ? ' × ${_vm.batchCount}' : ''}）',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 4),
-        ],
-        Row(
-          children: [
-            Text(
-              '批量生成',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              '${_vm.batchCount} 张',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: 4),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 6,
-            activeTrackColor: Theme.of(context).colorScheme.primary,
-            inactiveTrackColor: Colors.black.withValues(alpha: 0.3),
-            thumbColor: Colors.white,
-            overlayColor:
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
-            showValueIndicator: ShowValueIndicator.never,
-          ),
-          child: Slider(
-            value: _vm.batchCount.toDouble().clamp(
-                  1.0,
-                  AppConstants.maxBatchCount.toDouble(),
-                ),
-            min: 1,
-            max: AppConstants.maxBatchCount.toDouble(),
-            divisions: AppConstants.maxBatchCount - 1,
-            onChanged: _vm.isGenerating
-                ? null
-                : (v) => _vm.updateBatchCount(v.round()),
-          ),
-        ),
-        Padding(
-          padding: EdgeInsets.only(left: 4),
-          child: Text(
-            '同一组提示词连续出图，每张间隔 1 秒',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.5),
-            ),
-          ),
-        ),
+        const SizedBox(height: 24),
+        const Divider(height: 1),
+        const SizedBox(height: 24),
+        Text('参考图像', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 12),
+        if (!_vm.isNonNovelAiProvider)
+          _buildImg2ImgSection()
+        else
+          _buildGptReferenceImageSection(),
       ],
+    );
+  }
+
+  Widget _buildBatchControl() {
+    return BatchGenerationControl(
+      key: const ValueKey('workspace-batch-control'),
+      sliderKey: const ValueKey('workspace-batch-slider'),
+      value: _vm.batchCount,
+      onChanged: _isImageOperationBusy ? null : _vm.updateBatchCount,
     );
   }
 
@@ -1333,6 +1143,7 @@ class _GeneratePageState extends State<GeneratePage> {
             }
 
             return AlertDialog(
+              scrollable: true,
               backgroundColor: Theme.of(context).colorScheme.surface,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
@@ -1661,6 +1472,7 @@ class _GeneratePageState extends State<GeneratePage> {
     return GenerationResultCard(
       key: _resultSectionKey,
       workspaceHeight: workspaceHeight,
+      batchControl: _buildBatchControl(),
       task: task,
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
@@ -1705,6 +1517,15 @@ class _GeneratePageState extends State<GeneratePage> {
           ? (result) {
               _vm.selectResult(result.taskId);
               return _showOfficialUpscaleSheet(sourceTask: result);
+            }
+          : null,
+      onDirector: hasLocalImage && !_isImageOperationBusy
+          ? (result) async {
+              await Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => DirectorToolsPage(
+                  initialImagePath: result.imagePath,
+                ),
+              ));
             }
           : null,
       onEnhance:
@@ -1797,11 +1618,9 @@ class _GeneratePageState extends State<GeneratePage> {
         : '${(_vm.batchCount - _vm.batchRemaining + 1).clamp(1, _vm.batchCount)}/${_vm.batchCount}';
     final model = _vm.currentModelOption?.displayName ?? '选择模型';
     final cost = _vm.officialCostPerImage;
-    return FrostedSurface(
-      radius: 0,
+    return StudioBottomSurface(
       child: SafeArea(
         top: false,
-        bottom: widget.onNavigate == null,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 3),
           child: Column(
@@ -1882,14 +1701,37 @@ class _GeneratePageState extends State<GeneratePage> {
     _isGenerationSettingsOpen = true;
     FocusManager.instance.primaryFocus?.unfocus();
     try {
-      await Navigator.of(context).push<void>(studioPageRoute<void>(
+      await showGeneralDialog<void>(
         context: context,
-        name: '/generation-settings',
-        builder: (_) => _GenerationSettingsPage(
-          vm: _vm,
-          buildModelSection: () => _buildModelSection(),
+        routeSettings: const RouteSettings(name: '/generation-settings'),
+        barrierDismissible: true,
+        barrierLabel: '关闭生成参数',
+        barrierColor: Colors.black54,
+        transitionDuration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 320),
+        pageBuilder: (panelContext, _, __) => Align(
+          alignment: Alignment.centerRight,
+          child: SizedBox(
+            width: (MediaQuery.sizeOf(panelContext).width * 0.88)
+                .clamp(280.0, 460.0),
+            height: double.infinity,
+            child: _GenerationSettingsPage(
+              vm: _vm,
+              preparation: _referencePreparing,
+              buildModelSection: () => _buildModelSection(),
+            ),
+          ),
         ),
-      ));
+        transitionBuilder: (_, animation, __, child) => SlideTransition(
+          position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(
+              CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                  reverseCurve: Curves.easeInCubic)),
+          child: child,
+        ),
+      );
     } finally {
       _isGenerationSettingsOpen = false;
     }
@@ -1898,59 +1740,61 @@ class _GeneratePageState extends State<GeneratePage> {
 
 class _GenerationSettingsPage extends StatelessWidget {
   final GenerationViewModel vm;
+  final Listenable preparation;
   final Widget Function() buildModelSection;
 
-  const _GenerationSettingsPage({
-    required this.vm,
-    required this.buildModelSection,
-  });
+  const _GenerationSettingsPage(
+      {required this.vm,
+      required this.preparation,
+      required this.buildModelSection});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final colors = Theme.of(context).colorScheme;
+    return Material(
       key: const ValueKey('generation-settings-page'),
-      appBar: AppBar(
-        title: const Text('生成参数'),
-        flexibleSpace:
-            const FrostedSurface(radius: 0, child: SizedBox.expand()),
-      ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          const StudioBackground(),
-          SafeArea(
-            top: false,
-            child: AnimatedBuilder(
-              animation: vm,
-              builder: (context, _) => SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
+      color: colors.surface,
+      elevation: 24,
+      child: SafeArea(
+        child: Column(children: [
+          Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
+              child: Row(children: [
+                Expanded(
+                    child: Text('生成参数',
+                        style: Theme.of(context).textTheme.titleMedium)),
+                IconButton(
+                    tooltip: '关闭生成参数',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 21)),
+              ])),
+          Divider(
+              height: 1, color: colors.outlineVariant.withValues(alpha: 0.4)),
+          Expanded(
+              child: AnimatedBuilder(
+            animation: Listenable.merge([vm, preparation]),
+            builder: (context, _) => SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                  20, 24, 20, 28 + MediaQuery.viewInsetsOf(context).bottom),
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     KeyedSubtree(
-                      key: const ValueKey('generation_settings_model'),
-                      child: buildModelSection(),
-                    ),
-                    const SizedBox(height: 12),
-                    FrostedSurface(
-                      blur: 0,
-                      child: ListTile(
-                        leading: const Icon(Icons.tune),
-                        title: const Text('采样与高级参数'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const AdvancedParametersPage(),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                        key: const ValueKey('generation_settings_model'),
+                        child: buildModelSection()),
+                    if (!vm.isNonNovelAiProvider) ...[
+                      const SizedBox(height: 24),
+                      const Divider(height: 1),
+                      const SizedBox(height: 24),
+                      Text('高级参数',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 20),
+                      const AdvancedParametersPage(embedded: true),
+                    ],
+                  ]),
             ),
-          ),
-        ],
+          )),
+        ]),
       ),
     );
   }

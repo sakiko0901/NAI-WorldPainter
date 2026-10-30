@@ -8,7 +8,7 @@
 
 面向 Android 的 NovelAI 创作客户端，集成图像生成、局部重绘、提示词笔记本与 AI 助手。
 
-[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.4_%C2%B7_220040-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
+[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.4_%C2%B7_220052-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
 
 [本次更新](#本次更新) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
 
@@ -16,14 +16,14 @@
 
 ## 本次更新
 
-**1.2.4 / 220040 · 2026-10-28**
+**1.2.4 / 220052 · 2026-10-31**
 
-- **提示词随手存、随时用。** 正向提示词标题右侧新增「笔记本、复制、展开」，常用 tag 与提示词组合可以命名保存、搜索、编辑和复用。
-- **圆形遮罩，画到哪里选到哪里。** 圆形笔刷不再额外扩展遮罩，涂抹边缘有蓝色高亮；画笔弹窗支持圆形、方形和 1–10 档大小。
-- **修正重绘边缘杂色。** 请求与合成使用各自适合的遮罩，羽化只在选区内生效；删除绘制目标选择，画笔直接编辑遮罩。
-- **工作区更集中。** 分辨率与换图入口放到左上方，扩展、羽化、重绘强度、色彩校正和忽略原图集中到可展开的工作区菜单。
+- **导航与页面过渡。** 三个主页统一底栏材质，选中项直接高亮；主页和文生图 / 局部重绘切换加入轻移与渐变，并保留草稿及工作区。
+- **导演工具。** 图片操作菜单可直接导入当前图片，使用统一毛玻璃页面，模型与生成页同步，结果支持滑动前后对比。
+- **图片导入与参数复用。** 支持选择需要导入的元数据，裁剪处理移到后台，并完善种子保存与自定义分辨率管理。
+- **官方订阅信息。** 工具页显示订阅到期时间，更新官方订阅查询接口，并修正包含 1024×1024 的用量估算边界。
 
-[查看完整发布说明](docs/releases/2026-10-28-220040.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
+[查看完整发布说明](docs/releases/2026-10-31-220052.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
 
 ## 安装与开始使用
 
@@ -37,8 +37,8 @@
 | --- | --- |
 | Android | 7.0 及以上（最低 API 24） |
 | CPU 架构 | `arm64-v8a` |
-| 版本 | `1.2.4`，Android versionCode `220040` |
-| 文件大小 | 52,689,264 字节，约 50.2 MiB |
+| 版本 | `1.2.4`，Android versionCode `220052` |
+| 文件大小 | 52,691,372 字节，约 50.3 MiB |
 | 包名 | `com.naihuishi.nai_huishi` |
 | 签名 | 沿用项目现有 Android Debug 证书，APK v2 校验通过 |
 | 校验文件 | 发布页中的 `SHA256SUMS.txt` |
@@ -62,7 +62,7 @@
 
 | 操作 | 行为 |
 | --- | --- |
-| 点击「画笔」 | 从底部弹出设置，选择圆形 / 方形笔刷及 1–10 档大小 |
+| 点击 / 长按「画笔」「橡皮」 | 点击切换工具；长按从底部弹出设置，选择圆形 / 方形笔刷及 1–10 档大小 |
 | 圆形笔刷 | 遮罩保留实际涂抹范围，不额外扩展；边缘以蓝色高亮 |
 | 方形笔刷 | 适合块状区域，可配合工作区中的方形遮罩扩展 |
 | 橡皮与撤销 / 重做 | 修整笔迹或恢复工作区操作 |

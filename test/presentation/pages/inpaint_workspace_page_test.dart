@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
@@ -17,6 +18,7 @@ import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
+import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
@@ -52,6 +54,101 @@ void main() {
       await outputDirectory.delete(recursive: true);
     }
   });
+
+  testWidgets('batch count syncs in both directions across generation modes',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 1200);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    vm.setGenerationMode(GenerationMode.textToImage);
+    await tester.pumpWidget(_host(const GeneratePage()));
+    await tester.pumpAndSettle();
+    final normalSlider = find.byKey(const ValueKey('workspace-batch-slider'));
+    await tester.ensureVisible(normalSlider);
+    await tester.tapAt(tester.getRect(normalSlider).center);
+    await tester.pumpAndSettle();
+    final normalCount = vm.batchCount;
+    expect(normalCount, greaterThan(1));
+
+    vm.setGenerationMode(GenerationMode.inpainting);
+    await tester.pumpAndSettle();
+    final retainedWorkspace = tester.state(find.byType(InpaintWorkspaceCard));
+    final inpaintSlider = find.byKey(const ValueKey('inpaint-batch-slider'));
+    await tester.ensureVisible(inpaintSlider);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Slider>(inpaintSlider).value, normalCount.toDouble());
+    final rect = tester.getRect(inpaintSlider);
+    await tester.dragFrom(rect.center, Offset(rect.width, 0));
+    await tester.pumpAndSettle();
+    expect(vm.batchCount, 30);
+    expect(tester.widget<Slider>(inpaintSlider).value, 30);
+    expect(find.text('生成 30 张图片'), findsOneWidget);
+
+    vm.setGenerationMode(GenerationMode.textToImage);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(normalSlider);
+    expect(tester.widget<Slider>(normalSlider).value, 30);
+    await tester.dragFrom(tester.getCenter(normalSlider),
+        Offset(-tester.getSize(normalSlider).width, 0));
+    await tester.pumpAndSettle();
+    expect(vm.batchCount, 1);
+    vm.setGenerationMode(GenerationMode.inpainting);
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(InpaintWorkspaceCard)),
+        same(retainedWorkspace));
+    await tester.ensureVisible(inpaintSlider);
+    expect(tester.widget<Slider>(inpaintSlider).value, 1);
+    vm.isGenerating = true;
+    vm.notifyListeners();
+    await tester.pump();
+    expect(tester.widget<Slider>(inpaintSlider).onChanged, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final success in [true, false]) {
+    testWidgets(
+        'composite gallery export cleans only its temporary copy on success=$success',
+        (tester) async {
+      _setDocumentsDirectory(tester, outputDirectory);
+      final messenger = tester.binding.defaultBinaryMessenger;
+      const galleryChannel = MethodChannel('image_gallery_saver_plus');
+      final exported = Completer<String>();
+      messenger.setMockMethodCallHandler(galleryChannel, (call) async {
+        expect(call.method, 'saveFileToGallery');
+        final path = (call.arguments as Map)['file'] as String;
+        expect(path, contains('nai_edit_png_'));
+        expect(File(path).existsSync(), isTrue);
+        final decoded = img.decodePng(await File(path).readAsBytes());
+        expect(decoded, isNotNull);
+        exported.complete(path);
+        return {'isSuccess': success};
+      });
+      addTearDown(
+          () => messenger.setMockMethodCallHandler(galleryChannel, null));
+      await tester.pumpWidget(
+          _host(const SingleChildScrollView(child: InpaintWorkspaceCard())));
+      await _loadWorkspaceImage(tester, vm);
+      final sourcePath = vm.sourceImagePath!;
+      await tester.ensureVisible(find.text('保存合成'));
+      await tester.tap(find.text('保存合成'));
+      for (var attempt = 0; attempt < 400; attempt++) {
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 50)));
+        await tester.pump();
+        if (exported.isCompleted && outputDirectory.listSync().isEmpty) break;
+      }
+      expect(exported.isCompleted, isTrue,
+          reason: 'Gallery export did not finish');
+      final path = await exported.future;
+      expect(File(path).existsSync(), isFalse);
+      expect(outputDirectory.listSync(), isEmpty);
+      expect(File(sourcePath).existsSync(), isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 5));
+    });
+  }
 
   testWidgets('workspace shows the full canvas before tools and prompts', (
     tester,
@@ -126,6 +223,9 @@ void main() {
     await _loadWorkspaceImage(tester, vm);
     await tester.ensureVisible(find.text('画笔'));
     await tester.tap(find.text('画笔'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
+    await tester.longPress(find.text('画笔'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 90));
     final midwayTop = tester.getTopLeft(find.byType(BottomSheet)).dy;
@@ -178,6 +278,20 @@ void main() {
     expect(cache.strokes.last.square, isFalse);
     expect(cache.strokes.last.size, 16);
     expect(cache.strokes.first.square, isTrue);
+    await tester.ensureVisible(find.text('橡皮'));
+    await tester.tap(find.text('橡皮'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
+    await tester.longPress(find.text('橡皮'));
+    await tester.pumpAndSettle();
+    expect(find.text('橡皮设置'), findsOneWidget);
+    await tester.ensureVisible(done);
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(stage);
+    await tester.drag(stage, const Offset(20, 0));
+    await tester.pumpAndSettle();
+    expect(cache.strokes.last.mode, InpaintStrokeMode.erase);
     expect(tester.takeException(), isNull);
   });
 
@@ -702,7 +816,10 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    vm.batchCount = 3;
+    tester
+        .widget<Slider>(find.byKey(const ValueKey('inpaint-batch-slider')))
+        .onChanged!(3);
+    await tester.pump();
     final generate = vm.inpaintWorkspaceHandler;
     expect(generate, isNotNull);
     final firstHandled = await _generateWhilePumping(tester, generate!);
@@ -1209,12 +1326,13 @@ class _UnusedHistoryRepository implements HistoryRepository {
 Future<void> _selectDrawingTool(WidgetTester tester, String label,
     {bool close = true}) async {
   await tester.ensureVisible(find.text(label));
-  await tester.tap(find.text(label));
+  if (close) {
+    await tester.tap(find.text(label));
+  } else {
+    await tester.longPress(find.text(label));
+  }
   await tester.pumpAndSettle();
   if (close) {
-    final done = find.byKey(const ValueKey('inpaint-brush-done'));
-    await tester.ensureVisible(done);
-    await tester.tap(done);
-    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
   }
 }
