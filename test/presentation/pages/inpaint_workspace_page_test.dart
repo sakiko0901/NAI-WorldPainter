@@ -12,6 +12,7 @@ import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
@@ -110,11 +111,17 @@ void main() {
     testWidgets(
         'composite gallery export cleans only its temporary copy on success=$success',
         (tester) async {
+      final guard = AppUpdateInstallGuard();
+      sl.registerSingleton<AppUpdateInstallGuard>(guard,
+          dispose: (value) => value.dispose());
       _setDocumentsDirectory(tester, outputDirectory);
       final messenger = tester.binding.defaultBinaryMessenger;
       const galleryChannel = MethodChannel('image_gallery_saver_plus');
       final exported = Completer<String>();
       messenger.setMockMethodCallHandler(galleryChannel, (call) async {
+        expect(guard.tryBeginInstall(allowDiscardUnsaved: true), isFalse,
+            reason: 'Installation must wait until gallery export has finished');
+        expect(guard.blockReason, contains('合成图片仍在保存'));
         expect(call.method, 'saveFileToGallery');
         final path = (call.arguments as Map)['file'] as String;
         expect(path, contains('nai_edit_png_'));
@@ -136,7 +143,11 @@ void main() {
         await tester.runAsync(
             () => Future<void>.delayed(const Duration(milliseconds: 50)));
         await tester.pump();
-        if (exported.isCompleted && outputDirectory.listSync().isEmpty) break;
+        if (exported.isCompleted &&
+            outputDirectory.listSync().isEmpty &&
+            guard.blockReason == null) {
+          break;
+        }
       }
       expect(exported.isCompleted, isTrue,
           reason: 'Gallery export did not finish');
@@ -144,6 +155,7 @@ void main() {
       expect(File(path).existsSync(), isFalse);
       expect(outputDirectory.listSync(), isEmpty);
       expect(File(sourcePath).existsSync(), isTrue);
+      expect(guard.blockReason, isNull);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 5));

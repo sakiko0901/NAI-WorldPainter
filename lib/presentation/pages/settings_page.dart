@@ -2,12 +2,15 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/core/services/app_update_service.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/domain/entities/app_update.dart';
 import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/api_config_page.dart';
+import 'package:nai_huishi/presentation/pages/app_update_page.dart';
 import 'package:nai_huishi/presentation/pages/artist_prompt_manager_page.dart';
 import 'package:nai_huishi/presentation/pages/comic_projects_page.dart';
 import 'package:nai_huishi/presentation/pages/danbooru_tag_search_page.dart';
@@ -299,6 +302,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
+              if (sl.isRegistered<AppUpdateService>()) ...[
+                const SizedBox(height: 18),
+                _SettingsGroup(
+                  title: '应用',
+                  children: [
+                    _AppUpdateEntry(service: sl<AppUpdateService>()),
+                  ],
+                ),
+              ],
               const SizedBox(height: 18),
             ],
           )),
@@ -321,6 +333,78 @@ class _SettingsPageState extends State<SettingsPage> {
       onRefresh: _loadV5Usage,
     );
   }
+}
+
+class _AppUpdateEntry extends StatefulWidget {
+  final AppUpdateService service;
+
+  const _AppUpdateEntry({required this.service});
+
+  @override
+  State<_AppUpdateEntry> createState() => _AppUpdateEntryState();
+}
+
+class _AppUpdateEntryState extends State<_AppUpdateEntry> {
+  late String _subtitle;
+
+  @override
+  void initState() {
+    super.initState();
+    _subtitle = _appUpdateSubtitle(widget.service);
+    widget.service.addListener(_onChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AppUpdateEntry oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service != widget.service) {
+      oldWidget.service.removeListener(_onChanged);
+      widget.service.addListener(_onChanged);
+    }
+    _subtitle = _appUpdateSubtitle(widget.service);
+  }
+
+  void _onChanged() {
+    final subtitle = _appUpdateSubtitle(widget.service);
+    if (subtitle != _subtitle) setState(() => _subtitle = subtitle);
+  }
+
+  @override
+  void dispose() {
+    widget.service.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => _SettingsTile(
+        icon: CupertinoIcons.arrow_down_circle,
+        title: '软件更新',
+        subtitle: _subtitle,
+        onTap: () => Navigator.of(context).push(
+          CupertinoPageRoute(
+            builder: (_) => AppUpdatePage(service: widget.service),
+          ),
+        ),
+      );
+}
+
+String _appUpdateSubtitle(AppUpdateService updater) {
+  return switch (updater.phase) {
+    UpdatePhase.checking => '正在检查新版本',
+    UpdatePhase.upToDate => '已是最新版本',
+    UpdatePhase.available => updater.manifest == null
+        ? '发现新版本，点击查看'
+        : '发现新版本 ${updater.manifest!.versionName}，点击查看',
+    UpdatePhase.downloading => '正在下载更新，点击查看进度',
+    UpdatePhase.verifying => '正在校验更新',
+    UpdatePhase.ready => '更新已准备好，点击安装',
+    UpdatePhase.permissionRequired => '需要允许安装，点击继续',
+    UpdatePhase.awaitingInstall => '等待系统安装，点击查看',
+    UpdatePhase.failed => '更新未完成，点击查看',
+    UpdatePhase.unsupported =>
+      updater.canCheckForUpdates ? '此更新不兼容当前设备，点击重新检查' : '当前平台或预览包暂不支持应用内更新',
+    UpdatePhase.idle => '检查版本与更新说明',
+  };
 }
 
 class _SettingsGroup extends StatelessWidget {

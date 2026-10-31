@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/wd_tagger_api_service.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
@@ -49,6 +50,8 @@ class ChatMemoryHarness {
 }
 
 ChatMemoryHarness createChatMemoryHarness({
+  FakeLlmChatRepository? chatRepository,
+  AppUpdateInstallGuard? updateGuard,
   List<PromptMemory>? memories,
   bool memoryReadFails = false,
   String systemPrompt = '测试自定义系统提示词',
@@ -61,7 +64,7 @@ ChatMemoryHarness createChatMemoryHarness({
     characterTags: {'green_hair': 0.91},
   ),
 }) {
-  final chatRepository = FakeLlmChatRepository();
+  final repository = chatRepository ?? FakeLlmChatRepository();
   final memoryRepository = FakePromptMemoryRepository(
     memories: memories ?? [canonicalOutfitMemory()],
     readFails: memoryReadFails,
@@ -83,17 +86,18 @@ ChatMemoryHarness createChatMemoryHarness({
   LlmChatViewModel.toolRegistrySingleton = registry;
 
   final viewModel = LlmChatViewModel(
-    manageChat: ManageLlmChatUseCase(chatRepository),
+    manageChat: ManageLlmChatUseCase(repository),
     manageSettings: ManageSettingsUseCase(settingsRepository),
     memories: manageMemories,
     genVm: FrontendGenerationFake(),
     analyzeImageTags: analyzeImageTags,
     promptingSkillLoader: _FakePromptingSkillLoader(),
+    updateGuard: updateGuard,
   );
 
   return ChatMemoryHarness(
     viewModel: viewModel,
-    chatRepository: chatRepository,
+    chatRepository: repository,
     memoryRepository: memoryRepository,
     api: api,
     analyzeImageTags: analyzeImageTags,

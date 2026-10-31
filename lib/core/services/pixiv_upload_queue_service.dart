@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 
 import 'package:nai_huishi/data/datasources/local/pixiv_image_cloaker.dart';
 import 'package:nai_huishi/data/datasources/local/pixiv_settings_local_datasource.dart';
@@ -17,6 +18,7 @@ class PixivUploadQueueService {
   final PixivApiService _api;
   final PixivSettingsLocalDatasource _settings;
   final PixivImageCloaker _cloaker;
+  final AppUpdateInstallGuard? _updateGuard;
 
   final List<PixivUploadTask> _tasks = [];
   final StreamController<List<PixivUploadTask>> _ctrl =
@@ -29,7 +31,18 @@ class PixivUploadQueueService {
   Duration? _cooldownRemaining;
   Timer? _cooldownTick;
 
-  PixivUploadQueueService(this._api, this._settings, this._cloaker);
+  PixivUploadQueueService(this._api, this._settings, this._cloaker,
+      {AppUpdateInstallGuard? updateGuard})
+      : _updateGuard = updateGuard {
+    _updateGuard?.register(
+        this,
+        () => _processing ||
+                _tasks.any((task) =>
+                    task.status == PixivUploadStatus.pending ||
+                    task.status == PixivUploadStatus.uploading)
+            ? 'Pixiv 上传任务尚未完成'
+            : null);
+  }
 
   Stream<List<PixivUploadTask>> get stream => _ctrl.stream;
   List<PixivUploadTask> get tasks => List.unmodifiable(_tasks);
@@ -37,6 +50,9 @@ class PixivUploadQueueService {
   Duration? get cooldownRemaining => _cooldownRemaining;
 
   void enqueue(PixivUploadTask task) {
+    if (_updateGuard?.isInstalling ?? false) {
+      throw StateError('正在安装更新，请稍后上传');
+    }
     _tasks.add(task);
     _emit();
     _maybeStart();
@@ -240,6 +256,7 @@ class PixivUploadQueueService {
   );
 
   void dispose() {
+    _updateGuard?.unregister(this);
     _cooldownTimer?.cancel();
     _cooldownTick?.cancel();
     _ctrl.close();

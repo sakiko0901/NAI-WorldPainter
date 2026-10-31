@@ -4,6 +4,7 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/repositories/generation_repository.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 
 /// 生成任务队列
 /// NovelAI Gateway 同一时间只处理 1 个图像请求
@@ -11,6 +12,7 @@ import 'package:nai_huishi/core/errors/exceptions.dart';
 class GenerationQueue {
   final GenerationRepository _generationRepo;
   final HistoryRepository _historyRepo;
+  final AppUpdateInstallGuard? _updateGuard;
 
   final List<_QueuedTask> _queue = [];
   GenerationTask? _currentTask;
@@ -23,7 +25,18 @@ class GenerationQueue {
   final _previewController =
       StreamController<(String, Uint8List, int?)>.broadcast();
 
-  GenerationQueue(this._generationRepo, this._historyRepo);
+  GenerationQueue(this._generationRepo, this._historyRepo,
+      {AppUpdateInstallGuard? updateGuard})
+      : _updateGuard = updateGuard {
+    _updateGuard?.register(
+        this, () => _isProcessing || _queue.isNotEmpty ? '图像生成队列尚未完成' : null);
+  }
+
+  void _checkUpdateInstall() {
+    if (_updateGuard?.isInstalling ?? false) {
+      throw ApiException(message: '正在安装更新，请稍后重试', code: 'UPDATE_INSTALLING');
+    }
+  }
 
   Stream<QueueState> get queueStream => _queueController.stream;
   Stream<GenerationTask> get taskStream => _taskController.stream;
@@ -35,6 +48,7 @@ class GenerationQueue {
 
   /// 入队
   Future<void> enqueue(GenerationTask task) async {
+    _checkUpdateInstall();
     _queue.add(_QueuedTask(task, persistHistory: true));
     _notifyState();
     _processNext();
@@ -42,6 +56,7 @@ class GenerationQueue {
 
   /// 入队但不写入历史，供分块重绘等内部编排任务使用。
   Future<void> enqueueTransient(GenerationTask task) async {
+    _checkUpdateInstall();
     _queue.add(_QueuedTask(task, persistHistory: false));
     _notifyState();
     _processNext();
@@ -49,6 +64,7 @@ class GenerationQueue {
 
   /// 入队内部任务并等待终态，供漫画等项目级编排安全关联候选结果。
   Future<GenerationTask> enqueueTransientAndWait(GenerationTask task) {
+    _checkUpdateInstall();
     final completion = Completer<GenerationTask>();
     _queue.add(_QueuedTask(
       task,
@@ -62,6 +78,7 @@ class GenerationQueue {
 
   /// 批量入队
   Future<void> enqueueAll(List<GenerationTask> tasks) async {
+    _checkUpdateInstall();
     _queue.addAll(tasks.map((task) => _QueuedTask(task, persistHistory: true)));
     _notifyState();
     _processNext();
@@ -173,6 +190,7 @@ class GenerationQueue {
   }
 
   void dispose() {
+    _updateGuard?.unregister(this);
     _queueController.close();
     _taskController.close();
   }

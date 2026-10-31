@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 class ChatInputBar extends StatefulWidget {
@@ -17,6 +18,7 @@ class ChatInputBar extends StatefulWidget {
   final bool includeKeyboardInset;
   final VoidCallback? onOpenStylePresets;
   final double? maxHeight;
+  final AppUpdateInstallGuard? updateGuard;
 
   const ChatInputBar({
     super.key,
@@ -26,6 +28,7 @@ class ChatInputBar extends StatefulWidget {
     this.includeKeyboardInset = true,
     this.onOpenStylePresets,
     this.maxHeight,
+    this.updateGuard,
   });
 
   @override
@@ -49,6 +52,7 @@ class _ChatInputBarState extends State<ChatInputBar>
   void initState() {
     super.initState();
     _controller = widget.controller ?? TextEditingController();
+    widget.updateGuard?.registerUnsaved(this, _updateWarning);
     _ownsController = widget.controller == null;
     _hasText = _controller.text.trim().isNotEmpty;
     _controller.addListener(_onTextChanged);
@@ -68,12 +72,22 @@ class _ChatInputBarState extends State<ChatInputBar>
   @override
   void didUpdateWidget(covariant ChatInputBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.updateGuard != widget.updateGuard) {
+      oldWidget.updateGuard?.unregisterUnsaved(this);
+      widget.updateGuard?.registerUnsaved(this, _updateWarning);
+    }
     if (widget.isSending && !oldWidget.isSending) {
       _setAttachmentMenu(false);
     }
   }
 
   void _onFocusChanged() => setState(() {});
+
+  String? _updateWarning() => _controller.text.trim().isNotEmpty ||
+          _pendingImageBase64 != null ||
+          _pendingTextAttachment != null
+      ? 'AI 助手还有未发送的文字或附件，请先保存或发送'
+      : null;
 
   void _setAttachmentMenu(bool open) {
     if (_attachmentMenuOpen == open) return;
@@ -101,6 +115,7 @@ class _ChatInputBarState extends State<ChatInputBar>
 
   @override
   void dispose() {
+    widget.updateGuard?.unregisterUnsaved(this);
     _controller.removeListener(_onTextChanged);
     _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();

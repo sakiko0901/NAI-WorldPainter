@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
@@ -382,6 +383,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
               ),
             ),
           ChatInputBar(
+            updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
+                ? sl<AppUpdateInstallGuard>()
+                : null,
             maxHeight: (constraints.maxHeight - 62).clamp(0, double.infinity),
             includeKeyboardInset:
                 !(widget.embedded || widget.parentResizesForKeyboard),

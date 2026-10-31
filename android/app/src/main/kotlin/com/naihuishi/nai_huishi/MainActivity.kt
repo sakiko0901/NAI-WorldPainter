@@ -11,6 +11,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(SuperResolutionPlugin())
+        flutterEngine.plugins.add(AppUpdatePlugin())
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "worldpainter/online_gallery")
             .setMethodCallHandler { call, result ->
                 if (call.method != "openUrl") {

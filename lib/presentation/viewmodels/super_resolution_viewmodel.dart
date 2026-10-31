@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/domain/entities/sr_model.dart';
 import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/domain/usecases/upscale_image.dart';
@@ -12,7 +13,11 @@ class SuperResolutionViewModel extends ChangeNotifier {
   final UpscaleImageUseCase _upscale;
   final SaveImageUseCase _saveImage;
 
-  SuperResolutionViewModel(this._upscale, this._saveImage);
+  final AppUpdateInstallGuard? _updateGuard;
+
+  SuperResolutionViewModel(this._upscale, this._saveImage,
+      {AppUpdateInstallGuard? updateGuard})
+      : _updateGuard = updateGuard;
 
   /// 待处理的输入图片路径
   String? _inputPath;
@@ -60,6 +65,20 @@ class SuperResolutionViewModel extends ChangeNotifier {
   }
 
   Future<void> run() async {
+    if (_updateGuard?.isInstalling ?? false) {
+      _error = '正在安装更新，请稍后重试';
+      notifyListeners();
+      return;
+    }
+    final finish = _updateGuard?.beginActivity('本地图片超分尚未完成');
+    try {
+      await _runBeforeUpdate();
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<void> _runBeforeUpdate() async {
     final input = _inputPath;
     if (input == null || _status == SrStatus.running) return;
 

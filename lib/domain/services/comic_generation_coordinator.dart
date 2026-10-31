@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:uuid/uuid.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/services/comic_asset_store.dart';
 import 'package:nai_huishi/domain/entities/comic_project.dart';
 import 'package:nai_huishi/domain/services/comic_task_builder.dart';
@@ -13,14 +14,34 @@ class ComicGenerationCoordinator {
   final GenerationQueue _queue;
   final ComicAssetStore _assetStore;
   final ComicTaskBuilder _taskBuilder;
+  final AppUpdateInstallGuard? _updateGuard;
 
   ComicGenerationCoordinator(
     this._queue,
     this._assetStore,
-    this._taskBuilder,
-  );
+    this._taskBuilder, {
+    AppUpdateInstallGuard? updateGuard,
+  }) : _updateGuard = updateGuard;
 
   Future<ComicProject> generatePanel(
+    ComicProject project,
+    String panelId, {
+    int? count,
+    void Function(ComicProject project)? onChanged,
+  }) async {
+    if (_updateGuard?.isInstalling ?? false) {
+      throw StateError('正在安装更新，请稍后生成');
+    }
+    final finish = _updateGuard?.beginActivity('漫画分镜生成与保存尚未完成');
+    try {
+      return await _generateBeforeUpdate(project, panelId,
+          count: count, onChanged: onChanged);
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<ComicProject> _generateBeforeUpdate(
     ComicProject project,
     String panelId, {
     int? count,

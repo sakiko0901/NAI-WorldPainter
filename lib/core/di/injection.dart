@@ -2,6 +2,10 @@ import 'package:get_it/get_it.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
+import 'package:nai_huishi/core/services/app_update_service.dart';
+import 'package:nai_huishi/data/datasources/app_update_platform.dart';
+import 'package:nai_huishi/data/datasources/remote/app_update_source.dart';
 
 import 'package:nai_huishi/data/datasources/local/asset_prompting_skill_loader.dart';
 import 'package:nai_huishi/data/datasources/local/database_helper.dart';
@@ -125,6 +129,17 @@ final sl = GetIt.instance;
 Future<void> configureDependencies() async {
   final prefs = await SharedPreferences.getInstance();
   sl.registerSingleton<SharedPreferences>(prefs);
+  sl.registerSingleton<AppUpdateInstallGuard>(AppUpdateInstallGuard(),
+      dispose: (guard) => guard.dispose());
+  sl.registerLazySingleton<AppUpdateService>(
+    () => AppUpdateService(
+      source: AppUpdateSource(),
+      platform: AppUpdatePlatform(),
+      preferences: prefs,
+      installGuard: sl<AppUpdateInstallGuard>(),
+    ),
+    dispose: (service) => service.dispose(),
+  );
 
   final db = await DatabaseHelper.instance.database;
   sl.registerSingleton<Database>(db);
@@ -188,6 +203,7 @@ Future<void> configureDependencies() async {
   sl.registerSingleton<GenerationQueue>(GenerationQueue(
     sl<GenerationRepository>(),
     sl<HistoryRepository>(),
+    updateGuard: sl<AppUpdateInstallGuard>(),
   ));
   sl.registerSingleton<TiledImg2ImgService>(
       TiledImg2ImgService(sl<GenerationQueue>()));
@@ -197,6 +213,7 @@ Future<void> configureDependencies() async {
       sl<GenerationQueue>(),
       sl<ComicAssetStore>(),
       sl<ComicTaskBuilder>(),
+      updateGuard: sl<AppUpdateInstallGuard>(),
     ),
   );
   sl.registerSingleton<ComicRasterizer>(ComicRasterizer());
@@ -287,6 +304,7 @@ Future<void> configureDependencies() async {
     sl<PixivApiService>(),
     sl<PixivSettingsLocalDatasource>(),
     sl<PixivImageCloaker>(),
+    updateGuard: sl<AppUpdateInstallGuard>(),
   ));
 
   // ── GenerationViewModel 注册为 lazySingleton，便于 Tool 复用同一实例 ──
@@ -299,10 +317,12 @@ Future<void> configureDependencies() async {
         officialApi: sl<OfficialNovelAiApiService>(),
         officialTokenStore: sl<OfficialNovelAiTokenStore>(),
         dailyStats: sl<DailyStatsLocalDatasource>(),
+        updateGuard: sl<AppUpdateInstallGuard>(),
       ));
   sl.registerFactory<SuperResolutionViewModel>(() => SuperResolutionViewModel(
         sl<UpscaleImageUseCase>(),
         sl<SaveImageUseCase>(),
+        updateGuard: sl<AppUpdateInstallGuard>(),
       ));
   sl.registerFactory<DirectorToolsViewModel>(() => DirectorToolsViewModel(
         sl<NovelAiApiService>(),
@@ -310,6 +330,7 @@ Future<void> configureDependencies() async {
         sl<OfficialNovelAiTokenStore>(),
         sl<ManageSettingsUseCase>(),
         sl<SaveImageUseCase>(),
+        updateGuard: sl<AppUpdateInstallGuard>(),
       ));
   sl.registerLazySingleton<HistoryViewModel>(
       () => HistoryViewModel(sl<GetHistoryUseCase>(), sl<GenerationQueue>()));
@@ -375,6 +396,7 @@ Future<void> configureDependencies() async {
       genVm: sl<GenerationViewModel>(),
       analyzeImageTags: sl<AnalyzeImageTagsUseCase>(),
       promptingSkillLoader: sl<PromptingSkillLoader>(),
+      updateGuard: sl<AppUpdateInstallGuard>(),
     );
   });
 

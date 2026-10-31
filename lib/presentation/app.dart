@@ -1,4 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
+import 'package:nai_huishi/core/services/app_update_service.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +25,11 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
   void initState() {
     super.initState();
     _loadAppearance();
+    if (sl.isRegistered<AppUpdateService>()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(sl<AppUpdateService>().initialize());
+      });
+    }
   }
 
   Future<void> _loadAppearance() async {
@@ -56,6 +66,19 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
         brightness,
         frostedGlassEnabled: _frostedGlassEnabled,
       ),
+      builder: (context, child) => sl.isRegistered<AppUpdateInstallGuard>()
+          ? ListenableBuilder(
+              listenable: sl<AppUpdateInstallGuard>(),
+              child: child,
+              builder: (context, child) => ExcludeFocus(
+                excluding: sl<AppUpdateInstallGuard>().isInstalling,
+                child: AbsorbPointer(
+                  absorbing: sl<AppUpdateInstallGuard>().isInstalling,
+                  child: child,
+                ),
+              ),
+            )
+          : child!,
       home: HomePage(
         appearanceMode: _appearanceMode,
         onAppearanceChanged: _setAppearance,

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/data/nsfw_book.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/agents/agent_loop.dart';
@@ -33,6 +34,7 @@ class LlmChatViewModel extends ChangeNotifier {
   final GenerationViewModel _genVm;
   final AnalyzeImageTagsUseCase _analyzeImageTags;
   final PromptingSkillLoader _promptingSkillLoader;
+  final AppUpdateInstallGuard? _updateGuard;
 
   LlmChatViewModel({
     required ManageLlmChatUseCase manageChat,
@@ -41,12 +43,14 @@ class LlmChatViewModel extends ChangeNotifier {
     required GenerationViewModel genVm,
     required AnalyzeImageTagsUseCase analyzeImageTags,
     required PromptingSkillLoader promptingSkillLoader,
+    AppUpdateInstallGuard? updateGuard,
   })  : _manageChat = manageChat,
         _manageSettings = manageSettings,
         _memories = memories,
         _genVm = genVm,
         _analyzeImageTags = analyzeImageTags,
-        _promptingSkillLoader = promptingSkillLoader;
+        _promptingSkillLoader = promptingSkillLoader,
+        _updateGuard = updateGuard;
 
   // ── LLM 供应商 + 2 角色绑定 ──
   List<LlmProvider> _providers = [];
@@ -411,6 +415,31 @@ class LlmChatViewModel extends ChangeNotifier {
 
   // ── 发送消息：走 AgentLoop ──
   Future<void> sendUserMessage(
+    String text, {
+    String? imageBase64,
+    String? textAttachment,
+    bool alreadyPersisted = false,
+  }) =>
+      _withUpdateProtection(() => _sendBeforeUpdate(text,
+          imageBase64: imageBase64,
+          textAttachment: textAttachment,
+          alreadyPersisted: alreadyPersisted));
+
+  Future<void> _withUpdateProtection(Future<void> Function() action) async {
+    if (_updateGuard?.isInstalling ?? false) {
+      _errorMessage = '正在安装更新，请稍后发送';
+      notifyListeners();
+      return;
+    }
+    final finish = _updateGuard?.beginActivity('AI 助手仍在处理消息');
+    try {
+      await action();
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<void> _sendBeforeUpdate(
     String text, {
     String? imageBase64,
     String? textAttachment,
@@ -804,6 +833,14 @@ class LlmChatViewModel extends ChangeNotifier {
     required LlmMessage message,
     String? optionId,
     String? customAnswer,
+  }) =>
+      _withUpdateProtection(() => _answerBeforeUpdate(
+          message: message, optionId: optionId, customAnswer: customAnswer));
+
+  Future<void> _answerBeforeUpdate({
+    required LlmMessage message,
+    String? optionId,
+    String? customAnswer,
   }) async {
     final interaction = message.interaction;
     if (_isSending ||
@@ -832,7 +869,10 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   /// 重试：从指定用户消息处重新发送。
-  Future<void> retryFromIndex(int messageIndex) async {
+  Future<void> retryFromIndex(int messageIndex) =>
+      _withUpdateProtection(() => _retryBeforeUpdate(messageIndex));
+
+  Future<void> _retryBeforeUpdate(int messageIndex) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
     if (msg.role != LlmMessageRole.user || msg.id == null || _isSending) return;
@@ -847,7 +887,10 @@ class LlmChatViewModel extends ChangeNotifier {
   }
 
   /// 编辑并重发，保留原消息附带的图片。
-  Future<void> editAndResend(int messageIndex, String newText) async {
+  Future<void> editAndResend(int messageIndex, String newText) =>
+      _withUpdateProtection(() => _editBeforeUpdate(messageIndex, newText));
+
+  Future<void> _editBeforeUpdate(int messageIndex, String newText) async {
     if (messageIndex < 0 || messageIndex >= _messages.length) return;
     final msg = _messages[messageIndex];
     if (msg.role != LlmMessageRole.user || msg.id == null || _isSending) return;

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.dart';
@@ -20,14 +21,16 @@ class DirectorToolsViewModel extends ChangeNotifier {
   final OfficialNovelAiTokenStore _officialTokenStore;
   final ManageSettingsUseCase _settings;
   final SaveImageUseCase _saveImage;
+  final AppUpdateInstallGuard? _updateGuard;
 
   DirectorToolsViewModel(
     this._api,
     this._officialApi,
     this._officialTokenStore,
     this._settings,
-    this._saveImage,
-  );
+    this._saveImage, {
+    AppUpdateInstallGuard? updateGuard,
+  }) : _updateGuard = updateGuard;
 
   String? inputPath;
   String? outputPath;
@@ -153,6 +156,20 @@ class DirectorToolsViewModel extends ChangeNotifier {
   }
 
   Future<bool> process() async {
+    if (_updateGuard?.isInstalling ?? false) {
+      errorMessage = '正在安装更新，请稍后重试';
+      _notify();
+      return false;
+    }
+    final finish = _updateGuard?.beginActivity('导演工具处理尚未完成');
+    try {
+      return await _processBeforeUpdate();
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<bool> _processBeforeUpdate() async {
     if (isProcessing || isLoading || _disposed) return false;
     final source = inputPath;
     if (source == null) {

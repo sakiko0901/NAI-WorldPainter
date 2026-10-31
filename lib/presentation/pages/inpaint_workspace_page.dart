@@ -10,6 +10,7 @@ import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/inpaint_workspace.dart';
 import 'package:nai_huishi/domain/entities/inpaint_source_transparency.dart';
@@ -421,6 +422,22 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _generation = sl<GenerationViewModel>();
     _queue = sl<GenerationQueue>();
     _saveImage = sl<SaveImageUseCase>();
+    if (sl.isRegistered<AppUpdateInstallGuard>()) {
+      final guard = sl<AppUpdateInstallGuard>();
+      guard.register(
+          this,
+          () => _busy || _officialUpscaling || _addingLayer
+              ? '局部重绘工作区仍在处理图片'
+              : null);
+      guard.registerUnsaved(
+          this,
+          () => _strokes.isNotEmpty ||
+                  _draftPoints.isNotEmpty ||
+                  _resultLayers.isNotEmpty ||
+                  _candidates.isNotEmpty
+              ? '局部重绘有临时遮罩、图层或候选，请先保存重要图片；更新会清空临时编辑和撤销记录'
+              : null);
+    }
     // 页面底部生成按钮触发时，由工作区执行完整生成本轮局部重绘。
     _generation.inpaintWorkspaceHandler = _prepareGeneration;
     // 生成页"局部重绘"按钮导入新图时（VM sourceImagePath 变化），重新加载。
@@ -484,6 +501,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
 
   @override
   void dispose() {
+    if (sl.isRegistered<AppUpdateInstallGuard>()) {
+      sl<AppUpdateInstallGuard>().unregister(this);
+      sl<AppUpdateInstallGuard>().unregisterUnsaved(this);
+    }
     InpaintWorkspaceCard.gestureActive.value = false;
     _generation.removeListener(_onVmChanged);
     if (_generation.inpaintWorkspaceHandler == _prepareGeneration) {
@@ -1290,6 +1311,15 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   Future<void> _saveCompositeToGallery() async {
     final sourcePng = _sourcePngBytes;
     if (sourcePng == null || _addingLayer) return;
+    final guard = sl.isRegistered<AppUpdateInstallGuard>()
+        ? sl<AppUpdateInstallGuard>()
+        : null;
+    if (guard?.isInstalling ?? false) {
+      showFloatingToast(context, '正在安装更新，请稍后保存');
+      return;
+    }
+    // Keep exports protected even if this workspace is unmounted while saving.
+    final finish = guard?.beginActivity('合成图片仍在保存到相册');
     try {
       final visibleLayers = _resultLayers.where((layer) => layer.visible);
       final input = _CompositeWorkspaceInput(
@@ -1318,6 +1348,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       }
     } catch (error) {
       if (mounted) showFloatingToast(context, '合成保存失败：$error');
+    } finally {
+      finish?.call();
     }
   }
 
@@ -2024,8 +2056,11 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           key: const ValueKey('inpaint-batch-control'),
           sliderKey: const ValueKey('inpaint-batch-slider'),
           value: _generation.batchCount,
-          onChanged: _busy || _addingLayer || _officialUpscaling ||
-                  _generation.isGenerating || _generation.isProcessingImage
+          onChanged: _busy ||
+                  _addingLayer ||
+                  _officialUpscaling ||
+                  _generation.isGenerating ||
+                  _generation.isProcessingImage
               ? null
               : _generation.updateBatchCount,
         ),
@@ -2464,41 +2499,45 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
-              spacing: 12,
-              children: [
-                TextButton.icon(
-                  onPressed:
-                      _sourcePath == null || _busy ? null : _fitStageToContent,
-                  icon: const Icon(CupertinoIcons.fullscreen, size: 17),
-                  label: const Text('重置视图'),
-                ),
-                TextButton.icon(
-                  onPressed: _busy ? null : _pickSource,
-                  icon: const Icon(CupertinoIcons.photo, size: 17),
-                  label: const Text('导入图片'),
-                ),
-              ],
-            ),
-            ListTile(
-              key: const ValueKey('inpaint-clear-strokes'),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-              minLeadingWidth: 20,
-              enabled: _strokes.isNotEmpty && !_busy,
-              onTap: _strokes.isNotEmpty && !_busy ? _clearAllStrokes : null,
-              leading: Icon(CupertinoIcons.trash,
-                  size: 18,
-                  color: _strokes.isNotEmpty && !_busy
-                      ? colors.error
-                      : colors.onSurface.withValues(alpha: 0.38)),
-              title: const Text('清空笔迹与遮罩', style: TextStyle(fontSize: 13)),
-            ),
-            const Divider(height: 20),
-            _buildParams(),
-          ],
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 12,
+                children: [
+                  TextButton.icon(
+                    onPressed: _sourcePath == null || _busy
+                        ? null
+                        : _fitStageToContent,
+                    icon: const Icon(CupertinoIcons.fullscreen, size: 17),
+                    label: const Text('重置视图'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _busy ? null : _pickSource,
+                    icon: const Icon(CupertinoIcons.photo, size: 17),
+                    label: const Text('导入图片'),
+                  ),
+                ],
+              ),
+              ListTile(
+                key: const ValueKey('inpaint-clear-strokes'),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                minLeadingWidth: 20,
+                enabled: _strokes.isNotEmpty && !_busy,
+                onTap: _strokes.isNotEmpty && !_busy ? _clearAllStrokes : null,
+                leading: Icon(CupertinoIcons.trash,
+                    size: 18,
+                    color: _strokes.isNotEmpty && !_busy
+                        ? colors.error
+                        : colors.onSurface.withValues(alpha: 0.38)),
+                title: const Text('清空笔迹与遮罩', style: TextStyle(fontSize: 13)),
+              ),
+              const Divider(height: 20),
+              _buildParams(),
+            ],
+          ),
         ),
       ),
     );
@@ -2565,6 +2604,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final display =
         fractional ? value.toStringAsFixed(2) : '${value.round()} $unit';
     return Column(
+      // Flutter 3.47 can retain stale Slider semantics parents when disabled
+      // offstage (flutter/flutter#193706). Remount only the hidden row; values
+      // live in the workspace state, and visible/menu animations stay intact.
+      key: ValueKey('inpaint-parameter-$label-${_busy && !_workspaceMenuExpanded}'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(children: [

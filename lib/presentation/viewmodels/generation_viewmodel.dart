@@ -8,6 +8,7 @@ import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/queue/generation_queue.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/services/background_keepalive_service.dart';
+import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/utils/official_cost_calculator.dart';
 import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
@@ -90,6 +91,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   final OfficialNovelAiApiService _officialApi;
   final OfficialNovelAiTokenStore _officialTokenStore;
   final DailyStatsLocalDatasource _dailyStats;
+  final AppUpdateInstallGuard? _updateGuard;
 
   GenerationViewModel({
     required GenerateImageUseCase generateImage,
@@ -100,6 +102,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     required OfficialNovelAiApiService officialApi,
     required OfficialNovelAiTokenStore officialTokenStore,
     required DailyStatsLocalDatasource dailyStats,
+    AppUpdateInstallGuard? updateGuard,
   })  : _generateImage = generateImage,
         _manageSettings = manageSettings,
         _saveImage = saveImage,
@@ -107,7 +110,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         _tiledImg2Img = tiledImg2Img ?? TiledImg2ImgService(queue),
         _officialApi = officialApi,
         _officialTokenStore = officialTokenStore,
-        _dailyStats = dailyStats {
+        _dailyStats = dailyStats,
+        _updateGuard = updateGuard {
     _init();
   }
 
@@ -1949,6 +1953,20 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   Future<bool?> Function()? inpaintWorkspaceHandler;
 
   Future<void> generate() async {
+    if (_updateGuard?.isInstalling ?? false) {
+      errorMessage = '正在安装更新，请稍后再生成';
+      notifyListeners();
+      return;
+    }
+    final finish = _updateGuard?.beginActivity('图像生成任务尚未完成');
+    try {
+      await _generateBeforeUpdate();
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<void> _generateBeforeUpdate() async {
     // 重入守卫：批量生成中再次按下"生成"按钮（或被并发触发）直接忽略，
     // 避免两套 for 循环并行入队导致超过设定张数。
     if (_generateInFlight || isProcessingImage) return;
@@ -2455,6 +2473,17 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   /// 对工作台当前图片执行 NovelAI 官方超分，成功后把结果加入当前结果区。
   Future<bool> upscaleWithOfficial(int scale,
       {GenerationTask? sourceTask}) async {
+    if (_updateGuard?.isInstalling ?? false) return false;
+    final finish = _updateGuard?.beginActivity('图片超分尚未完成');
+    try {
+      return await _upscaleBeforeUpdate(scale, sourceTask: sourceTask);
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<bool> _upscaleBeforeUpdate(int scale,
+      {GenerationTask? sourceTask}) async {
     if (isGenerating || isProcessingImage) return false;
     final task = sourceTask ?? selectedResult ?? lastCompletedTask;
     final path = task?.imagePath;
@@ -2505,6 +2534,32 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   /// 对工作台当前图片执行官方 Enhance（按提示词重绘放大），结果加入结果区。
   Future<bool> enhanceWithOfficial({
+    required double scale,
+    required double strength,
+    double noise = 0.0,
+    bool max = false,
+    String? promptOverride,
+    GenerationTask? sourceTask,
+    void Function(GenerationTask result)? onCompleted,
+  }) async {
+    if (_updateGuard?.isInstalling ?? false) return false;
+    final finish = _updateGuard?.beginActivity('图片增强尚未完成');
+    try {
+      return await _enhanceBeforeUpdate(
+        scale: scale,
+        strength: strength,
+        noise: noise,
+        max: max,
+        promptOverride: promptOverride,
+        sourceTask: sourceTask,
+        onCompleted: onCompleted,
+      );
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<bool> _enhanceBeforeUpdate({
     required double scale,
     required double strength,
     double noise = 0.0,
@@ -2590,6 +2645,23 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
 
   /// 对任意本地图片执行 NovelAI 官方超分，返回输出文件路径。
   Future<String> upscaleFileWithOfficial(
+    String inputPath,
+    int scale, {
+    GenerationTask? sourceTask,
+  }) async {
+    if (_updateGuard?.isInstalling ?? false) {
+      throw ApiException(message: '正在安装更新，请稍后重试', code: 'UPDATE_INSTALLING');
+    }
+    final finish = _updateGuard?.beginActivity('图片超分尚未完成');
+    try {
+      return await _upscaleFileBeforeUpdate(inputPath, scale,
+          sourceTask: sourceTask);
+    } finally {
+      finish?.call();
+    }
+  }
+
+  Future<String> _upscaleFileBeforeUpdate(
     String inputPath,
     int scale, {
     GenerationTask? sourceTask,
