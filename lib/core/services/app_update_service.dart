@@ -31,6 +31,9 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   UpdatePhase _phase = UpdatePhase.idle;
   String? _message;
   bool _autoCheckEnabled = true;
+  int _automaticPromptRevision = 0;
+  AppUpdateManifest? _automaticPromptManifest;
+  final Set<int> _automaticallyPromptedVersions = {};
   DateTime? _lastCheckedAt;
   int? _ignoredVersion;
   int? _manuallyAllowedVersion;
@@ -45,8 +48,11 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   _UpdateAction? _action;
   Timer? _pollTimer;
   Future<void>? _initialization;
+  Future<void>? _startupInitialization;
+  bool _startupCheckPending = false;
   Future<void>? _checking;
   bool _checkingSilent = false;
+  int _manualChecksPending = 0;
   Future<void>? _refreshing;
   Future<void>? _resuming;
   Future<AppUpdateDownload>? _starting;
@@ -72,6 +78,8 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   UpdatePhase get phase => _phase;
   String? get message => _message;
   bool get autoCheckEnabled => _autoCheckEnabled;
+  int get automaticPromptRevision => _automaticPromptRevision;
+  AppUpdateManifest? get automaticPromptManifest => _automaticPromptManifest;
   DateTime? get lastCheckedAt => _lastCheckedAt;
   bool get isSupported =>
       _platform.isSupported && _phase != UpdatePhase.unsupported;
@@ -102,14 +110,37 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _installed != null &&
       _installedIncompatibility(_installed!) == null;
 
-  Future<void> initialize() => _ensureInitialized(autoCheck: true);
-
-  Future<void> _ensureInitialized({bool autoCheck = false}) {
+  Future<void> initialize() {
     if (_disposed) return Future<void>.value();
-    return _initialization ??= _initialize(autoCheck);
+    return _startupInitialization ??= _initializeForStartup();
   }
 
-  Future<void> _initialize(bool autoCheck) async {
+  Future<void> _initializeForStartup() async {
+    _startupCheckPending = true;
+    await _ensureInitialized();
+    await _checkAtStartup();
+  }
+
+  Future<void> _checkAtStartup() async {
+    if (_disposed || !_startupCheckPending) return;
+    if (!_autoCheckEnabled || !_canCheckInstalledApp) {
+      _startupCheckPending = false;
+      return;
+    }
+    // A process created in the background checks at its first foreground entry.
+    if (!_initialized || !_foreground || _action != null || _ownsInstallGuard) {
+      return;
+    }
+    _startupCheckPending = false;
+    await _check(silent: true, forceInterval: true);
+  }
+
+  Future<void> _ensureInitialized() {
+    if (_disposed) return Future<void>.value();
+    return _initialization ??= _initialize();
+  }
+
+  Future<void> _initialize() async {
     final auto = _preferences.get(autoCheckPreferenceKey);
     _autoCheckEnabled = auto is bool ? auto : true;
     final ignored = _preferences.get(ignoredVersionPreferenceKey);
@@ -136,23 +167,28 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     _observing = true;
     await _restoreNative(returningFromInstaller: true);
     _initialized = true;
-    if (!_disposed &&
-        autoCheck &&
-        _foreground &&
-        _phase != UpdatePhase.unsupported) {
-      await _check(silent: true);
-    }
   }
 
   Future<void> checkForUpdates({bool silent = false}) async {
-    await _ensureInitialized();
-    if (_disposed || !_platform.isSupported) return;
-    if (_installed == null) await refresh();
-    await _check(silent: silent);
+    if (_disposed) return;
+    if (!silent) {
+      ++_manualChecksPending;
+      _clearAutomaticPrompt();
+    }
+    try {
+      await _ensureInitialized();
+      if (_disposed || !_platform.isSupported) return;
+      if (_installed == null) await refresh();
+      await _check(silent: silent);
+    } finally {
+      if (!silent) --_manualChecksPending;
+    }
   }
 
-  Future<void> _check({required bool silent}) async {
+  Future<void> _check(
+      {required bool silent, bool forceInterval = false}) async {
     if (_disposed || !_canCheckInstalledApp) return;
+    if (!silent) _clearAutomaticPrompt();
     // A manual request waits out a silent request, then deliberately bypasses its
     // interval/ignored-version result. Silent requests share one in-flight check.
     final pending = _checking;
@@ -166,7 +202,8 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (silent &&
         (!_autoCheckEnabled ||
             !_foreground ||
-            (_lastCheckedAt != null &&
+            (!forceInterval &&
+                _lastCheckedAt != null &&
                 _now().difference(_lastCheckedAt!) <
                     const Duration(days: 1)))) {
       return;
@@ -219,11 +256,26 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
         _phase = _isIgnored(latest) ? UpdatePhase.idle : UpdatePhase.available;
         if (_isIgnored(latest)) _message = '已忽略此版本，手动检查可再次查看。';
       }
+      if (silent) {
+        if (_autoCheckEnabled &&
+            _manualChecksPending == 0 &&
+            _phase == UpdatePhase.available) {
+          if (_automaticallyPromptedVersions.add(latest.versionCode)) {
+            _automaticPromptManifest = latest;
+            ++_automaticPromptRevision;
+          } else if (_automaticPromptManifest?.versionCode !=
+              latest.versionCode) {
+            _clearAutomaticPrompt(notify: false);
+          }
+        } else {
+          _clearAutomaticPrompt(notify: false);
+        }
+      }
     } catch (error) {
       if (!_current(epoch)) return;
       if (protected || _hasBoundDownload) {
         // A foreground poll may have reached ready while this request ran.
-      } else if (silent && _manifest != null) {
+      } else if (silent) {
         _phase = previousPhase;
         _message = previousMessage;
       } else {
@@ -247,6 +299,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     final epoch = ++_epoch;
+    _clearAutomaticPrompt(notify: false);
     _action = _UpdateAction.starting;
     _requiresUnsavedConfirmation = false;
     _phase = UpdatePhase.downloading;
@@ -336,6 +389,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     }
     ++_epoch;
     _ignoredVersion = _manifest!.versionCode;
+    _clearAutomaticPrompt(notify: false);
     _manuallyAllowedVersion = null;
     _phase = UpdatePhase.idle;
     _message = '已忽略此版本，手动检查可再次查看。';
@@ -347,6 +401,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     await _ensureInitialized();
     if (_disposed) return;
     _autoCheckEnabled = enabled;
+    if (!enabled) _clearAutomaticPrompt(notify: false);
     _emit();
     try {
       await _preferences.setBool(autoCheckPreferenceKey, enabled);
@@ -692,6 +747,20 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _ignoredVersion == candidate.versionCode &&
       _manuallyAllowedVersion != candidate.versionCode;
 
+  /// Called only when the application-level prompt was actually shown.
+  void acknowledgeAutomaticPrompt(int versionCode) {
+    if (_disposed || _automaticPromptManifest?.versionCode != versionCode) {
+      return;
+    }
+    _clearAutomaticPrompt();
+  }
+
+  void _clearAutomaticPrompt({bool notify = true}) {
+    if (_disposed || _automaticPromptManifest == null) return;
+    _automaticPromptManifest = null;
+    if (notify) _emit();
+  }
+
   bool _current(int epoch) => !_disposed && _epoch == epoch;
 
   Future<void> _saveInt(String key, int value) async {
@@ -705,7 +774,12 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     _action = null;
     _emit();
     _schedulePolling();
-    if (_resumePending && _foreground) unawaited(_resume());
+    if (_resumePending && _foreground) {
+      unawaited(_resume());
+    } else if (_startupCheckPending && _foreground) {
+      // Let a just-downloaded APK enter its verification action before retrying.
+      unawaited(Future<void>.microtask(_checkAtStartup));
+    }
   }
 
   void _releaseInstallGuard() {
@@ -766,7 +840,11 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed || !_foreground || _action != null) return;
     await _restoreNative(returningFromInstaller: true);
     if (_disposed || !_foreground) return;
-    await _check(silent: true);
+    if (_startupCheckPending) {
+      await _checkAtStartup();
+    } else {
+      await _check(silent: true);
+    }
   }
 
   void _emit() {

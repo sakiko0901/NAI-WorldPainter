@@ -39,6 +39,10 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   @override
   AppUpdateManifest? manifest;
   @override
+  AppUpdateManifest? automaticPromptManifest;
+  @override
+  int automaticPromptRevision = 0;
+  @override
   AppUpdateDownload? download;
   @override
   UpdatePhase phase = UpdatePhase.idle;
@@ -63,6 +67,8 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   int initializations = 0;
   bool disposed = false;
   bool? checkCapability;
+  final acknowledgedVersions = <int>[];
+  bool notifyWhenAcknowledged = false;
 
   @override
   bool get hasUpdate => manifest != null && phase != UpdatePhase.upToDate;
@@ -75,6 +81,12 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   bool get isSupported => phase != UpdatePhase.unsupported;
   @override
   bool get canCheckForUpdates => checkCapability ?? isSupported;
+
+  @override
+  void acknowledgeAutomaticPrompt(int versionCode) {
+    acknowledgedVersions.add(versionCode);
+    if (notifyWhenAcknowledged) notifyListeners();
+  }
 
   void receive(UpdatePhase next, {String? notice}) {
     phase = next;
@@ -217,6 +229,24 @@ void main() {
     await _tap(tester, 'app-update-release');
     expect(updater.releaseOpens, 1);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a late automatic event is acknowledged without a notification loop',
+      (tester) async {
+    await _pumpPage(tester, updater);
+    expect(updater.acknowledgedVersions, isEmpty);
+    updater.manifest = _manifest;
+    updater.automaticPromptManifest = _manifest;
+    updater.automaticPromptRevision = 1;
+    updater.notifyWhenAcknowledged = true;
+    updater.receive(UpdatePhase.available);
+    await tester.pumpAndSettle();
+    expect(updater.acknowledgedVersions, [11]);
+    updater.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(updater.acknowledgedVersions, [11]);
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
   testWidgets('download progress is determinate and cancellation is explicit',

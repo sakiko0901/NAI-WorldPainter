@@ -19,11 +19,66 @@ class AppUpdatePage extends StatefulWidget {
 class _AppUpdatePageState extends State<AppUpdatePage> {
   late final AppUpdateService _service;
   bool _installFlowActive = false;
+  bool _automaticAcknowledgementScheduled = false;
+  (int, int)? _acknowledgedAutomaticPrompt;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? sl<AppUpdateService>();
+    _service.addListener(_scheduleAutomaticAcknowledgement);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      final code = _service.manifest?.versionCode;
+      if (code != null) _acknowledgeVersion(code);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-evaluate when a covering route closes and this page becomes current.
+    ModalRoute.of(context);
+    _scheduleAutomaticAcknowledgement();
+  }
+
+  void _acknowledgeVersion(int code) {
+    if (_service.automaticPromptManifest?.versionCode == code) {
+      _acknowledgedAutomaticPrompt = (_service.automaticPromptRevision, code);
+    }
+    _service.acknowledgeAutomaticPrompt(code);
+  }
+
+  void _scheduleAutomaticAcknowledgement() {
+    final pending = _service.automaticPromptManifest;
+    if (!mounted ||
+        _automaticAcknowledgementScheduled ||
+        pending == null ||
+        pending.versionCode != _service.manifest?.versionCode ||
+        _acknowledgedAutomaticPrompt ==
+            (_service.automaticPromptRevision, pending.versionCode)) {
+      return;
+    }
+    _automaticAcknowledgementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _automaticAcknowledgementScheduled = false;
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      final current = _service.automaticPromptManifest;
+      if (current == null ||
+          current.versionCode != _service.manifest?.versionCode ||
+          _acknowledgedAutomaticPrompt ==
+              (_service.automaticPromptRevision, current.versionCode)) {
+        return;
+      }
+      _acknowledgeVersion(current.versionCode);
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  @override
+  void dispose() {
+    _service.removeListener(_scheduleAutomaticAcknowledgement);
+    super.dispose();
   }
 
   Future<void> _perform(Future<void> Function() action) async {
@@ -397,7 +452,7 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
             title: const Text('自动检查更新'),
-            subtitle: const Text('每天使用应用时静默检查，在工具页提示新版本'),
+            subtitle: const Text('打开应用时检查，发现新版本后提示'),
             value: _service.autoCheckEnabled,
             onChanged: _service.phase == UpdatePhase.unsupported &&
                     !_service.canCheckForUpdates

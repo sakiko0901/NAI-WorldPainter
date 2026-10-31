@@ -5,7 +5,9 @@ import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/services/app_update_service.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/navigation/app_update_navigation_observer.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
+import 'package:nai_huishi/presentation/widgets/app_update_prompt_host.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NaiHuishiApp extends StatefulWidget {
@@ -20,6 +22,8 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
   static const _frostedGlassKey = 'frosted_glass_enabled';
   AppearanceMode _appearanceMode = AppearanceMode.dark;
   bool _frostedGlassEnabled = true;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _updateNavigationObserver = AppUpdateNavigationObserver();
 
   @override
   void initState() {
@@ -57,28 +61,49 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
   }
 
   @override
+  void dispose() {
+    _updateNavigationObserver.dispose();
+    super.dispose();
+  }
+
+  Widget _buildAppContent(Widget child) {
+    if (!sl.isRegistered<AppUpdateInstallGuard>()) return child;
+    final guard = sl<AppUpdateInstallGuard>();
+    final content = sl.isRegistered<AppUpdateService>()
+        ? AppUpdatePromptHost(
+            service: sl<AppUpdateService>(),
+            guard: guard,
+            navigatorKey: _navigatorKey,
+            rootRouteCurrent: _updateNavigationObserver.rootRouteCurrent,
+            child: child,
+          )
+        : child;
+    return ListenableBuilder(
+      listenable: guard,
+      child: content,
+      builder: (context, child) => ExcludeFocus(
+        excluding: guard.isInstalling,
+        child: AbsorbPointer(
+          absorbing: guard.isInstalling,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final brightness = _appearanceMode.brightness;
     return MaterialApp(
+      navigatorKey: _navigatorKey,
+      navigatorObservers: [_updateNavigationObserver],
       debugShowCheckedModeBanner: false,
       title: 'nai 绘世',
       theme: buildNaiHuishiTheme(
         brightness,
         frostedGlassEnabled: _frostedGlassEnabled,
       ),
-      builder: (context, child) => sl.isRegistered<AppUpdateInstallGuard>()
-          ? ListenableBuilder(
-              listenable: sl<AppUpdateInstallGuard>(),
-              child: child,
-              builder: (context, child) => ExcludeFocus(
-                excluding: sl<AppUpdateInstallGuard>().isInstalling,
-                child: AbsorbPointer(
-                  absorbing: sl<AppUpdateInstallGuard>().isInstalling,
-                  child: child,
-                ),
-              ),
-            )
-          : child!,
+      builder: (context, child) => _buildAppContent(child!),
       home: HomePage(
         appearanceMode: _appearanceMode,
         onAppearanceChanged: _setAppearance,

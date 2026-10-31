@@ -191,6 +191,312 @@ void main() {
     expect(service.hasUpdate, isFalse);
   });
 
+  test('cold startup bypasses the persisted interval exactly once', () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await preferences.setInt(AppUpdateService.lastCheckedPreferenceKey,
+        now.subtract(const Duration(minutes: 10)).millisecondsSinceEpoch);
+    final check = Completer<AppUpdateManifest>();
+    source.onFetch = () => check.future;
+    final first = service.initialize();
+    final second = service.initialize();
+    await _drain();
+    expect(source.calls, 1);
+    check.complete(_manifest());
+    await Future.wait([first, second]);
+    await service.initialize();
+    expect(source.calls, 1);
+    expect(service.automaticPromptRevision, 1);
+    expect(service.automaticPromptManifest!.versionCode, 11);
+    expect(platform.startCalls, 0);
+    expect(platform.installCalls, 0);
+  });
+
+  test('another cold process checks again even on the same day', () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await service.initialize();
+    final firstSource = source;
+    service.dispose();
+    source = _Source();
+    platform = _Platform();
+    service = AppUpdateService(
+        source: source,
+        platform: platform,
+        preferences: preferences,
+        installGuard: guard,
+        now: () => now);
+    await service.initialize();
+    expect(firstSource.calls, 1);
+    expect(source.calls, 1);
+    expect(service.automaticPromptRevision, 1);
+  });
+
+  test(
+      'startup remains an automatic check after an earlier manual initialization',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await service.checkForUpdates();
+    expect(source.calls, 1);
+    expect(service.automaticPromptRevision, 0);
+    await service.initialize();
+    expect(source.calls, 2);
+    expect(service.automaticPromptRevision, 1);
+    await service.initialize();
+    expect(source.calls, 2);
+  });
+
+  test('startup respects the disabled automatic-check preference', () async {
+    await service.initialize();
+    expect(source.calls, 0);
+    expect(service.automaticPromptRevision, 0);
+    await service.checkForUpdates();
+    expect(source.calls, 1,
+        reason: 'Manual checks still bypass this preference');
+    expect(service.automaticPromptRevision, 0);
+    expect(service.automaticPromptManifest, isNull);
+  });
+
+  test('a background startup defers its single forced check until foreground',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await preferences.setInt(
+        AppUpdateService.lastCheckedPreferenceKey, now.millisecondsSinceEpoch);
+    platform.onInfo = () async {
+      service.didChangeAppLifecycleState(AppLifecycleState.paused);
+      return _installed();
+    };
+    await service.initialize();
+    expect(source.calls, 0);
+    platform.onInfo = null;
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(source.calls, 1);
+    expect(service.automaticPromptRevision, 1);
+    service.didChangeAppLifecycleState(AppLifecycleState.paused);
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(source.calls, 1);
+  });
+
+  test(
+      'resume remains daily throttled and a version is prompted once per process',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await service.initialize();
+    service.acknowledgeAutomaticPrompt(11);
+    service.didChangeAppLifecycleState(AppLifecycleState.paused);
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(source.calls, 1);
+    now = now.add(const Duration(days: 1));
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(source.calls, 2);
+    expect(service.automaticPromptRevision, 1);
+    expect(service.automaticPromptManifest, isNull);
+    source.result = _manifest(12);
+    now = now.add(const Duration(days: 1));
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(source.calls, 3);
+    expect(service.automaticPromptRevision, 2);
+    expect(service.automaticPromptManifest!.versionCode, 12);
+    source.result = _manifest(11);
+    now = now.add(const Duration(days: 1));
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(service.automaticPromptRevision, 2);
+    expect(service.automaticPromptManifest, isNull);
+  });
+
+  test(
+      'ignored startup candidates never produce a prompt; manual checks still reveal them',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await preferences.setInt(AppUpdateService.ignoredVersionPreferenceKey, 11);
+    await service.initialize();
+    expect(source.calls, 1);
+    expect(service.hasUpdate, isFalse);
+    expect(service.automaticPromptRevision, 0);
+    expect(service.automaticPromptManifest, isNull);
+    await service.checkForUpdates();
+    expect(service.phase, UpdatePhase.available);
+    expect(service.hasUpdate, isTrue);
+    expect(service.automaticPromptRevision, 0);
+  });
+
+  test(
+      'automatic startup failure is quiet while a later manual failure is visible',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    source.error = const AppUpdateException('更新服务请求受限。');
+    await service.initialize();
+    expect(source.calls, 1);
+    expect(service.phase, UpdatePhase.idle);
+    expect(service.message, isNull);
+    expect(service.automaticPromptRevision, 0);
+    expect(service.lastCheckedAt, now);
+    await service.checkForUpdates();
+    expect(service.phase, UpdatePhase.failed);
+    expect(service.message, '更新服务请求受限。');
+    expect(service.automaticPromptRevision, 0);
+  });
+
+  for (final status in [
+    AppUpdateDownloadStatus.running,
+    AppUpdateDownloadStatus.ready
+  ]) {
+    test('startup preserves a bound $status without prompting or reinstalling',
+        () async {
+      await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+      platform.state = _state(status);
+      source.result = _manifest(12);
+      await service.initialize();
+      expect(source.calls, 1);
+      expect(service.manifest!.versionCode, 11);
+      expect(service.download!.status, status);
+      expect(service.automaticPromptRevision, 0);
+      expect(service.automaticPromptManifest, isNull);
+      expect(platform.startCalls, 0);
+      expect(platform.installCalls, 0);
+      expect(platform.cancelCalls, 0);
+      source.error = const AppUpdateException('网络失败');
+      now = now.add(const Duration(days: 1));
+      await service.checkForUpdates(silent: true);
+      expect(service.download!.status, status);
+      expect(service.automaticPromptRevision, 0);
+    });
+  }
+
+  test(
+      'acknowledgement consumes only the matching prompt and does not change download state',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    await service.initialize();
+    final download = service.download;
+    service.acknowledgeAutomaticPrompt(12);
+    expect(service.automaticPromptManifest!.versionCode, 11);
+    service.acknowledgeAutomaticPrompt(11);
+    expect(service.automaticPromptManifest, isNull);
+    expect(service.automaticPromptRevision, 1);
+    expect(identical(service.download, download), isTrue);
+    expect(service.phase, UpdatePhase.available);
+    now = now.add(const Duration(days: 1));
+    await service.checkForUpdates(silent: true);
+    expect(service.automaticPromptRevision, 1);
+    expect(service.automaticPromptManifest, isNull);
+  });
+
+  for (final action in ['manual', 'ignore', 'disable', 'download']) {
+    test('$action invalidates the unconsumed automatic prompt', () async {
+      await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+      await service.initialize();
+      expect(service.automaticPromptManifest, isNotNull);
+      switch (action) {
+        case 'manual':
+          final check = Completer<AppUpdateManifest>();
+          source.onFetch = () => check.future;
+          final manual = service.checkForUpdates();
+          expect(service.automaticPromptManifest, isNull,
+              reason: 'Clear before the asynchronous manual request starts');
+          check.complete(_manifest(12));
+          await manual;
+        case 'ignore':
+          await service.ignoreVersion();
+        case 'disable':
+          await service.setAutoCheckEnabled(false);
+        case 'download':
+          await service.startDownload();
+      }
+      expect(service.automaticPromptManifest, isNull);
+      expect(service.automaticPromptRevision, 1);
+    });
+  }
+
+  test(
+      'manual intent suppresses every intermediate prompt from an older automatic check',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    final automatic = Completer<AppUpdateManifest>();
+    final manual = Completer<AppUpdateManifest>();
+    source.onFetch = () => source.calls == 1 ? automatic.future : manual.future;
+    final emittedPrompts = <int>[];
+    service.addListener(() {
+      if (service.automaticPromptManifest != null ||
+          service.automaticPromptRevision != 0) {
+        emittedPrompts.add(service.automaticPromptRevision);
+      }
+    });
+    final initializing = service.initialize();
+    await _drain();
+    expect(source.calls, 1);
+    final checkingManually = service.checkForUpdates();
+    await _drain();
+    automatic.complete(_manifest(11));
+    await _drain();
+    expect(source.calls, 2);
+    expect(service.automaticPromptRevision, 0);
+    expect(service.automaticPromptManifest, isNull);
+    expect(emittedPrompts, isEmpty);
+    manual.complete(_manifest(12));
+    await Future.wait([initializing, checkingManually]);
+    expect(service.manifest!.versionCode, 12);
+    expect(service.automaticPromptRevision, 0);
+    expect(service.automaticPromptManifest, isNull);
+    expect(emittedPrompts, isEmpty,
+        reason:
+            'No transient automatic event may reach an application listener');
+  });
+
+  for (final verify in [false, true]) {
+    test(
+        'a startup deferred by an active ${verify ? 'verification' : 'start'} checks after the action finishes',
+        () async {
+      await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+      await service.checkForUpdates();
+      final start = Completer<AppUpdateDownload>();
+      final verified = Completer<AppUpdateDownload>();
+      platform.onStart = (_) => start.future;
+      platform.onVerify = () => verified.future;
+      final downloading = service.startDownload();
+      await _drain();
+      await service.initialize();
+      expect(source.calls, 1);
+      start.complete(_state(verify
+          ? AppUpdateDownloadStatus.downloaded
+          : AppUpdateDownloadStatus.running));
+      if (verify) {
+        await _drain();
+        expect(service.phase, UpdatePhase.verifying);
+        expect(source.calls, 1);
+        verified.complete(_state(AppUpdateDownloadStatus.ready));
+      }
+      await downloading;
+      await _drain();
+      expect(source.calls, 2,
+          reason:
+              'A completed action should retry the startup check without waiting for resume');
+      expect(service.automaticPromptRevision, 0,
+          reason: 'The existing bound download must suppress the prompt');
+      expect(platform.installCalls, 0);
+    });
+  }
+
+  test('disabling auto while a startup request is pending prevents a prompt',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    final check = Completer<AppUpdateManifest>();
+    source.onFetch = () => check.future;
+    final starting = service.initialize();
+    await _drain();
+    await service.setAutoCheckEnabled(false);
+    check.complete(_manifest());
+    await starting;
+    expect(service.automaticPromptRevision, 0);
+    expect(service.automaticPromptManifest, isNull);
+    expect(platform.startCalls, 0);
+    expect(platform.installCalls, 0);
+  });
+
   test(
       'HTTP/network failure is not up to date and silent failure keeps a valid candidate',
       () async {
