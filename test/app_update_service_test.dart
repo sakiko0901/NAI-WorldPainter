@@ -207,6 +207,11 @@ void main() {
     expect(source.calls, 1);
     expect(service.automaticPromptRevision, 1);
     expect(service.automaticPromptManifest!.versionCode, 11);
+    expect(service.lastCheckResult!.revision, 1);
+    expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.startup);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.available);
+    expect(service.lastCheckResult!.notifyUser, isTrue);
+    expect(service.isChecking, isFalse);
     expect(platform.startCalls, 0);
     expect(platform.installCalls, 0);
   });
@@ -318,9 +323,13 @@ void main() {
     expect(service.hasUpdate, isFalse);
     expect(service.automaticPromptRevision, 0);
     expect(service.automaticPromptManifest, isNull);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.ignored);
+    expect(service.isVersionIgnored, isTrue);
     await service.checkForUpdates();
     expect(service.phase, UpdatePhase.available);
     expect(service.hasUpdate, isTrue);
+    expect(service.isVersionIgnored, isFalse);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.available);
     expect(service.automaticPromptRevision, 0);
   });
 
@@ -335,11 +344,45 @@ void main() {
     expect(service.message, isNull);
     expect(service.automaticPromptRevision, 0);
     expect(service.lastCheckedAt, now);
+    expect(service.lastSuccessfulCheckAt, isNull);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.failed);
+    expect(service.lastCheckResult!.message, '更新服务请求受限。');
+    expect(service.lastCheckResult!.notifyUser, isFalse);
+    expect(service.failureStage, isNull);
     await service.checkForUpdates();
     expect(service.phase, UpdatePhase.failed);
     expect(service.message, '更新服务请求受限。');
     expect(service.automaticPromptRevision, 0);
+    expect(service.failureStage, AppUpdateFailureStage.check);
+    expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.manual);
+    expect(service.lastCheckResult!.notifyUser, isTrue);
   });
+
+  for (final installedCode in [11, 12]) {
+    test(
+        'installed version $installedCode supersedes its stored ignore setting',
+        () async {
+      await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+      await preferences.setInt(
+          AppUpdateService.ignoredVersionPreferenceKey, 11);
+      platform.info = _installed(installedCode);
+      source.result = _manifest(11);
+      await service.initialize();
+      expect(service.isVersionIgnored, isFalse);
+      expect(service.isInstalledAhead, installedCode > 11);
+      expect(service.phase, UpdatePhase.upToDate);
+      expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.startup);
+      expect(
+          service.lastCheckResult!.outcome,
+          installedCode == 11
+              ? AppUpdateCheckOutcome.upToDate
+              : AppUpdateCheckOutcome.ahead);
+      expect(service.lastCheckResult!.notifyUser, isTrue);
+      expect(service.automaticPromptManifest, isNull);
+      expect(service.hasUpdate, isFalse);
+      expect(source.calls, 1);
+    });
+  }
 
   for (final status in [
     AppUpdateDownloadStatus.running,
@@ -420,7 +463,12 @@ void main() {
     final manual = Completer<AppUpdateManifest>();
     source.onFetch = () => source.calls == 1 ? automatic.future : manual.future;
     final emittedPrompts = <int>[];
+    final emittedChecks = <int, AppUpdateCheckResult>{};
     service.addListener(() {
+      final result = service.lastCheckResult;
+      if (result != null) {
+        emittedChecks.putIfAbsent(result.revision, () => result);
+      }
       if (service.automaticPromptManifest != null ||
           service.automaticPromptRevision != 0) {
         emittedPrompts.add(service.automaticPromptRevision);
@@ -445,6 +493,11 @@ void main() {
     expect(emittedPrompts, isEmpty,
         reason:
             'No transient automatic event may reach an application listener');
+    expect(emittedChecks.length, 2);
+    expect(emittedChecks[1]!.origin, AppUpdateCheckOrigin.startup);
+    expect(emittedChecks[1]!.notifyUser, isFalse);
+    expect(emittedChecks[2]!.origin, AppUpdateCheckOrigin.manual);
+    expect(emittedChecks[2]!.notifyUser, isTrue);
   });
 
   for (final verify in [false, true]) {
@@ -515,6 +568,9 @@ void main() {
     expect(service.phase, UpdatePhase.available);
     expect(service.manifest!.versionCode, 11);
     expect(service.hasUpdate, isTrue);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.failed);
+    expect(service.lastCheckResult!.message, '无法连接更新服务。');
+    expect(service.failureStage, isNull);
   });
 
   test(
@@ -572,6 +628,8 @@ void main() {
     source.result = AppUpdateManifest.fromJson(incompatible);
     await service.checkForUpdates();
     expect(service.phase, UpdatePhase.unsupported);
+    expect(
+        service.lastCheckResult!.outcome, AppUpdateCheckOutcome.incompatible);
     expect(source.calls, 1);
     source.result = _manifest();
     await service.checkForUpdates();
@@ -592,6 +650,276 @@ void main() {
     await Future.wait([first, second]);
     expect(source.calls, 1);
     expect(service.phase, UpdatePhase.available);
+    expect(service.lastCheckResult!.revision, 1);
+    expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.manual);
+  });
+
+  for (final code in [10, 9]) {
+    test('remote version $code has a distinct comparison outcome', () async {
+      source.result = _manifest(code);
+      final completionStates = <bool>[];
+      service.addListener(() {
+        if (service.lastCheckResult != null) {
+          completionStates.add(service.isChecking);
+        }
+      });
+      await service.checkForUpdates();
+      expect(
+          service.lastCheckResult!.outcome,
+          code == 10
+              ? AppUpdateCheckOutcome.upToDate
+              : AppUpdateCheckOutcome.ahead);
+      expect(service.isInstalledAhead, code < 10);
+      expect(service.phase, UpdatePhase.upToDate);
+      expect(service.hasUpdate, isFalse);
+      expect(completionStates, isNotEmpty);
+      expect(completionStates, everyElement(isFalse));
+      expect(service.lastSuccessfulCheckAt, now);
+    });
+  }
+
+  test(
+      'same-version startup produces one result; resume never requests a light hint',
+      () async {
+    await preferences.setBool(AppUpdateService.autoCheckPreferenceKey, true);
+    source.result = _manifest(10);
+    await service.initialize();
+    expect(service.lastCheckResult!.revision, 1);
+    expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.startup);
+    expect(service.lastCheckResult!.notifyUser, isTrue);
+    await service.initialize();
+    expect(service.lastCheckResult!.revision, 1);
+    now = now.add(const Duration(days: 1));
+    service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await _drain();
+    expect(service.lastCheckResult!.revision, 2);
+    expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.resume);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.upToDate);
+    expect(service.lastCheckResult!.notifyUser, isFalse);
+  });
+
+  test('local restore and interval skips do not create completed check results',
+      () async {
+    platform.state = _state(AppUpdateDownloadStatus.ready);
+    await preferences.setInt(
+        AppUpdateService.lastCheckedPreferenceKey, now.millisecondsSinceEpoch);
+    await service.initialize();
+    await service.refresh();
+    expect(service.phase, UpdatePhase.ready);
+    expect(service.lastCheckResult, isNull);
+    expect(service.lastSuccessfulCheckAt, isNull,
+        reason: 'The legacy attempt timestamp is not proof of a success');
+    await service.setAutoCheckEnabled(true);
+    await service.checkForUpdates(silent: true);
+    expect(source.calls, 0);
+    expect(service.lastCheckResult, isNull);
+  });
+
+  test('success time survives failure and restart without replaying a result',
+      () async {
+    await service.checkForUpdates();
+    final successfulAt = now;
+    now = now.add(const Duration(minutes: 5));
+    source.error = const AppUpdateException('更新服务请求受限。');
+    await service.checkForUpdates();
+    expect(service.lastSuccessfulCheckAt, successfulAt);
+    expect(service.lastCheckedAt, now);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.failed);
+    expect(
+        preferences.getInt(AppUpdateService.lastSuccessfulCheckPreferenceKey),
+        successfulAt.millisecondsSinceEpoch);
+    service.dispose();
+    source = _Source();
+    service = AppUpdateService(
+      source: source,
+      platform: platform,
+      preferences: preferences,
+      installGuard: guard,
+      now: () => now,
+    );
+    await service.initialize();
+    expect(service.lastSuccessfulCheckAt, successfulAt);
+    expect(service.lastCheckedAt, now);
+    expect(service.lastCheckResult, isNull);
+  });
+
+  test('a new attempt in the same millisecond invalidates the previous result',
+      () async {
+    await service.checkForUpdates();
+    expect(service.lastCheckResult!.notifyUser, isTrue);
+    final delayed = Completer<AppUpdateManifest>();
+    source.onFetch = () => delayed.future;
+    final checking = service.checkForUpdates();
+    expect(service.isLastCheckResultStale, isTrue);
+    expect(service.lastCheckResult!.notifyUser, isFalse);
+    await _drain();
+    expect(service.isChecking, isTrue);
+    delayed.complete(_manifest(10));
+    await checking;
+    expect(service.lastCheckResult!.revision, 2);
+    expect(service.isLastCheckResultStale, isFalse);
+  });
+
+  test('silent failure preserves the previous download error and its stage',
+      () async {
+    await service.checkForUpdates();
+    platform.onStart = (_) async => throw StateError('native download failure');
+    await service.startDownload();
+    final previousMessage = service.message;
+    expect(service.failureStage, AppUpdateFailureStage.download);
+    await service.setAutoCheckEnabled(true);
+    now = now.add(const Duration(days: 1));
+    source.error = const AppUpdateException('网络不可用。');
+    await service.checkForUpdates(silent: true);
+    expect(service.phase, UpdatePhase.failed);
+    expect(service.message, previousMessage);
+    expect(service.failureStage, AppUpdateFailureStage.download);
+    expect(service.lastCheckResult!.outcome, AppUpdateCheckOutcome.failed);
+    expect(service.lastCheckResult!.message, '网络不可用。');
+  });
+
+  for (final failure in [
+    'download',
+    'verification result',
+    'verification error'
+  ]) {
+    test('$failure can be retried directly without another release check',
+        () async {
+      await service.checkForUpdates();
+      if (failure == 'download') {
+        platform.onStart = (_) async => throw StateError('download failed');
+      } else {
+        platform.onStart =
+            (_) async => _state(AppUpdateDownloadStatus.downloaded);
+        platform.onVerify = () async => failure == 'verification error'
+            ? throw StateError('verification failed')
+            : _state(AppUpdateDownloadStatus.failed);
+      }
+      await service.startDownload();
+      expect(service.phase, UpdatePhase.failed);
+      expect(
+          service.failureStage,
+          failure == 'download'
+              ? AppUpdateFailureStage.download
+              : AppUpdateFailureStage.verification);
+      expect(guard.isInstalling, isFalse);
+      platform.onStart = null;
+      platform.onVerify = null;
+      await service.startDownload();
+      expect(platform.startCalls, 2);
+      expect(source.calls, 1);
+      expect(service.phase, UpdatePhase.downloading);
+      expect(service.failureStage, isNull);
+      expect(platform.installCalls, 0);
+    });
+  }
+
+  test(
+      'install revalidation failure releases its lock and allows direct redownload',
+      () async {
+    platform.state = _state(AppUpdateDownloadStatus.ready);
+    await service.initialize();
+    platform.onVerify = () async => throw StateError('verification failed');
+    await service.installUpdate();
+    expect(service.phase, UpdatePhase.failed);
+    expect(service.failureStage, AppUpdateFailureStage.verification);
+    expect(guard.isInstalling, isFalse);
+    expect(platform.installCalls, 0);
+    await service.startDownload();
+    expect(platform.startCalls, 1);
+    expect(service.phase, UpdatePhase.downloading);
+  });
+
+  for (final restored in [false, true]) {
+    test(
+        '${restored ? 'restored' : 'polled'} failed download can restart directly',
+        () async {
+      platform.state = _state(restored
+          ? AppUpdateDownloadStatus.failed
+          : AppUpdateDownloadStatus.running);
+      await service.initialize();
+      if (!restored) {
+        platform.state = _state(AppUpdateDownloadStatus.failed);
+        await service.refresh();
+      }
+      expect(service.phase, UpdatePhase.failed);
+      expect(service.failureStage, AppUpdateFailureStage.download);
+      expect(service.lastCheckResult, isNull);
+      await service.startDownload();
+      expect(platform.startCalls, 1);
+      expect(service.phase, UpdatePhase.downloading);
+      expect(source.calls, 0);
+    });
+  }
+
+  test('refresh retains the known stage of a failed verification', () async {
+    await service.checkForUpdates();
+    platform.onStart = (_) async => _state(AppUpdateDownloadStatus.downloaded);
+    platform.onVerify = () async => _state(AppUpdateDownloadStatus.failed);
+    await service.startDownload();
+    expect(service.failureStage, AppUpdateFailureStage.verification);
+    await service.refresh();
+    expect(service.failureStage, AppUpdateFailureStage.verification);
+    expect(service.phase, UpdatePhase.failed);
+  });
+
+  test('an unbound failed record requires a new release check', () async {
+    platform.state = const AppUpdateDownload(
+      status: AppUpdateDownloadStatus.failed,
+      reason: 'malformed native record',
+    );
+    await service.initialize();
+    expect(service.phase, UpdatePhase.failed);
+    expect(service.failureStage, AppUpdateFailureStage.check);
+    expect(service.message, '更新记录已失效，请重新检查更新。');
+    expect(service.manifest, isNull);
+    expect(service.lastCheckResult, isNull);
+    expect(source.calls, 0);
+    await service.checkForUpdates();
+    expect(source.calls, 1);
+    expect(service.phase, UpdatePhase.available);
+    expect(service.lastCheckResult!.revision, 1);
+  });
+
+  test(
+      'an unbound failed native record keeps a usable local candidate retryable',
+      () async {
+    await service.checkForUpdates();
+    final candidate = service.manifest!;
+    final revision = service.lastCheckResult!.revision;
+    platform.state = const AppUpdateDownload(
+      status: AppUpdateDownloadStatus.failed,
+      reason: 'native record lost its manifest',
+    );
+    await service.refresh();
+    expect(service.phase, UpdatePhase.failed);
+    expect(service.failureStage, AppUpdateFailureStage.download);
+    expect(service.download!.manifest!.sameArtifact(candidate), isTrue);
+    expect(service.lastCheckResult!.revision, revision,
+        reason:
+            'Restoring a native failure cannot create a latest-version event');
+    await service.startDownload();
+    expect(platform.startCalls, 1);
+    expect(source.calls, 1);
+    expect(service.phase, UpdatePhase.downloading);
+  });
+
+  test('a completed remote check cannot undo a newer ignore action', () async {
+    await service.checkForUpdates();
+    final delayed = Completer<AppUpdateManifest>();
+    source.onFetch = () => delayed.future;
+    final checking = service.checkForUpdates();
+    await _drain();
+    await service.ignoreVersion();
+    delayed.complete(_manifest(12));
+    await checking;
+    expect(service.manifest!.versionCode, 11);
+    expect(service.isVersionIgnored, isTrue);
+    expect(service.lastCheckResult!.revision, 2);
+    expect(service.lastCheckResult!.manifest!.versionCode, 12);
+    expect(service.lastCheckResult!.notifyUser, isFalse);
+    expect(service.isLastCheckResultStale, isTrue);
+    expect(service.isChecking, isFalse);
   });
 
   test('a delayed check cannot revert a download which becomes ready',

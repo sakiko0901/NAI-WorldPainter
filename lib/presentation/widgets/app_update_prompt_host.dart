@@ -36,12 +36,15 @@ class _AppUpdatePromptHostState extends State<AppUpdatePromptHost>
   bool _scheduled = false;
   bool _presenting = false;
   late bool _foreground;
+  late int _seenCheckRevision;
+  bool _startupFeedbackHandled = false;
 
   @override
   void initState() {
     super.initState();
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    _seenCheckRevision = widget.service.lastCheckResult?.revision ?? 0;
     WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_requestEvaluation);
     _listen(widget);
@@ -49,13 +52,13 @@ class _AppUpdatePromptHostState extends State<AppUpdatePromptHost>
   }
 
   void _listen(AppUpdatePromptHost host) {
-    host.service.addListener(_requestEvaluation);
+    host.service.addListener(_onServiceChanged);
     host.guard.addListener(_requestEvaluation);
     host.rootRouteCurrent.addListener(_requestEvaluation);
   }
 
   void _unlisten(AppUpdatePromptHost host) {
-    host.service.removeListener(_requestEvaluation);
+    host.service.removeListener(_onServiceChanged);
     host.guard.removeListener(_requestEvaluation);
     host.rootRouteCurrent.removeListener(_requestEvaluation);
   }
@@ -68,6 +71,10 @@ class _AppUpdatePromptHostState extends State<AppUpdatePromptHost>
         oldWidget.rootRouteCurrent != widget.rootRouteCurrent) {
       _unlisten(oldWidget);
       _listen(widget);
+      if (oldWidget.service != widget.service) {
+        _seenCheckRevision = widget.service.lastCheckResult?.revision ?? 0;
+        _startupFeedbackHandled = false;
+      }
     }
     _requestEvaluation();
   }
@@ -107,6 +114,95 @@ class _AppUpdatePromptHostState extends State<AppUpdatePromptHost>
     return candidate;
   }
 
+  void _onServiceChanged() {
+    _requestEvaluation();
+    final result = widget.service.lastCheckResult;
+    if (result == null || result.revision <= _seenCheckRevision) return;
+    _seenCheckRevision = result.revision;
+    if (_startupFeedbackHandled ||
+        result.origin != AppUpdateCheckOrigin.startup) {
+      return;
+    }
+    // A routine success notice has no backlog: a busy/backgrounded startup
+    // consumes it as well. New-version dialogs keep their existing deferral.
+    _startupFeedbackHandled = true;
+    if (!_foreground ||
+        !result.notifyUser ||
+        (result.outcome != AppUpdateCheckOutcome.upToDate &&
+            result.outcome != AppUpdateCheckOutcome.ahead)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_foreground || _presenting) return;
+      final service = widget.service;
+      final installed = service.installed;
+      final manifest = result.manifest;
+      final navigator = widget.navigatorKey.currentState;
+      if (service.lastCheckResult?.revision != result.revision ||
+          service.lastCheckResult?.notifyUser != true ||
+          service.isLastCheckResultStale ||
+          !service.autoCheckEnabled ||
+          service.isChecking ||
+          service.phase != UpdatePhase.upToDate ||
+          installed == null ||
+          manifest == null ||
+          manifest.versionCode != service.manifest?.versionCode ||
+          manifest.versionCode > installed.versionCode ||
+          (result.outcome == AppUpdateCheckOutcome.upToDate &&
+              manifest.versionCode != installed.versionCode) ||
+          (result.outcome == AppUpdateCheckOutcome.ahead &&
+              manifest.versionCode >= installed.versionCode) ||
+          !_canPresentAtHome(navigator) ||
+          _hasSnackBar(navigator!.context)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(navigator.overlay!.context)?.showSnackBar(
+        SnackBar(
+          key: const ValueKey('automatic-update-current'),
+          duration: const Duration(seconds: 3),
+          content: Text(result.outcome == AppUpdateCheckOutcome.ahead
+              ? '当前版本较新，无需更新'
+              : '已是最新版本'),
+        ),
+      );
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  // ScaffoldMessenger queues messages but has no public queue getter. Inspect
+  // the mounted navigator subtree once per startup result, never during build
+  // or on progress ticks. Existing feedback takes priority over this notice.
+  bool _hasSnackBar(BuildContext subtree) {
+    var found = false;
+    void visit(Element element) {
+      if (found) return;
+      if (element.widget is SnackBar) {
+        found = true;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    subtree.visitChildElements(visit);
+    return found;
+  }
+
+  bool _canPresentAtHome(NavigatorState? navigator) {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    final editing =
+        focusContext?.findAncestorStateOfType<EditableTextState>() != null;
+    return navigator != null &&
+        navigator.mounted &&
+        navigator.overlay != null &&
+        !navigator.canPop() &&
+        widget.rootRouteCurrent.value &&
+        !widget.service.isBusy &&
+        widget.guard.blockReason == null &&
+        widget.guard.unsavedWarning == null &&
+        MediaQuery.viewInsetsOf(context).bottom == 0 &&
+        !editing;
+  }
+
   void _requestEvaluation() {
     _retry?.cancel();
     _retry = null;
@@ -125,25 +221,13 @@ class _AppUpdatePromptHostState extends State<AppUpdatePromptHost>
     final candidate = _candidate;
     if (!_foreground || _presenting || candidate == null) return;
     final navigator = widget.navigatorKey.currentState;
-    final focusContext = FocusManager.instance.primaryFocus?.context;
-    final editing =
-        focusContext?.findAncestorStateOfType<EditableTextState>() != null;
-    if (navigator == null ||
-        !navigator.mounted ||
-        navigator.overlay == null ||
-        navigator.canPop() ||
-        !widget.rootRouteCurrent.value ||
-        widget.service.isBusy ||
-        widget.guard.blockReason != null ||
-        widget.guard.unsavedWarning != null ||
-        MediaQuery.viewInsetsOf(context).bottom > 0 ||
-        editing) {
+    if (!_canPresentAtHome(navigator)) {
       // Callback-based workspace guards do not all emit changes. Retry only
       // while a candidate is pending and the app is foregrounded.
       _retry = Timer(const Duration(seconds: 5), _requestEvaluation);
       return;
     }
-    unawaited(_present(candidate, navigator));
+    unawaited(_present(candidate, navigator!));
   }
 
   Future<void> _present(

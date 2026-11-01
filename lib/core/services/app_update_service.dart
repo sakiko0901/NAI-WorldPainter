@@ -16,6 +16,8 @@ enum _UpdateAction { starting, cancelling, verifying, installing }
 class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   static const autoCheckPreferenceKey = 'app_update_v1.auto_check_enabled';
   static const lastCheckedPreferenceKey = 'app_update_v1.last_checked_at';
+  static const lastSuccessfulCheckPreferenceKey =
+      'app_update_v1.last_successful_check_at';
   static const ignoredVersionPreferenceKey = 'app_update_v1.ignored_version';
 
   final AppUpdateSource _source;
@@ -30,11 +32,18 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   AppUpdateDownload? _download;
   UpdatePhase _phase = UpdatePhase.idle;
   String? _message;
+  AppUpdateFailureStage? _failureStage;
+  AppUpdateCheckResult? _lastCheckResult;
+  bool _isLastCheckResultStale = false;
+  bool _isChecking = false;
+  int _checkResultRevision = 0;
+  int _manualIntentRevision = 0;
   bool _autoCheckEnabled = true;
   int _automaticPromptRevision = 0;
   AppUpdateManifest? _automaticPromptManifest;
   final Set<int> _automaticallyPromptedVersions = {};
   DateTime? _lastCheckedAt;
+  DateTime? _lastSuccessfulCheckAt;
   int? _ignoredVersion;
   int? _manuallyAllowedVersion;
   bool _requiresUnsavedConfirmation = false;
@@ -77,17 +86,31 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   AppUpdateDownload? get download => _download;
   UpdatePhase get phase => _phase;
   String? get message => _message;
+  AppUpdateFailureStage? get failureStage => _failureStage;
+  AppUpdateCheckResult? get lastCheckResult => _lastCheckResult;
+  bool get isLastCheckResultStale => _isLastCheckResultStale;
+  bool get isChecking => _isChecking;
   bool get autoCheckEnabled => _autoCheckEnabled;
   int get automaticPromptRevision => _automaticPromptRevision;
   AppUpdateManifest? get automaticPromptManifest => _automaticPromptManifest;
   DateTime? get lastCheckedAt => _lastCheckedAt;
+  DateTime? get lastSuccessfulCheckAt => _lastSuccessfulCheckAt;
+  bool get isVersionIgnored =>
+      _manifest != null &&
+      _installed != null &&
+      _manifest!.versionCode > _installed!.versionCode &&
+      _isIgnored(_manifest!);
+  bool get isInstalledAhead =>
+      _manifest != null &&
+      _installed != null &&
+      _installed!.versionCode > _manifest!.versionCode;
   bool get isSupported =>
       _platform.isSupported && _phase != UpdatePhase.unsupported;
   bool get canCheckForUpdates => _canCheckInstalledApp;
   bool get requiresUnsavedConfirmation => _requiresUnsavedConfirmation;
   bool get isBusy =>
       _action != null ||
-      _phase == UpdatePhase.checking ||
+      _isChecking ||
       _phase == UpdatePhase.downloading ||
       _phase == UpdatePhase.verifying ||
       _phase == UpdatePhase.awaitingInstall;
@@ -132,7 +155,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _startupCheckPending = false;
-    await _check(silent: true, forceInterval: true);
+    await _check(origin: AppUpdateCheckOrigin.startup, forceInterval: true);
   }
 
   Future<void> _ensureInitialized() {
@@ -146,13 +169,10 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     final ignored = _preferences.get(ignoredVersionPreferenceKey);
     _ignoredVersion =
         ignored is int && ignored > 0 && ignored <= 0x7fffffff ? ignored : null;
-    final checked = _preferences.get(lastCheckedPreferenceKey);
-    if (checked is int && checked >= 0 && checked <= 8640000000000000) {
-      final date = DateTime.fromMillisecondsSinceEpoch(checked, isUtc: true);
-      if (!date.isAfter(_now().add(const Duration(minutes: 5)))) {
-        _lastCheckedAt = date;
-      }
-    }
+    _lastCheckedAt = _readSavedTime(lastCheckedPreferenceKey);
+    // The old field records attempts, including failures. It cannot establish
+    // that a release was ever fetched successfully.
+    _lastSuccessfulCheckAt = _readSavedTime(lastSuccessfulCheckPreferenceKey);
     if (!_platform.isSupported) {
       _initialized = true;
       _phase = UpdatePhase.unsupported;
@@ -173,20 +193,27 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed) return;
     if (!silent) {
       ++_manualChecksPending;
+      ++_manualIntentRevision;
+      _invalidateCheckResult();
       _clearAutomaticPrompt();
     }
     try {
       await _ensureInitialized();
       if (_disposed || !_platform.isSupported) return;
       if (_installed == null) await refresh();
-      await _check(silent: silent);
+      await _check(
+          origin: silent
+              ? AppUpdateCheckOrigin.resume
+              : AppUpdateCheckOrigin.manual);
     } finally {
       if (!silent) --_manualChecksPending;
     }
   }
 
   Future<void> _check(
-      {required bool silent, bool forceInterval = false}) async {
+      {required AppUpdateCheckOrigin origin,
+      bool forceInterval = false}) async {
+    final silent = origin != AppUpdateCheckOrigin.manual;
     if (_disposed || !_canCheckInstalledApp) return;
     if (!silent) _clearAutomaticPrompt();
     // A manual request waits out a silent request, then deliberately bypasses its
@@ -197,7 +224,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       await pending;
       if (!followSilentCheck || _disposed) return;
       if (identical(_checking, pending)) _checking = null;
-      return _check(silent: false);
+      return _check(origin: AppUpdateCheckOrigin.manual);
     }
     if (silent &&
         (!_autoCheckEnabled ||
@@ -209,56 +236,95 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (_action != null || _ownsInstallGuard) return;
-    final future = _performCheck(silent);
+    _isChecking = true;
+    final future = _performCheck(origin);
     _checkingSilent = silent;
     _checking = future;
     try {
       await future;
     } finally {
-      if (identical(_checking, future)) _checking = null;
+      if (identical(_checking, future)) {
+        _checking = null;
+        if (_isChecking) {
+          _isChecking = false;
+          _emit();
+        }
+      }
     }
   }
 
-  Future<void> _performCheck(bool silent) async {
+  Future<void> _performCheck(AppUpdateCheckOrigin origin) async {
+    final silent = origin != AppUpdateCheckOrigin.manual;
     final epoch = _epoch;
+    final manualIntent = _manualIntentRevision;
+    final installed = _installed!;
     final previousPhase = _phase;
     final previousMessage = _message;
+    final previousFailureStage = _failureStage;
     final protected = _hasBoundDownload;
     final checkedAt = _now().toUtc();
     _lastCheckedAt = checkedAt;
+    _invalidateCheckResult();
     if (!protected) {
       _phase = UpdatePhase.checking;
       _message = null;
-      _emit();
+      _failureStage = null;
     }
+    _emit();
     // Persist attempt time even after a network failure, so foregrounding does
     // not hammer GitHub. This never implies a successful/latest-version result.
     await _saveInt(lastCheckedPreferenceKey, checkedAt.millisecondsSinceEpoch);
     if (!_current(epoch)) return;
     try {
       final latest = (await _source.fetchLatest()).validated();
-      if (!_current(epoch)) return;
-      if (protected || _hasBoundDownload) {
-        _emit();
-        return;
-      }
-      _manifest = latest;
-      _manuallyAllowedVersion = silent ? null : latest.versionCode;
-      _requiresUnsavedConfirmation = false;
-      _message = null;
+      if (_disposed) return;
+      final completedAt = _now().toUtc();
+      _lastSuccessfulCheckAt = completedAt;
+      await _saveInt(
+          lastSuccessfulCheckPreferenceKey, completedAt.millisecondsSinceEpoch);
+      if (_disposed) return;
       final incompatibility = _incompatibility(latest);
-      if (incompatibility != null) {
-        _phase = UpdatePhase.unsupported;
-        _message = incompatibility;
-      } else if (latest.versionCode <= _installed!.versionCode) {
-        _phase = UpdatePhase.upToDate;
+      final ignored = silent && _ignoredVersion == latest.versionCode;
+      final AppUpdateCheckOutcome outcome;
+      if (latest.versionCode == installed.versionCode) {
+        outcome = AppUpdateCheckOutcome.upToDate;
+      } else if (latest.versionCode < installed.versionCode) {
+        outcome = AppUpdateCheckOutcome.ahead;
+      } else if (incompatibility != null) {
+        outcome = AppUpdateCheckOutcome.incompatible;
+      } else if (ignored) {
+        outcome = AppUpdateCheckOutcome.ignored;
       } else {
-        _phase = _isIgnored(latest) ? UpdatePhase.idle : UpdatePhase.available;
-        if (_isIgnored(latest)) _message = '已忽略此版本，手动检查可再次查看。';
+        outcome = AppUpdateCheckOutcome.available;
       }
-      if (silent) {
+      final canApply = _current(epoch) && !protected && !_hasBoundDownload;
+      if (canApply) {
+        _manifest = latest;
+        _manuallyAllowedVersion = silent ? null : latest.versionCode;
+        _requiresUnsavedConfirmation = false;
+        _failureStage = null;
+        _message = null;
+        switch (outcome) {
+          case AppUpdateCheckOutcome.upToDate:
+          case AppUpdateCheckOutcome.ahead:
+            _phase = UpdatePhase.upToDate;
+          case AppUpdateCheckOutcome.incompatible:
+            _phase = UpdatePhase.unsupported;
+            _message = incompatibility;
+          case AppUpdateCheckOutcome.ignored:
+            _phase = UpdatePhase.idle;
+            _message = '已忽略此版本，手动检查可再次查看。';
+          case AppUpdateCheckOutcome.available:
+            _phase = UpdatePhase.available;
+          case AppUpdateCheckOutcome.failed:
+            break;
+        }
+      }
+      if (silent && _current(epoch)) {
         if (_autoCheckEnabled &&
             _manualChecksPending == 0 &&
+            manualIntent == _manualIntentRevision &&
+            canApply &&
             _phase == UpdatePhase.available) {
           if (_automaticallyPromptedVersions.add(latest.versionCode)) {
             _automaticPromptManifest = latest;
@@ -271,26 +337,71 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
           _clearAutomaticPrompt(notify: false);
         }
       }
+      final stale = !_current(epoch) ||
+          (_installed?.versionCode != installed.versionCode) ||
+          (_hasBoundDownload && _manifest?.sameArtifact(latest) != true);
+      _completeCheck(
+        origin: origin,
+        outcome: outcome,
+        completedAt: completedAt,
+        manifest: latest,
+        message: outcome == AppUpdateCheckOutcome.incompatible
+            ? incompatibility
+            : outcome == AppUpdateCheckOutcome.ignored
+                ? '已忽略此版本，手动检查可再次查看。'
+                : null,
+        stale: stale,
+        notifyUser: !stale &&
+            (origin == AppUpdateCheckOrigin.manual ||
+                (origin == AppUpdateCheckOrigin.startup &&
+                    _autoCheckEnabled &&
+                    _foreground &&
+                    canApply &&
+                    _manualChecksPending == 0 &&
+                    manualIntent == _manualIntentRevision)),
+      );
     } catch (error) {
-      if (!_current(epoch)) return;
-      if (protected || _hasBoundDownload) {
+      if (_disposed) return;
+      final errorMessage = _checkErrorMessage(error);
+      if (!_current(epoch) || protected || _hasBoundDownload) {
         // A foreground poll may have reached ready while this request ran.
       } else if (silent) {
         _phase = previousPhase;
         _message = previousMessage;
+        _failureStage = previousFailureStage;
       } else {
         _phase = UpdatePhase.failed;
-        _message =
-            error is AppUpdateException ? error.message : '检查更新失败，请稍后重试。';
+        _message = errorMessage;
+        _failureStage = AppUpdateFailureStage.check;
       }
+      if (_current(epoch)) _clearAutomaticPrompt(notify: false);
+      _completeCheck(
+        origin: origin,
+        outcome: AppUpdateCheckOutcome.failed,
+        completedAt: _now().toUtc(),
+        message: errorMessage,
+        stale: !_current(epoch),
+        notifyUser: origin == AppUpdateCheckOrigin.manual && _current(epoch),
+      );
     }
-    _emit();
   }
 
   Future<void> startDownload() async {
     await _ensureInitialized();
-    if (_disposed || _action != null || _hasBoundDownload || !hasUpdate) return;
+    if (_disposed ||
+        _action != null ||
+        _ownsInstallGuard ||
+        _hasBoundDownload ||
+        _manifest == null ||
+        _installed == null ||
+        _manifest!.versionCode <= _installed!.versionCode) {
+      return;
+    }
     final candidate = _manifest!;
+    final retryingArtifact =
+        _download?.status == AppUpdateDownloadStatus.failed &&
+            _download?.manifest?.sameArtifact(candidate) == true;
+    if (!hasUpdate && !retryingArtifact) return;
     final incompatible = _incompatibility(candidate);
     if (incompatible != null) {
       _phase = UpdatePhase.unsupported;
@@ -299,11 +410,14 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     final epoch = ++_epoch;
+    _invalidateCheckResult();
     _clearAutomaticPrompt(notify: false);
     _action = _UpdateAction.starting;
     _requiresUnsavedConfirmation = false;
     _phase = UpdatePhase.downloading;
     _message = null;
+    _failureStage = null;
+    _manuallyAllowedVersion = candidate.versionCode;
     _download = AppUpdateDownload(
         status: AppUpdateDownloadStatus.pending,
         totalBytes: candidate.apk.sizeBytes,
@@ -319,13 +433,14 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       if (state.status == AppUpdateDownloadStatus.none) {
         throw const FormatException('Download did not start');
       }
-      _applyState(state);
+      _applyState(state, failureStage: AppUpdateFailureStage.download);
     } catch (_) {
       if (_current(epoch)) {
         _phase = UpdatePhase.failed;
         _download = AppUpdateDownload(
             status: AppUpdateDownloadStatus.failed, manifest: candidate);
         _message = '无法开始下载，请稍后重试或前往发布页下载。';
+        _failureStage = AppUpdateFailureStage.download;
       }
     } finally {
       if (identical(_starting, request)) _starting = null;
@@ -346,6 +461,8 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     final start = _starting;
     final verification = _verifying;
     final epoch = ++_epoch;
+    _invalidateCheckResult();
+    _clearAutomaticPrompt(notify: false);
     _action = _UpdateAction.cancelling;
     _stopPolling();
     _message = '正在取消下载…';
@@ -370,9 +487,11 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _phase = hasUpdate ? UpdatePhase.available : UpdatePhase.idle;
       _requiresUnsavedConfirmation = false;
       _message = '已取消下载。';
+      _failureStage = null;
     } catch (_) {
       if (_current(epoch)) {
         _message = '取消下载失败，请稍后重试。';
+        _failureStage = AppUpdateFailureStage.state;
       }
     } finally {
       _endAction(epoch);
@@ -388,11 +507,13 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     ++_epoch;
+    _invalidateCheckResult();
     _ignoredVersion = _manifest!.versionCode;
     _clearAutomaticPrompt(notify: false);
     _manuallyAllowedVersion = null;
     _phase = UpdatePhase.idle;
     _message = '已忽略此版本，手动检查可再次查看。';
+    _failureStage = null;
     _emit();
     await _saveInt(ignoredVersionPreferenceKey, _ignoredVersion!);
   }
@@ -401,7 +522,10 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     await _ensureInitialized();
     if (_disposed) return;
     _autoCheckEnabled = enabled;
-    if (!enabled) _clearAutomaticPrompt(notify: false);
+    if (!enabled) {
+      _invalidateCheckResult(stale: false);
+      _clearAutomaticPrompt(notify: false);
+    }
     _emit();
     try {
       await _preferences.setBool(autoCheckPreferenceKey, enabled);
@@ -449,13 +573,17 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     }
     _ownsInstallGuard = true;
     final epoch = ++_epoch;
+    _invalidateCheckResult();
+    _clearAutomaticPrompt(notify: false);
     final wasPermissionRequired = _phase == UpdatePhase.permissionRequired;
     final candidate = _manifest!;
     _action = _UpdateAction.installing;
     _phase = UpdatePhase.verifying;
     _message = '正在重新校验安装包…';
+    _failureStage = null;
     _emit();
     var keepLock = false;
+    var failureStage = AppUpdateFailureStage.verification;
     Future<AppUpdateDownload>? request;
     try {
       request = _platform.verifyDownload();
@@ -464,12 +592,17 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       if (!_current(epoch)) return;
       _validateState(verified, expected: candidate);
       if (verified.status != AppUpdateDownloadStatus.ready) {
-        _download = verified;
+        _download = AppUpdateDownload(
+            status: AppUpdateDownloadStatus.failed,
+            manifest: candidate,
+            reason: verified.reason);
         _phase = UpdatePhase.failed;
         _message = '安装包校验失败，请重新下载。';
+        _failureStage = AppUpdateFailureStage.verification;
         return;
       }
       _download = verified;
+      failureStage = AppUpdateFailureStage.installation;
       final allowed = await _platform.canInstallPackages();
       if (!_current(epoch)) return;
       if (!allowed) {
@@ -485,6 +618,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _download = verified.withStatus(AppUpdateDownloadStatus.awaitingInstall);
       _phase = UpdatePhase.awaitingInstall;
       _message = '请在系统安装界面完成更新。';
+      _failureStage = null;
       keepLock = true;
     } catch (_) {
       if (_current(epoch)) {
@@ -492,6 +626,13 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
             ? UpdatePhase.ready
             : UpdatePhase.failed;
         _message = '无法打开安装界面，请重试或前往发布页下载。';
+        _failureStage = failureStage;
+        if (failureStage == AppUpdateFailureStage.verification) {
+          _download = AppUpdateDownload(
+              status: AppUpdateDownloadStatus.failed, manifest: candidate);
+          _phase = UpdatePhase.failed;
+          _message = '安装包校验失败，请重新下载。';
+        }
       }
     } finally {
       if (identical(_verifying, request)) _verifying = null;
@@ -507,6 +648,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {
       if (_disposed) return;
       _message = '无法打开发布页，请稍后重试。';
+      _failureStage = AppUpdateFailureStage.state;
       _emit();
     }
   }
@@ -533,11 +675,19 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final installed = await _platform.getInstalledInfo();
       if (!_current(epoch)) return;
+      if (_installed != null &&
+          (_installed!.versionCode != installed.versionCode ||
+              _installed!.packageName != installed.packageName ||
+              _installed!.versionName != installed.versionName)) {
+        _invalidateCheckResult();
+        _clearAutomaticPrompt(notify: false);
+      }
       _installed = installed;
       final unsupportedInstalled = _installedIncompatibility(installed);
       if (unsupportedInstalled != null) {
         _phase = UpdatePhase.unsupported;
         _message = unsupportedInstalled;
+        _failureStage = null;
         return;
       }
       final state = await _platform.getDownloadState();
@@ -554,12 +704,14 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
             const AppUpdateDownload(status: AppUpdateDownloadStatus.none);
         _phase = UpdatePhase.upToDate;
         _message = null;
+        _failureStage = null;
         _releaseInstallGuard();
         return;
       }
       if (candidate != null && _incompatibility(candidate) != null) {
         _phase = UpdatePhase.unsupported;
         _message = _incompatibility(candidate);
+        _failureStage = null;
         return;
       }
       if (awaiting && !returningFromInstaller) {
@@ -572,12 +724,34 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
           !_manifest!.sameArtifact(state.manifest!)) {
         throw const FormatException('Native download changed its artifact');
       }
+      // A failed record without any usable candidate must check again. A local
+      // candidate can still be bound to that failure and safely redownloaded.
+      final recoveredState = state.status == AppUpdateDownloadStatus.failed &&
+              state.manifest == null &&
+              candidate != null
+          ? AppUpdateDownload(
+              status: state.status,
+              downloadedBytes: state.downloadedBytes,
+              totalBytes: state.totalBytes,
+              reason: state.reason,
+              manifest: candidate,
+            )
+          : state;
+      final restoredFailureStage = candidate == null
+          ? AppUpdateFailureStage.check
+          : state.status == AppUpdateDownloadStatus.failed &&
+                  _download?.status == AppUpdateDownloadStatus.failed &&
+                  _download?.manifest?.sameArtifact(candidate) == true &&
+                  _failureStage == AppUpdateFailureStage.verification
+              ? AppUpdateFailureStage.verification
+              : AppUpdateFailureStage.download;
       if (returningFromInstaller &&
           state.status == AppUpdateDownloadStatus.awaitingInstall) {
-        _applyState(state.withStatus(AppUpdateDownloadStatus.ready));
+        _applyState(state.withStatus(AppUpdateDownloadStatus.ready),
+            failureStage: restoredFailureStage);
         _message = '安装尚未完成，可再次安装。';
       } else {
-        _applyState(state);
+        _applyState(recoveredState, failureStage: restoredFailureStage);
         if (awaiting && returningFromInstaller && _phase == UpdatePhase.ready) {
           _message = '安装尚未完成，可再次安装。';
         }
@@ -595,6 +769,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       if (!_current(epoch)) return;
       _phase = UpdatePhase.unsupported;
       _message = '当前安装版本不支持应用内更新，请前往发布页下载。';
+      _failureStage = AppUpdateFailureStage.state;
       _releaseInstallGuard();
     } on FormatException {
       if (!_current(epoch)) return;
@@ -610,6 +785,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
         _phase = UpdatePhase.failed;
       }
       _message = '更新记录损坏，请重新检查或下载更新。';
+      _failureStage = AppUpdateFailureStage.state;
       if (returningFromInstaller) _releaseInstallGuard();
     } catch (_) {
       if (!_current(epoch)) return;
@@ -621,6 +797,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         _message = '无法读取更新状态，请稍后重试。';
       }
+      _failureStage = AppUpdateFailureStage.state;
       if (returningFromInstaller) _releaseInstallGuard();
     } finally {
       if (_current(epoch)) {
@@ -654,10 +831,18 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _applyState(AppUpdateDownload state) {
+  void _applyState(AppUpdateDownload state,
+      {AppUpdateFailureStage failureStage = AppUpdateFailureStage.download}) {
+    if (_download?.status != state.status ||
+        (state.manifest != null &&
+            _manifest?.sameArtifact(state.manifest!) != true)) {
+      _invalidateCheckResult();
+      _clearAutomaticPrompt(notify: false);
+    }
     _download = state;
     if (state.manifest != null) _manifest = state.manifest;
     _message = null;
+    _failureStage = null;
     switch (state.status) {
       case AppUpdateDownloadStatus.none:
         _phase = hasUpdate ? UpdatePhase.available : UpdatePhase.idle;
@@ -676,7 +861,16 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
         _phase = UpdatePhase.awaitingInstall;
       case AppUpdateDownloadStatus.failed:
         _phase = UpdatePhase.failed;
-        _message = '更新下载或校验失败，请重新下载。';
+        _failureStage = failureStage;
+        _message = failureStage == AppUpdateFailureStage.check
+            ? '更新记录已失效，请重新检查更新。'
+            : state.reason?.trim().isNotEmpty == true
+                ? state.reason
+                : failureStage == AppUpdateFailureStage.verification
+                    ? '安装包校验失败，请重新下载。'
+                    : failureStage == AppUpdateFailureStage.state
+                        ? '更新任务已失败，请重新下载。'
+                        : '更新下载失败，请重新下载。';
     }
   }
 
@@ -688,8 +882,12 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     }
     final candidate = _download!.manifest!;
     final epoch = ++_epoch;
+    _invalidateCheckResult();
+    _clearAutomaticPrompt(notify: false);
     _action = _UpdateAction.verifying;
     _phase = UpdatePhase.verifying;
+    _message = null;
+    _failureStage = null;
     _emit();
     Future<AppUpdateDownload>? request;
     try {
@@ -702,13 +900,14 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
           state.status != AppUpdateDownloadStatus.failed) {
         throw const FormatException('Unexpected verification result');
       }
-      _applyState(state);
+      _applyState(state, failureStage: AppUpdateFailureStage.verification);
     } catch (_) {
       if (_current(epoch)) {
         _phase = UpdatePhase.failed;
         _download = AppUpdateDownload(
             status: AppUpdateDownloadStatus.failed, manifest: candidate);
         _message = '安装包校验失败，请重新下载。';
+        _failureStage = AppUpdateFailureStage.verification;
       }
     } finally {
       if (identical(_verifying, request)) _verifying = null;
@@ -752,6 +951,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed || _automaticPromptManifest?.versionCode != versionCode) {
       return;
     }
+    _invalidateCheckResult(stale: false);
     _clearAutomaticPrompt();
   }
 
@@ -762,6 +962,63 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool _current(int epoch) => !_disposed && _epoch == epoch;
+
+  void _completeCheck({
+    required AppUpdateCheckOrigin origin,
+    required AppUpdateCheckOutcome outcome,
+    required DateTime completedAt,
+    required bool notifyUser,
+    required bool stale,
+    AppUpdateManifest? manifest,
+    String? message,
+  }) {
+    if (_disposed) return;
+    _lastCheckResult = AppUpdateCheckResult(
+      revision: ++_checkResultRevision,
+      origin: origin,
+      outcome: outcome,
+      completedAt: completedAt,
+      notifyUser: notifyUser,
+      manifest: manifest,
+      message: message,
+    );
+    _isLastCheckResultStale = stale;
+    _isChecking = false;
+    _emit();
+  }
+
+  // Preserve the historical result and its revision while revoking delivery of
+  // a queued UI notification. A state change is not another completed check.
+  void _invalidateCheckResult({bool stale = true}) {
+    final result = _lastCheckResult;
+    if (result == null) return;
+    if (stale) _isLastCheckResultStale = true;
+    if (!result.notifyUser) return;
+    _lastCheckResult = AppUpdateCheckResult(
+      revision: result.revision,
+      origin: result.origin,
+      outcome: result.outcome,
+      completedAt: result.completedAt,
+      notifyUser: false,
+      message: result.message,
+      manifest: result.manifest,
+    );
+  }
+
+  String _checkErrorMessage(Object error) {
+    if (error is AppUpdateException) return error.message;
+    if (error is FormatException) {
+      return '暂时无法获取版本信息（更新清单无效），请前往发布页查看。';
+    }
+    return '检查更新失败，请稍后重试。';
+  }
+
+  DateTime? _readSavedTime(String key) {
+    final value = _preferences.get(key);
+    if (value is! int || value < 0 || value > 8640000000000000) return null;
+    final date = DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    return date.isAfter(_now().add(const Duration(minutes: 5))) ? null : date;
+  }
 
   Future<void> _saveInt(String key, int value) async {
     try {
@@ -813,6 +1070,8 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed) return;
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
+      _invalidateCheckResult(stale: false);
+      _clearAutomaticPrompt(notify: false);
       _stopPolling();
       return;
     }
@@ -843,7 +1102,7 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (_startupCheckPending) {
       await _checkAtStartup();
     } else {
-      await _check(silent: true);
+      await _check(origin: AppUpdateCheckOrigin.resume);
     }
   }
 

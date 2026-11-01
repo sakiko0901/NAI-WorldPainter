@@ -47,6 +47,20 @@ class _Service extends ChangeNotifier implements AppUpdateService {
   @override
   int automaticPromptRevision = 0;
   @override
+  AppUpdateCheckResult? lastCheckResult;
+  @override
+  DateTime? lastSuccessfulCheckAt;
+  @override
+  bool isLastCheckResultStale = false;
+  @override
+  bool isChecking = false;
+  @override
+  bool isVersionIgnored = false;
+  @override
+  bool isInstalledAhead = false;
+  @override
+  AppUpdateFailureStage? failureStage;
+  @override
   UpdatePhase phase = UpdatePhase.idle;
   @override
   bool autoCheckEnabled = true;
@@ -79,6 +93,25 @@ class _Service extends ChangeNotifier implements AppUpdateService {
   }
 
   void change() => notifyListeners();
+
+  void completeCheck({
+    AppUpdateCheckOrigin origin = AppUpdateCheckOrigin.startup,
+    AppUpdateCheckOutcome outcome = AppUpdateCheckOutcome.upToDate,
+    bool notifyUser = true,
+  }) {
+    manifest = _release(code: outcome == AppUpdateCheckOutcome.ahead ? 9 : 10);
+    phase = UpdatePhase.upToDate;
+    updateAvailable = false;
+    lastCheckResult = AppUpdateCheckResult(
+      revision: (lastCheckResult?.revision ?? 0) + 1,
+      origin: origin,
+      outcome: outcome,
+      completedAt: DateTime.utc(2026, 11, 1),
+      notifyUser: notifyUser,
+      manifest: manifest,
+    );
+    notifyListeners();
+  }
 
   @override
   void acknowledgeAutomaticPrompt(int versionCode) {
@@ -178,6 +211,155 @@ void main() {
   }
 
   final dialog = find.byKey(const ValueKey('automatic-update-dialog'));
+  final currentNotice = find.byKey(const ValueKey('automatic-update-current'));
+
+  testWidgets(
+      'a fresh startup equality result shows a three-second notice once',
+      (tester) async {
+    await host(tester);
+    service.completeCheck();
+    expect(tester.binding.hasScheduledFrame, isTrue);
+    await flush(tester);
+    expect(currentNotice, findsOneWidget);
+    expect(find.text('已是最新版本'), findsOneWidget);
+    expect(dialog, findsNothing);
+    expect(tester.widget<SnackBar>(currentNotice).duration,
+        const Duration(seconds: 3));
+    service.change();
+    await tester.pump(const Duration(seconds: 4));
+    await flush(tester);
+    expect(currentNotice, findsNothing);
+    service.completeCheck();
+    await flush(tester);
+    expect(currentNotice, findsNothing);
+  });
+
+  testWidgets('a locally newer version gets accurate startup wording',
+      (tester) async {
+    await host(tester);
+    service.completeCheck(outcome: AppUpdateCheckOutcome.ahead);
+    await flush(tester);
+    expect(find.text('当前版本较新，无需更新'), findsOneWidget);
+    expect(find.text('已是最新版本'), findsNothing);
+  });
+
+  for (final origin in [
+    AppUpdateCheckOrigin.manual,
+    AppUpdateCheckOrigin.resume,
+  ]) {
+    testWidgets('$origin never triggers a startup current-version notice',
+        (tester) async {
+      await host(tester);
+      service.completeCheck(origin: origin);
+      await flush(tester);
+      expect(currentNotice, findsNothing);
+    });
+  }
+
+  for (final reason in [
+    'failed',
+    'ignored',
+    'superseded',
+    'stale',
+    'checking',
+    'auto-off',
+    'busy',
+    'dirty',
+    'other-page',
+    'modal',
+    'background',
+    'keyboard',
+    'editing',
+  ]) {
+    testWidgets('$reason startup completion is dropped without later replay',
+        (tester) async {
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      await host(tester,
+          keyboard: reason == 'keyboard' ? 200 : 0,
+          home: reason == 'editing'
+              ? Scaffold(body: TextField(focusNode: focus))
+              : null);
+      if (reason == 'busy') guard.blockReason = '正在生成';
+      if (reason == 'dirty') guard.unsavedWarning = '未保存';
+      if (reason == 'editing') {
+        focus.requestFocus();
+        await flush(tester);
+      }
+      if (reason == 'other-page') {
+        navigatorKey.currentState!.push<void>(MaterialPageRoute(
+          builder: (_) => const Scaffold(body: Text('其他页面')),
+        ));
+        await flush(tester);
+      }
+      if (reason == 'modal') {
+        showDialog<void>(
+          context: navigatorKey.currentState!.overlay!.context,
+          builder: (_) => const AlertDialog(title: Text('其他对话框')),
+        );
+        await flush(tester);
+      }
+      if (reason == 'background') {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      }
+      service.completeCheck(
+        notifyUser: reason != 'superseded',
+        outcome: reason == 'failed'
+            ? AppUpdateCheckOutcome.failed
+            : reason == 'ignored'
+                ? AppUpdateCheckOutcome.ignored
+                : AppUpdateCheckOutcome.upToDate,
+      );
+      if (reason == 'stale') service.isLastCheckResultStale = true;
+      if (reason == 'checking') service.isChecking = true;
+      if (reason == 'auto-off') service.autoCheckEnabled = false;
+      await flush(tester);
+      expect(currentNotice, findsNothing);
+      guard.blockReason = null;
+      guard.unsavedWarning = null;
+      service.isLastCheckResultStale = false;
+      service.isChecking = false;
+      service.autoCheckEnabled = true;
+      focus.unfocus();
+      if (reason == 'other-page' || reason == 'modal') {
+        navigatorKey.currentState!.pop();
+      }
+      if (reason == 'background') {
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      }
+      if (reason == 'keyboard') await host(tester);
+      guard.change();
+      service.change();
+      await tester.pump(const Duration(seconds: 6));
+      await flush(tester);
+      expect(currentNotice, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('mounting after completion and restored phases never replay',
+      (tester) async {
+    service.completeCheck();
+    await host(tester);
+    service.change();
+    await flush(tester);
+    expect(currentNotice, findsNothing);
+    service.lastCheckResult = null;
+    service.phase = UpdatePhase.upToDate;
+    service.change();
+    await flush(tester);
+    expect(currentNotice, findsNothing);
+  });
+
+  testWidgets('a newer manual result before the frame cancels startup feedback',
+      (tester) async {
+    await host(tester);
+    service.completeCheck();
+    service.completeCheck(origin: AppUpdateCheckOrigin.manual);
+    await flush(tester);
+    expect(currentNotice, findsNothing);
+  });
 
   testWidgets('only a valid automatic event presents and consumes a prompt',
       (tester) async {

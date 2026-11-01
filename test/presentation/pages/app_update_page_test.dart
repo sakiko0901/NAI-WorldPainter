@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/services/app_update_service.dart';
@@ -53,6 +55,20 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   @override
   DateTime? lastCheckedAt;
   @override
+  DateTime? lastSuccessfulCheckAt;
+  @override
+  AppUpdateCheckResult? lastCheckResult;
+  @override
+  AppUpdateFailureStage? failureStage;
+  @override
+  bool isVersionIgnored = false;
+  @override
+  bool isInstalledAhead = false;
+  @override
+  bool isLastCheckResultStale = false;
+  bool checking = false;
+  Future<void> Function()? onCheck;
+  @override
   bool requiresUnsavedConfirmation = false;
   bool hasUnsavedWork = false;
   final installAllowDiscard = <bool>[];
@@ -81,6 +97,49 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   bool get isSupported => phase != UpdatePhase.unsupported;
   @override
   bool get canCheckForUpdates => checkCapability ?? isSupported;
+  @override
+  bool get isChecking => checking || phase == UpdatePhase.checking;
+
+  void completeCheck(
+    AppUpdateCheckOutcome outcome, {
+    AppUpdateCheckOrigin origin = AppUpdateCheckOrigin.manual,
+    DateTime? completedAt,
+    UpdatePhase? nextPhase,
+    bool notifyUser = true,
+    String? notice,
+  }) {
+    final at = completedAt ?? DateTime(2026, 11, 1, 9, 30);
+    lastCheckedAt = at;
+    if (outcome != AppUpdateCheckOutcome.failed) lastSuccessfulCheckAt = at;
+    lastCheckResult = AppUpdateCheckResult(
+      revision: (lastCheckResult?.revision ?? 0) + 1,
+      origin: origin,
+      outcome: outcome,
+      completedAt: at,
+      notifyUser: notifyUser,
+      message: notice,
+      manifest: manifest,
+    );
+    checking = false;
+    isLastCheckResultStale = false;
+    isVersionIgnored = outcome == AppUpdateCheckOutcome.ignored;
+    isInstalledAhead = outcome == AppUpdateCheckOutcome.ahead;
+    failureStage = outcome == AppUpdateCheckOutcome.failed
+        ? AppUpdateFailureStage.check
+        : null;
+    phase = nextPhase ??
+        switch (outcome) {
+          AppUpdateCheckOutcome.upToDate ||
+          AppUpdateCheckOutcome.ahead =>
+            UpdatePhase.upToDate,
+          AppUpdateCheckOutcome.available => UpdatePhase.available,
+          AppUpdateCheckOutcome.ignored => UpdatePhase.idle,
+          AppUpdateCheckOutcome.incompatible => UpdatePhase.unsupported,
+          AppUpdateCheckOutcome.failed => UpdatePhase.failed,
+        };
+    message = notice;
+    notifyListeners();
+  }
 
   @override
   void acknowledgeAutomaticPrompt(int versionCode) {
@@ -107,7 +166,20 @@ class _UpdaterFake extends ChangeNotifier implements AppUpdateService {
   @override
   Future<void> initialize() async => initializations++;
   @override
-  Future<void> checkForUpdates({bool silent = false}) async => checks++;
+  Future<void> checkForUpdates({bool silent = false}) async {
+    checks++;
+    final action = onCheck;
+    if (action == null) return;
+    checking = true;
+    notifyListeners();
+    try {
+      await action();
+    } finally {
+      checking = false;
+      notifyListeners();
+    }
+  }
+
   @override
   Future<void> startDownload() async => downloads++;
   @override
@@ -163,7 +235,7 @@ Future<void> _pumpPage(
   await tester.pumpAndSettle();
 }
 
-Future<void> _tap(WidgetTester tester, String key) async {
+Future<void> _reveal(WidgetTester tester, String key) async {
   final finder = find.byKey(ValueKey(key));
   if (finder.evaluate().isEmpty) {
     await tester.scrollUntilVisible(
@@ -179,9 +251,18 @@ Future<void> _tap(WidgetTester tester, String key) async {
   }
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
+}
+
+Future<void> _tap(WidgetTester tester, String key) async {
+  await _reveal(tester, key);
+  final finder = find.byKey(ValueKey(key));
   await tester.tap(finder);
   await tester.pumpAndSettle();
 }
+
+String _statusTitle(WidgetTester tester) => tester
+    .widget<Text>(find.byKey(const ValueKey('app-update-status-title')))
+    .data!;
 
 void main() {
   late _UpdaterFake updater;
@@ -200,10 +281,321 @@ void main() {
 
     await _tap(tester, 'app-update-check');
     expect(updater.checks, 1);
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
     await _tap(tester, 'app-update-auto-check');
     expect(updater.autoCheckEnabled, isFalse);
     expect(tester.takeException(), isNull);
   });
+
+  for (final (outcome, title) in [
+    (AppUpdateCheckOutcome.upToDate, '已是最新版本'),
+    (AppUpdateCheckOutcome.ahead, '当前版本较新，无需更新'),
+    (AppUpdateCheckOutcome.ignored, '已忽略此版本'),
+  ]) {
+    testWidgets('$outcome is visible and each manual request gets feedback',
+        (tester) async {
+      updater.manifest = _manifest;
+      updater.completeCheck(outcome, origin: AppUpdateCheckOrigin.resume);
+      await _pumpPage(tester, updater);
+      expect(_statusTitle(tester), title);
+      expect(find.byKey(const ValueKey('app-update-check-feedback')),
+          findsNothing);
+
+      updater.onCheck = () async => updater.completeCheck(outcome);
+      await _tap(tester, 'app-update-check');
+      expect(updater.checks, 1);
+      expect(_statusTitle(tester), title);
+      expect(find.byKey(const ValueKey('app-update-check-feedback-2')),
+          findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('app-update-check-feedback')),
+          findsNothing);
+      updater.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('app-update-check-feedback')),
+          findsNothing);
+
+      await _tap(tester, 'app-update-check');
+      expect(updater.checks, 2);
+      expect(find.byKey(const ValueKey('app-update-check-feedback-3')),
+          findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('a pending check disables its button and prevents repeated taps',
+      (tester) async {
+    final pending = Completer<void>();
+    updater.onCheck = () => pending.future;
+    await _pumpPage(tester, updater);
+    await _tap(tester, 'app-update-check');
+    expect(_statusTitle(tester), '正在检查更新');
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('app-update-check')),
+    );
+    expect(button.onPressed, isNull);
+    await tester.tap(find.byKey(const ValueKey('app-update-check')));
+    await tester.pump();
+    expect(updater.checks, 1);
+    updater.completeCheck(AppUpdateCheckOutcome.upToDate);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('app-update-check-feedback-1')),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('entering a page never replays a completed manual check',
+      (tester) async {
+    updater.completeCheck(AppUpdateCheckOutcome.upToDate);
+    await _pumpPage(tester, updater);
+    updater.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(_statusTitle(tester), '已是最新版本');
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a manual no-op does not use a result from a background check',
+      (tester) async {
+    final pending = Completer<void>();
+    updater.onCheck = () => pending.future;
+    await _pumpPage(tester, updater);
+    await _tap(tester, 'app-update-check');
+    updater.completeCheck(AppUpdateCheckOutcome.upToDate,
+        origin: AppUpdateCheckOrigin.startup);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+  });
+
+  for (final suppressedBy in ['notifyUser', 'stale', 'revoked']) {
+    testWidgets('a $suppressedBy result does not produce manual feedback',
+        (tester) async {
+      final pending = Completer<void>();
+      updater.onCheck = () => pending.future;
+      await _pumpPage(tester, updater);
+      await _tap(tester, 'app-update-check');
+      updater.completeCheck(AppUpdateCheckOutcome.upToDate,
+          notifyUser: suppressedBy != 'notifyUser');
+      if (suppressedBy == 'stale') updater.isLastCheckResultStale = true;
+      if (suppressedBy == 'revoked') {
+        final result = updater.lastCheckResult!;
+        updater.lastCheckResult = AppUpdateCheckResult(
+          revision: result.revision,
+          origin: result.origin,
+          outcome: result.outcome,
+          completedAt: result.completedAt,
+          notifyUser: false,
+          message: result.message,
+          manifest: result.manifest,
+        );
+        updater.notifyListeners();
+      }
+      pending.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('app-update-check-feedback')),
+          findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('a result while the page is covered is not replayed on return',
+      (tester) async {
+    final navigator = GlobalKey<NavigatorState>();
+    final pending = Completer<void>();
+    updater.onCheck = () => pending.future;
+    await tester.pumpWidget(MaterialApp(
+      navigatorKey: navigator,
+      theme: buildNaiHuishiTheme(Brightness.dark),
+      home: AppUpdatePage(service: updater),
+    ));
+    await tester.pumpAndSettle();
+    await _tap(tester, 'app-update-check');
+    unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
+      builder: (_) => const Scaffold(body: Text('其他页面')),
+    )));
+    await tester.pumpAndSettle();
+    updater.completeCheck(AppUpdateCheckOutcome.upToDate);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    updater.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('leaving during a check discards feedback even after reopening',
+      (tester) async {
+    final pending = Completer<void>();
+    updater.onCheck = () => pending.future;
+    await tester.pumpWidget(MaterialApp(
+      theme: buildNaiHuishiTheme(Brightness.dark),
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => AppUpdatePage(service: updater),
+            )),
+            child: const Text('打开更新'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开更新'));
+    await tester.pumpAndSettle();
+    await _tap(tester, 'app-update-check');
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pumpAndSettle();
+    updater.completeCheck(AppUpdateCheckOutcome.upToDate);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    await tester.tap(find.text('打开更新'));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a silent failure displays its record and dates the older result',
+      (tester) async {
+    updater.manifest = _manifest;
+    updater.completeCheck(
+      AppUpdateCheckOutcome.upToDate,
+      origin: AppUpdateCheckOrigin.startup,
+      completedAt: DateTime(2026, 10, 31, 8, 15),
+    );
+    updater.completeCheck(
+      AppUpdateCheckOutcome.failed,
+      origin: AppUpdateCheckOrigin.resume,
+      completedAt: DateTime(2026, 11, 1, 9, 30),
+      nextPhase: UpdatePhase.upToDate,
+      notice: '暂时无法获取版本信息。',
+    );
+    await _pumpPage(tester, updater);
+    expect(_statusTitle(tester), '检查失败');
+    expect(find.text('已是最新版本'), findsNothing);
+    expect(
+      find.text('保留先前版本信息；上次成功检查：2026-10-31 08:15。请重新检查以确认最新版本。'),
+      findsOneWidget,
+    );
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    await _reveal(tester, 'app-update-last-successful-check');
+    expect(find.text('最近一次检查：2026-11-01 09:30（检查失败）'), findsOneWidget);
+    expect(find.text('上次成功检查：2026-10-31 08:15'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a restored success timestamp does not imply a new successful check',
+      (tester) async {
+    updater.lastCheckedAt = DateTime(2026, 11, 1, 9, 30);
+    updater.lastSuccessfulCheckAt = DateTime(2026, 10, 31, 8, 15);
+    await _pumpPage(tester, updater);
+    expect(_statusTitle(tester), '检查应用更新');
+    expect(find.text('已是最新版本'), findsNothing);
+    await _reveal(tester, 'app-update-last-successful-check');
+    expect(find.text('最近一次检查：2026-11-01 09:30'), findsOneWidget);
+    expect(find.text('上次成功检查：2026-10-31 08:15'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a restored cached APK does not confirm the latest remote version',
+      (tester) async {
+    updater.manifest = _manifest;
+    updater.installed = InstalledAppInfo(
+      packageName: _installed.packageName,
+      versionName: _manifest.versionName,
+      versionCode: _manifest.versionCode,
+      sdkInt: _installed.sdkInt,
+      supportedAbis: _installed.supportedAbis,
+      signerSha256: _installed.signerSha256,
+    );
+    updater.phase = UpdatePhase.upToDate;
+    await _pumpPage(tester, updater);
+    expect(_statusTitle(tester), '尚未确认最新版本');
+    expect(find.text('已核对本地安装版本，可检查是否有新的发布版本。'), findsOneWidget);
+    expect(find.text('已是最新版本'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('app-update-check')))
+          .onPressed,
+      isNotNull,
+    );
+    await _tap(tester, 'app-update-check');
+    expect(updater.checks, 1);
+    expect(_statusTitle(tester), '尚未确认最新版本');
+    expect(
+        find.byKey(const ValueKey('app-update-check-feedback')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final (stage, title) in [
+    (AppUpdateFailureStage.check, '检查失败'),
+    (AppUpdateFailureStage.download, '下载失败'),
+    (AppUpdateFailureStage.verification, '安装包校验失败'),
+    (AppUpdateFailureStage.installation, '安装未完成'),
+    (AppUpdateFailureStage.state, '无法读取更新状态'),
+  ]) {
+    testWidgets('$stage failure retries the failed operation', (tester) async {
+      updater.manifest = _manifest;
+      updater.phase = UpdatePhase.failed;
+      updater.failureStage = stage;
+      await _pumpPage(tester, updater);
+      expect(_statusTitle(tester), title);
+      expect(find.text('已是最新版本'), findsNothing);
+      await _tap(tester, 'app-update-retry');
+      expect(updater.checks, stage == AppUpdateFailureStage.check ? 1 : 0);
+      expect(
+        updater.downloads,
+        stage == AppUpdateFailureStage.download ||
+                stage == AppUpdateFailureStage.verification
+            ? 1
+            : 0,
+      );
+      expect(updater.installs,
+          stage == AppUpdateFailureStage.installation ? 1 : 0);
+      expect(updater.refreshes, stage == AppUpdateFailureStage.state ? 1 : 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final notice in [
+    '暂时无法获取版本信息，请稍后重试。',
+    '版本信息暂时不可用，请稍后重试。',
+  ]) {
+    testWidgets('unavailable release information stays failed: $notice',
+        (tester) async {
+      updater.onCheck = () async => updater.completeCheck(
+            AppUpdateCheckOutcome.failed,
+            notice: notice,
+          );
+      await _pumpPage(tester, updater);
+      await _tap(tester, 'app-update-check');
+      expect(_statusTitle(tester), '检查失败');
+      expect(find.text('已是最新版本'), findsNothing);
+      expect(find.byKey(const ValueKey('app-update-download')), findsNothing);
+      expect(find.byKey(const ValueKey('app-update-check-feedback-1')),
+          findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('candidate details stay plain text and actions use the service',
       (tester) async {
@@ -386,6 +778,7 @@ void main() {
   testWidgets('failures never appear as latest and provide retry and release',
       (tester) async {
     updater.phase = UpdatePhase.failed;
+    updater.failureStage = AppUpdateFailureStage.check;
     updater.message = '检查更新失败，请稍后重试。';
     await _pumpPage(tester, updater);
     expect(find.text('已是最新版本'), findsNothing);
@@ -569,6 +962,17 @@ void main() {
       await _tap(tester, 'app-update-install');
       await _tap(tester, 'app-update-discard-confirm');
       expect(updater.installAllowDiscard, [false, true]);
+      updater.manifest = null;
+      updater.completeCheck(AppUpdateCheckOutcome.upToDate,
+          origin: AppUpdateCheckOrigin.resume);
+      updater.onCheck =
+          () async => updater.completeCheck(AppUpdateCheckOutcome.upToDate);
+      await tester.pumpAndSettle();
+      await _tap(tester, 'app-update-check');
+      expect(find.byKey(const ValueKey('app-update-check-feedback-2')),
+          findsOneWidget);
+      await _reveal(tester, 'app-update-last-successful-check');
+      expect(find.text('上次成功检查：2026-11-01 09:30'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

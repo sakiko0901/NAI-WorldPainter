@@ -21,17 +21,72 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
   bool _installFlowActive = false;
   bool _automaticAcknowledgementScheduled = false;
   (int, int)? _acknowledgedAutomaticPrompt;
+  bool _manualCheckActive = false;
+  int? _manualCheckRevisionFloor;
+  int _lastSeenCheckRevision = 0;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? sl<AppUpdateService>();
-    _service.addListener(_scheduleAutomaticAcknowledgement);
+    _lastSeenCheckRevision = _service.lastCheckResult?.revision ?? 0;
+    _service.addListener(_onServiceChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
       final code = _service.manifest?.versionCode;
       if (code != null) _acknowledgeVersion(code);
     });
+  }
+
+  void _onServiceChanged() {
+    _scheduleAutomaticAcknowledgement();
+    final result = _service.lastCheckResult;
+    if (result == null || result.revision <= _lastSeenCheckRevision) return;
+    // Consume before scheduling: acknowledging a prompt can notify again.
+    _lastSeenCheckRevision = result.revision;
+    final floor = _manualCheckRevisionFloor;
+    if (floor == null ||
+        result.revision <= floor ||
+        result.origin != AppUpdateCheckOrigin.manual ||
+        !result.notifyUser ||
+        !mounted ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          _service.lastCheckResult?.revision != result.revision ||
+          _service.lastCheckResult?.notifyUser != true ||
+          _service.isLastCheckResultStale) {
+        return;
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        key: ValueKey('app-update-check-feedback-${result.revision}'),
+        content: Text(
+          _checkResultText(result),
+          key: const ValueKey('app-update-check-feedback'),
+        ),
+      ));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_manualCheckActive || _service.isChecking) return;
+    _manualCheckRevisionFloor = _service.lastCheckResult?.revision ?? 0;
+    setState(() => _manualCheckActive = true);
+    try {
+      await _service.checkForUpdates();
+      // Also support services that finish without a final notification. A no-op
+      // creates no revision and therefore cannot produce a success message.
+      if (mounted) _onServiceChanged();
+    } finally {
+      _manualCheckRevisionFloor = null;
+      if (mounted) setState(() => _manualCheckActive = false);
+    }
   }
 
   @override
@@ -77,7 +132,7 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
 
   @override
   void dispose() {
-    _service.removeListener(_scheduleAutomaticAcknowledgement);
+    _service.removeListener(_onServiceChanged);
     super.dispose();
   }
 
@@ -85,7 +140,7 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
     try {
       await action();
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('操作未能完成，请重试。')),
       );
@@ -174,6 +229,13 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
                           _service.manifest?.versionCode,
                           _service.installed?.versionCode,
                           _service.canCheckForUpdates,
+                          _service.isChecking,
+                          _service.isVersionIgnored,
+                          _service.isInstalledAhead,
+                          _service.failureStage,
+                          _service.lastCheckResult?.revision,
+                          _service.isLastCheckResultStale,
+                          _service.lastSuccessfulCheckAt,
                         ),
                         builder: (context, _) => _buildStatus(context),
                       ),
@@ -199,6 +261,10 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
                         select: () => (
                           _service.autoCheckEnabled,
                           _service.lastCheckedAt,
+                          _service.lastSuccessfulCheckAt,
+                          _service.lastCheckResult?.revision,
+                          _service.isLastCheckResultStale,
+                          _service.isChecking,
                           _service.phase == UpdatePhase.unsupported,
                           _service.canCheckForUpdates,
                         ),
@@ -217,36 +283,69 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
 
   Widget _buildStatus(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final phase = _service.phase;
-    final ignored = phase == UpdatePhase.upToDate &&
-        _service.manifest != null &&
-        _service.installed != null &&
-        _service.manifest!.versionCode > _service.installed!.versionCode;
+    final phase = _displayPhase;
+    final ignored = _service.isVersionIgnored;
+    final ahead = _service.isInstalledAhead;
+    final previousCheckFailed =
+        _service.lastCheckResult?.outcome == AppUpdateCheckOutcome.failed;
+    final message = phase == UpdatePhase.failed &&
+            _failureStage == AppUpdateFailureStage.check &&
+            previousCheckFailed
+        ? _service.lastCheckResult?.message ?? _service.message
+        : _service.message;
     final title = switch (phase) {
-      UpdatePhase.idle => '检查应用更新',
+      UpdatePhase.idle => ignored ? '已忽略此版本' : '检查应用更新',
       UpdatePhase.checking => '正在检查更新',
-      UpdatePhase.upToDate => ignored ? '已忽略此版本' : '已是最新版本',
+      UpdatePhase.upToDate => _service.lastCheckResult == null
+          ? '尚未确认最新版本'
+          : ignored
+              ? '已忽略此版本'
+              : ahead
+                  ? '当前版本较新，无需更新'
+                  : _service.isLastCheckResultStale
+                      ? '上次检查时已是最新版本'
+                      : '已是最新版本',
       UpdatePhase.available => '发现新版本',
       UpdatePhase.downloading => '正在下载更新',
       UpdatePhase.verifying => '正在校验更新',
       UpdatePhase.ready => '更新已准备好',
       UpdatePhase.permissionRequired => '需要允许安装应用',
       UpdatePhase.awaitingInstall => '等待系统安装',
-      UpdatePhase.failed => '更新未完成',
+      UpdatePhase.failed => switch (_failureStage) {
+          AppUpdateFailureStage.check => '检查失败',
+          AppUpdateFailureStage.download => '下载失败',
+          AppUpdateFailureStage.verification => '安装包校验失败',
+          AppUpdateFailureStage.installation => '安装未完成',
+          AppUpdateFailureStage.state => '无法读取更新状态',
+        },
       UpdatePhase.unsupported =>
         _service.canCheckForUpdates ? '此更新不兼容当前设备' : '暂不支持应用内更新',
     };
     final description = switch (phase) {
-      UpdatePhase.idle => '查看是否有可用的新版本。',
+      UpdatePhase.idle => ignored ? '此版本已忽略，手动检查可再次查看。' : '查看是否有可用的新版本。',
       UpdatePhase.checking => '正在获取最新版本信息，请稍候。',
-      UpdatePhase.upToDate => ignored ? '此版本已忽略，仍可查看更新说明和发布页。' : '当前应用已是最新版本。',
+      UpdatePhase.upToDate => _service.lastCheckResult == null
+          ? '已核对本地安装版本，可检查是否有新的发布版本。'
+          : ignored
+              ? '此版本已忽略，仍可查看更新说明和发布页。'
+              : ahead
+                  ? '当前安装版本高于发布版本，无需更新。'
+                  : _service.isLastCheckResultStale
+                      ? '可重新检查以确认当前发布版本。'
+                      : '当前应用已是最新版本。',
       UpdatePhase.available => '下载完成后会校验安装包，由你确认安装。',
       UpdatePhase.downloading => '离开此页面后仍会继续下载。',
       UpdatePhase.verifying => '正在检查安装包的完整性，请稍候。',
       UpdatePhase.ready => '安装时应用可能会关闭，请先保存正在编辑的内容。',
       UpdatePhase.permissionRequired => '在系统设置中允许安装后，请返回本页，再次点击“立即安装”。',
       UpdatePhase.awaitingInstall => '请在系统安装界面完成操作。返回应用后会核对安装结果。',
-      UpdatePhase.failed => '本次更新未能完成，请重试或前往发布页。',
+      UpdatePhase.failed => switch (_failureStage) {
+          AppUpdateFailureStage.check => '暂时无法获取版本信息，请重新检查或前往发布页。',
+          AppUpdateFailureStage.download => '安装包未能下载完成，可以重新下载或前往发布页。',
+          AppUpdateFailureStage.verification => '安装包未通过校验，请重新下载安装包。',
+          AppUpdateFailureStage.installation => '安装尚未完成，请确认已保存工作后重试安装。',
+          AppUpdateFailureStage.state => '暂时无法读取更新状态，请重新读取或前往发布页。',
+        },
       UpdatePhase.unsupported => _service.canCheckForUpdates
           ? '可重新检查其他兼容版本，或前往发布页查看。'
           : '当前平台或预览包暂不支持应用内更新，可前往发布页查看正式版本。',
@@ -284,6 +383,7 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
               Expanded(
                 child: Text(
                   title,
+                  key: const ValueKey('app-update-status-title'),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
@@ -291,10 +391,20 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
           ),
           const SizedBox(height: 12),
           Text(description, style: TextStyle(color: colors.onSurfaceVariant)),
-          if (_service.message?.trim().isNotEmpty == true) ...[
+          if ((previousCheckFailed && _service.manifest != null) ||
+              (phase == UpdatePhase.upToDate &&
+                  _service.isLastCheckResultStale)) ...[
             const SizedBox(height: 10),
             Text(
-              _service.message!,
+              _previousResultText,
+              key: const ValueKey('app-update-previous-result'),
+              style: TextStyle(color: colors.onSurfaceVariant),
+            ),
+          ],
+          if (message?.trim().isNotEmpty == true) ...[
+            const SizedBox(height: 10),
+            Text(
+              message!,
               key: const ValueKey('app-update-message'),
               style: TextStyle(
                 color: phase == UpdatePhase.failed
@@ -322,6 +432,46 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
     );
   }
 
+  UpdatePhase get _displayPhase {
+    final phase = _service.phase;
+    if (phase == UpdatePhase.downloading ||
+        phase == UpdatePhase.verifying ||
+        phase == UpdatePhase.ready ||
+        phase == UpdatePhase.permissionRequired ||
+        phase == UpdatePhase.awaitingInstall) {
+      return phase;
+    }
+    if (_manualCheckActive || _service.isChecking) return UpdatePhase.checking;
+    if (_service.lastCheckResult?.outcome == AppUpdateCheckOutcome.failed &&
+        !_service.isLastCheckResultStale) {
+      return UpdatePhase.failed;
+    }
+    return phase;
+  }
+
+  AppUpdateFailureStage get _failureStage =>
+      _service.failureStage ??
+      (_service.lastCheckResult?.outcome == AppUpdateCheckOutcome.failed
+          ? AppUpdateFailureStage.check
+          : AppUpdateFailureStage.state);
+
+  String get _previousResultText {
+    final successAt = _service.lastSuccessfulCheckAt;
+    final source = successAt == null
+        ? '保留先前获取的版本信息。'
+        : '保留先前版本信息；上次成功检查：${_formatDate(successAt)}。';
+    return '$source请重新检查以确认最新版本。';
+  }
+
+  Future<void> _retryFailure() => switch (_failureStage) {
+        AppUpdateFailureStage.check => _checkForUpdates(),
+        AppUpdateFailureStage.download ||
+        AppUpdateFailureStage.verification =>
+          _service.startDownload(),
+        AppUpdateFailureStage.installation => _installUpdate(),
+        AppUpdateFailureStage.state => _service.refresh(),
+      };
+
   List<Widget> _buildActions(UpdatePhase phase) {
     Widget primary(String label, String key, Future<void> Function() action) {
       return SizedBox(
@@ -347,12 +497,16 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
 
     final actions = switch (phase) {
       UpdatePhase.idle || UpdatePhase.upToDate => [
-          primary('检查更新', 'app-update-check', () => _service.checkForUpdates()),
+          primary('检查更新', 'app-update-check', _checkForUpdates),
         ],
       UpdatePhase.checking => <Widget>[
           const SizedBox(
             width: double.infinity,
-            child: FilledButton(onPressed: null, child: Text('正在检查…')),
+            child: FilledButton(
+              key: ValueKey('app-update-check'),
+              onPressed: null,
+              child: Text('正在检查…'),
+            ),
           ),
         ],
       UpdatePhase.available => [
@@ -377,12 +531,22 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
           primary('核对安装结果', 'app-update-refresh', _service.refresh),
         ],
       UpdatePhase.failed => [
-          primary('重试', 'app-update-retry', () => _service.checkForUpdates()),
+          primary(
+            switch (_failureStage) {
+              AppUpdateFailureStage.check => '重新检查',
+              AppUpdateFailureStage.download ||
+              AppUpdateFailureStage.verification =>
+                '重新下载',
+              AppUpdateFailureStage.installation => '重试安装',
+              AppUpdateFailureStage.state => '重新读取状态',
+            },
+            'app-update-retry',
+            _retryFailure,
+          ),
         ],
       UpdatePhase.unsupported => _service.canCheckForUpdates
           ? [
-              primary('重新检查', 'app-update-recheck',
-                  () => _service.checkForUpdates()),
+              primary('重新检查', 'app-update-recheck', _checkForUpdates),
             ]
           : <Widget>[],
     };
@@ -452,7 +616,7 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
             title: const Text('自动检查更新'),
-            subtitle: const Text('打开应用时检查，发现新版本后提示'),
+            subtitle: const Text('打开应用时检查，显示检查结果或新版本提示'),
             value: _service.autoCheckEnabled,
             onChanged: _service.phase == UpdatePhase.unsupported &&
                     !_service.canCheckForUpdates
@@ -464,7 +628,19 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
               child: Text(
-                '上次检查：${_formatDate(_service.lastCheckedAt!)}',
+                '最近一次检查：${_formatDate(_service.lastCheckedAt!)}'
+                '$_recentCheckSuffix',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
+          if (_service.lastSuccessfulCheckAt != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+              child: Text(
+                '上次成功检查：${_formatDate(_service.lastSuccessfulCheckAt!)}',
+                key: const ValueKey('app-update-last-successful-check'),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -474,7 +650,33 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
       ),
     );
   }
+
+  String get _recentCheckSuffix {
+    if (_service.isChecking || _manualCheckActive) return '（进行中）';
+    final result = _service.lastCheckResult;
+    if (result == null || _service.isLastCheckResultStale) return '';
+    return '（${switch (result.outcome) {
+      AppUpdateCheckOutcome.upToDate => '已是最新版本',
+      AppUpdateCheckOutcome.ahead => '当前版本较新',
+      AppUpdateCheckOutcome.available => '发现新版本',
+      AppUpdateCheckOutcome.ignored => '已忽略此版本',
+      AppUpdateCheckOutcome.incompatible => '更新不兼容',
+      AppUpdateCheckOutcome.failed => '检查失败',
+    }}）';
+  }
 }
+
+String _checkResultText(AppUpdateCheckResult result) =>
+    switch (result.outcome) {
+      AppUpdateCheckOutcome.upToDate => '已是最新版本',
+      AppUpdateCheckOutcome.ahead => '当前版本较新，无需更新',
+      AppUpdateCheckOutcome.available => '发现新版本，可下载更新。',
+      AppUpdateCheckOutcome.ignored => '已忽略此版本，手动检查可再次查看。',
+      AppUpdateCheckOutcome.incompatible => '此更新不兼容当前设备',
+      AppUpdateCheckOutcome.failed => result.message?.trim().isNotEmpty == true
+          ? result.message!
+          : '暂时无法获取版本信息，请稍后重试。',
+    };
 
 class _Detail extends StatelessWidget {
   final String label;

@@ -5,9 +5,22 @@ import 'package:dio/dio.dart';
 
 import '../../../domain/entities/app_update.dart';
 
+enum AppUpdateExceptionReason {
+  missingManifest,
+  invalidManifest,
+  timeout,
+  connection,
+  rateLimited,
+  unavailable,
+  invalidRedirect,
+  unknown,
+}
+
 class AppUpdateException implements Exception {
   final String message;
-  const AppUpdateException(this.message);
+  final AppUpdateExceptionReason reason;
+  const AppUpdateException(this.message,
+      {this.reason = AppUpdateExceptionReason.unknown});
   @override
   String toString() => message;
 }
@@ -46,14 +59,17 @@ class AppUpdateSource {
     try {
       return await _fetch(cancel).timeout(_requestTimeout, onTimeout: () {
         cancel.cancel('Update check timed out');
-        throw const AppUpdateException('检查更新超时，请稍后重试。');
+        throw const AppUpdateException('检查更新超时，请稍后重试。',
+            reason: AppUpdateExceptionReason.timeout);
       });
     } on AppUpdateException {
       rethrow;
     } on FormatException {
-      throw const AppUpdateException('更新清单无效，请前往发布页查看。');
+      throw const AppUpdateException('暂时无法获取版本信息（更新清单无效），请前往发布页查看。',
+          reason: AppUpdateExceptionReason.invalidManifest);
     } on DioException {
-      throw const AppUpdateException('无法连接更新服务，请检查网络后重试。');
+      throw const AppUpdateException('无法连接更新服务，请检查网络后重试。',
+          reason: AppUpdateExceptionReason.connection);
     } catch (_) {
       throw const AppUpdateException('检查更新失败，请稍后重试。');
     }
@@ -73,11 +89,13 @@ class AppUpdateSource {
         await subscription.cancel();
         final location = response.headers.value('location');
         if (redirects == 5 || location == null) {
-          throw const AppUpdateException('更新服务重定向异常，请稍后重试。');
+          throw const AppUpdateException('更新服务重定向异常，请稍后重试。',
+              reason: AppUpdateExceptionReason.invalidRedirect);
         }
         final next = uri.resolve(location);
         if (!_allowedRedirect(next)) {
-          throw const AppUpdateException('更新服务地址无效，请前往发布页查看。');
+          throw const AppUpdateException('更新服务地址无效，请前往发布页查看。',
+              reason: AppUpdateExceptionReason.invalidRedirect);
         }
         uri = next;
         continue;
@@ -86,12 +104,15 @@ class AppUpdateSource {
         final subscription = body.stream.listen((_) {});
         await subscription.cancel();
         if (status == 404) {
-          throw const AppUpdateException('暂未找到更新清单，请前往发布页查看。');
+          throw const AppUpdateException('暂时无法获取版本信息（更新清单尚未发布），请稍后重试或前往发布页查看。',
+              reason: AppUpdateExceptionReason.missingManifest);
         }
         if (status == 403 || status == 429) {
-          throw const AppUpdateException('更新服务请求受限，请稍后重试。');
+          throw const AppUpdateException('更新服务请求受限，请稍后重试。',
+              reason: AppUpdateExceptionReason.rateLimited);
         }
-        throw const AppUpdateException('更新服务暂时不可用，请稍后重试。');
+        throw const AppUpdateException('更新服务暂时不可用，请稍后重试。',
+            reason: AppUpdateExceptionReason.unavailable);
       }
       final length =
           int.tryParse(response.headers.value('content-length') ?? '');
@@ -112,7 +133,8 @@ class AppUpdateSource {
       if (decoded is! Map) throw const FormatException('Invalid manifest');
       return AppUpdateManifest.fromJson(Map<Object?, Object?>.from(decoded));
     }
-    throw const AppUpdateException('更新服务重定向异常，请稍后重试。');
+    throw const AppUpdateException('更新服务重定向异常，请稍后重试。',
+        reason: AppUpdateExceptionReason.invalidRedirect);
   }
 
   bool _allowedRedirect(Uri uri) {
