@@ -213,18 +213,14 @@ void main() {
   final dialog = find.byKey(const ValueKey('automatic-update-dialog'));
   final currentNotice = find.byKey(const ValueKey('automatic-update-current'));
 
-  testWidgets(
-      'a fresh startup equality result shows a three-second notice once',
+  testWidgets('startup equality stays silent across repeated checks',
       (tester) async {
     await host(tester);
     service.completeCheck();
-    expect(tester.binding.hasScheduledFrame, isTrue);
     await flush(tester);
-    expect(currentNotice, findsOneWidget);
-    expect(find.text('已是最新版本'), findsOneWidget);
+    expect(currentNotice, findsNothing);
+    expect(find.text('已是最新版本'), findsNothing);
     expect(dialog, findsNothing);
-    expect(tester.widget<SnackBar>(currentNotice).duration,
-        const Duration(seconds: 3));
     service.change();
     await tester.pump(const Duration(seconds: 4));
     await flush(tester);
@@ -234,12 +230,12 @@ void main() {
     expect(currentNotice, findsNothing);
   });
 
-  testWidgets('a locally newer version gets accurate startup wording',
+  testWidgets('a locally newer version stays silent on startup',
       (tester) async {
     await host(tester);
     service.completeCheck(outcome: AppUpdateCheckOutcome.ahead);
     await flush(tester);
-    expect(find.text('当前版本较新，无需更新'), findsOneWidget);
+    expect(find.text('当前版本较新，无需更新'), findsNothing);
     expect(find.text('已是最新版本'), findsNothing);
   });
 
@@ -365,7 +361,6 @@ void main() {
       (tester) async {
     await host(tester);
     service.offer();
-    expect(tester.binding.hasScheduledFrame, isTrue);
     await flush(tester);
     expect(dialog, findsOneWidget);
     expect(find.text('发现新版本'), findsOneWidget);

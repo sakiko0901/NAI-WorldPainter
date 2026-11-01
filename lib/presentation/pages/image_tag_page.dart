@@ -1,4 +1,7 @@
 import 'dart:io';
+
+import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -160,7 +163,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
+    return StudioScaffold(
       appBar: AppBar(
         title: const Text('图片解析'),
         actions: [
@@ -235,7 +238,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
   }
 
   Widget _buildPreview(bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     final imagePath = _vm.imagePath;
     Widget child;
     if (imagePath == null || !File(imagePath).existsSync()) {
@@ -278,7 +281,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   // ── 分析方式 ──
   Widget _buildModeSelector(bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -354,7 +357,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   // ── WD-Tagger 设置 ──
   Widget _buildWdSettings(bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -547,7 +550,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   // ── 元数据卡片（NAI 模式才有）──
   Widget _buildMetadataCard(ImageTagResult r, bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     final entries = r.metadata!.entries.toList();
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -603,7 +606,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
     required bool isNegative,
     required bool isDark,
   }) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     final selectedCount = tags.where((t) => t.selected).length;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -670,7 +673,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   // ── 角色标签（WD-Tagger 识别出来的角色）──
   Widget _buildCharacterTagsBlock(List<TagEntry> tags, bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     final selectedCount = tags.where((t) => t.selected).length;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -720,7 +723,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
 
   // ── 多角色块（NAI 元数据多角色）──
   Widget _buildMultiCharacterBlock(ImageTagResult r, bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
@@ -854,7 +857,7 @@ class _ImageTagPageState extends State<ImageTagPage> {
   }
 
   Widget _buildVibeEncodingsBlock(List<String> encodings, bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).surface;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(

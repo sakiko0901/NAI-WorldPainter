@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/di/injection.dart';
@@ -94,7 +95,7 @@ class _VibeEncodingLibraryPageState extends State<VibeEncodingLibraryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return StudioScaffold(
       appBar: AppBar(title: const Text('Vibe 编码库')),
       body: _vm.isLoading
           ? const Center(child: CupertinoActivityIndicator())

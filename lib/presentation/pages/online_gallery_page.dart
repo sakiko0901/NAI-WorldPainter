@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,6 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/online_gallery_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:nai_huishi/presentation/widgets/online_gallery_image.dart';
-import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 /// Online references are a separate route and never touch local generation
@@ -300,14 +300,10 @@ class _OnlineGalleryScreenState extends State<OnlineGalleryScreen> {
     final theme = Theme.of(context);
     final showingFavorites = _viewModel.isShowingFavorites;
     final visibleItems = _viewModel.visibleItems;
-    return Scaffold(
+    return StudioScaffold(
       key: const ValueKey('online-gallery-screen'),
       appBar: AppBar(
         title: const Text('在线图库', maxLines: 1, overflow: TextOverflow.ellipsis),
-        flexibleSpace: const FrostedSurface(
-          radius: 0,
-          child: SizedBox.expand(),
-        ),
         actions: [
           IconButton(
             key: const ValueKey('online-gallery-favorites'),
@@ -349,7 +345,6 @@ class _OnlineGalleryScreenState extends State<OnlineGalleryScreen> {
       ),
       body: Stack(
         children: [
-          const Positioned.fill(child: StudioBackground()),
           SafeArea(
             top: false,
             child: BackdropGroup(
@@ -1439,7 +1434,7 @@ class _OnlineGalleryDetailPageState extends State<OnlineGalleryDetailPage> {
             item.media.isEmpty ? item.mediaCount : item.media.length;
         final loading = snapshot.connectionState != ConnectionState.done;
         final error = snapshot.hasError;
-        return Scaffold(
+        return StudioScaffold(
           key: const ValueKey('online-gallery-detail'),
           appBar: AppBar(
             title: Text(
@@ -1524,7 +1519,6 @@ class _OnlineGalleryDetailPageState extends State<OnlineGalleryDetailPage> {
           ),
           body: Stack(
             children: [
-              const Positioned.fill(child: StudioBackground()),
               SafeArea(
                 top: false,
                 child: loading

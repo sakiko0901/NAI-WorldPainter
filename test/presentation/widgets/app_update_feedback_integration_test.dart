@@ -128,8 +128,7 @@ void main() {
   final manualFeedback =
       find.byKey(const ValueKey('app-update-check-feedback'));
 
-  testWidgets('a real completed startup equality shows one three-second notice',
-      (tester) async {
+  testWidgets('a real completed startup equality stays silent', (tester) async {
     await host(tester);
     final startup = service.initialize();
     await tester.pumpAndSettle();
@@ -146,9 +145,7 @@ void main() {
     expect(service.isLastCheckResultStale, isFalse);
     expect(service.lastCheckResult!.origin, AppUpdateCheckOrigin.startup);
     expect(service.lastCheckResult!.completedAt, now);
-    expect(currentNotice, findsOneWidget);
-    expect(tester.widget<SnackBar>(currentNotice).duration,
-        const Duration(seconds: 3));
+    expect(currentNotice, findsNothing);
     expect(automaticDialog, findsNothing);
 
     await tester.pump(const Duration(seconds: 4));
@@ -195,7 +192,7 @@ void main() {
     await tester.pumpAndSettle();
     await startup;
     final successfulAt = service.lastSuccessfulCheckAt;
-    expect(currentNotice, findsOneWidget);
+    expect(currentNotice, findsNothing);
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     await openPage(tester);

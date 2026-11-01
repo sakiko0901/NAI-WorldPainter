@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -86,7 +87,7 @@ class _DanbooruTagSearchPageState extends State<DanbooruTagSearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return StudioScaffold(
       appBar: AppBar(title: Text('Danbooru 查词')),
       body: SafeArea(
         child: Column(

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -345,7 +346,7 @@ class _ArtistPromptManagerPageState extends State<ArtistPromptManagerPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final artists = _vm.filteredArtists;
-    return Scaffold(
+    return StudioScaffold(
       appBar: AppBar(
         title: const Text('画师串管理'),
         actions: [
