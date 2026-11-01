@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
 import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_brush_sheet.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
@@ -2607,7 +2608,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       // Flutter 3.47 can retain stale Slider semantics parents when disabled
       // offstage (flutter/flutter#193706). Remount only the hidden row; values
       // live in the workspace state, and visible/menu animations stay intact.
-      key: ValueKey('inpaint-parameter-$label-${_busy && !_workspaceMenuExpanded}'),
+      key: ValueKey(
+          'inpaint-parameter-$label-${_busy && !_workspaceMenuExpanded}'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(children: [
@@ -2893,8 +2895,8 @@ class _InpaintCharacterPromptCardState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextField(
-                      key: ValueKey(
+                    PromptTagField(
+                      fieldKey: ValueKey(
                           'inpaint-character-prompt-${widget.roleNumber}'),
                       controller: _promptController,
                       enabled: widget.enabled,
@@ -2913,8 +2915,8 @@ class _InpaintCharacterPromptCardState
                           widget.onChanged(character.copyWith(prompt: value)),
                     ),
                     const SizedBox(height: 8),
-                    TextField(
-                      key: ValueKey(
+                    PromptTagField(
+                      fieldKey: ValueKey(
                           'inpaint-character-negative-${widget.roleNumber}'),
                       controller: _negativeController,
                       enabled: widget.enabled,

@@ -19,6 +19,7 @@ import 'package:nai_huishi/presentation/pages/image_tag_page.dart';
 import 'package:nai_huishi/presentation/pages/official_upscale_page.dart';
 import 'package:nai_huishi/presentation/pages/online_gallery_page.dart';
 import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
+import 'package:nai_huishi/presentation/pages/tag_completion_settings_page.dart';
 import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/tools/tools_quota_card.dart';
@@ -205,6 +206,15 @@ class _SettingsPageState extends State<SettingsPage> {
               _SettingsGroup(
                 title: '素材与提示词',
                 children: [
+                  _SettingsTile(
+                    icon: CupertinoIcons.text_cursor,
+                    title: '标签补全',
+                    subtitle: '完整离线词库、中文释义与在线补充',
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute(
+                          builder: (_) => const TagCompletionSettingsPage()),
+                    ),
+                  ),
                   _SettingsTile(
                     icon: CupertinoIcons.photo_on_rectangle,
                     title: '在线图库',

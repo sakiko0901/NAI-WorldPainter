@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
 import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
 import 'package:nai_huishi/presentation/widgets/studio_select.dart';
 import 'package:path_provider/path_provider.dart';
@@ -2984,124 +2985,11 @@ class _CharacterControlSectionState extends State<_CharacterControlSection>
                           required initialValue,
                           required onSubmitted,
                         }) =>
-                            showModalBottomSheet<void>(
+                            PromptEditorField.openExpandedEditor(
                           context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (ctx) {
-                            final controller = TextEditingController(
-                              text: initialValue,
-                            );
-                            final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
-                            final theme = Theme.of(ctx);
-                            return Padding(
-                              padding: EdgeInsets.only(bottom: bottom),
-                              child: Container(
-                                constraints: BoxConstraints(
-                                  maxHeight:
-                                      MediaQuery.sizeOf(ctx).height * 0.88,
-                                ),
-                                margin: const EdgeInsets.fromLTRB(
-                                  12,
-                                  0,
-                                  12,
-                                  12,
-                                ),
-                                padding: const EdgeInsets.fromLTRB(
-                                  18,
-                                  12,
-                                  18,
-                                  18,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.surface,
-                                  borderRadius: BorderRadius.circular(28),
-                                  border: Border.all(
-                                    color: theme.colorScheme.onSurface
-                                        .withValues(alpha: 0.08),
-                                  ),
-                                ),
-                                child: SafeArea(
-                                  top: false,
-                                  child: Column(
-                                    children: [
-                                      Container(
-                                        width: 44,
-                                        height: 5,
-                                        decoration: BoxDecoration(
-                                          color: theme
-                                              .colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.35),
-                                          borderRadius:
-                                              BorderRadius.circular(99),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              title,
-                                              style: TextStyle(
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.w800,
-                                                color:
-                                                    theme.colorScheme.onSurface,
-                                              ),
-                                            ),
-                                          ),
-                                          IconButton(
-                                            onPressed: () =>
-                                                Navigator.of(ctx).pop(),
-                                            icon: const Icon(
-                                              CupertinoIcons.xmark,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Expanded(
-                                        child: TextField(
-                                          controller: controller,
-                                          autofocus: true,
-                                          minLines: null,
-                                          maxLines: null,
-                                          expands: true,
-                                          textAlignVertical:
-                                              TextAlignVertical.top,
-                                          style: const TextStyle(
-                                            fontSize: 15,
-                                            height: 1.6,
-                                          ),
-                                          decoration: const InputDecoration(
-                                            hintText: '请输入提示词...',
-                                            alignLabelWithHint: true,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 14),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: FilledButton.icon(
-                                          onPressed: () async {
-                                            await onSubmitted(
-                                              controller.text,
-                                            );
-                                            if (!ctx.mounted) return;
-                                            Navigator.of(ctx).pop();
-                                          },
-                                          icon: const Icon(
-                                            CupertinoIcons.check_mark,
-                                          ),
-                                          label: const Text('完成'),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+                          title: title,
+                          initialValue: initialValue,
+                          onSubmitted: onSubmitted,
                         ),
                       ),
                 ],
@@ -3380,7 +3268,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                     children: [
                       Stack(
                         children: [
-                          TextField(
+                          PromptTagField(
                             controller: _promptController,
                             focusNode: _promptFocusNode,
                             minLines: 10,
@@ -3441,7 +3329,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                       ),
                       Stack(
                         children: [
-                          TextField(
+                          PromptTagField(
                             controller: _ucController,
                             focusNode: _ucFocusNode,
                             minLines: 10,

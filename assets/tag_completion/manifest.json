@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "version": "2026-11-01.1",
+  "tags": 400348,
+  "aliases": 71504,
+  "translations": 316443,
+  "size": 106962944,
+  "compressedSize": 42489472,
+  "sha256": "71f962b0c2ea7db1f5db88afd161cf739b2e3f7b6adf28382e94677c34cafecb",
+  "compressedSha256": "3527cd461c68853a5eee16178a9265f25653e78cf00fdfc445c063da55f6a578",
+  "sources": [
+    {
+      "url": "https://github.com/Aaalice233/Aaalice_NAI_Launcher",
+      "commit": "60b2129308de8b04df0798dee36ce21e7e6f3872",
+      "sha256": "9b9693af5f6cfafda2ed8d85488b0a6c3741b0c589da935291b20dff439a2288",
+      "tags": 221787,
+      "aliases": 71504
+    },
+    {
+      "url": "https://github.com/ffdkj/ffdkj-Danbooru_Tag-Chinese-English-Translation-Table",
+      "commit": "3049e201002a64702873d7f9f3cc7cb8c45ea325",
+      "sha256": "cd7aa3fa9a2b6153b04a1bce88f98ab3381c20bdabb6348b5fbf1005dad00870"
+    }
+  ]
+}

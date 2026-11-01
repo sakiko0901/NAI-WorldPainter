@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
 
 /// Shared prompt editing surface for text-to-image and local repainting.
 class PromptEditorField extends StatelessWidget {
@@ -32,8 +33,8 @@ class PromptEditorField extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        TextField(
-          key: fieldKey,
+        PromptTagField(
+          fieldKey: fieldKey,
           enabled: enabled,
           controller: controller,
           focusNode: focusNode,
@@ -189,7 +190,7 @@ class _ExpandedPromptEditorState extends State<_ExpandedPromptEditor> {
               ),
               const SizedBox(height: 12),
               Expanded(
-                child: TextField(
+                child: PromptTagField(
                   controller: controller,
                   autofocus: true,
                   minLines: null,

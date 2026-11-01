@@ -65,6 +65,7 @@ class DanbooruApiService {
     int limit = 30,
     bool showNsfw = false,
     String? customBaseUrl,
+    CancelToken? cancelToken,
   }) async {
     final body = <String, dynamic>{
       'query': query,
@@ -72,7 +73,7 @@ class DanbooruApiService {
       'limit': limit,
       'show_nsfw': showNsfw,
     };
-    final data = await _post('/api/search', body, customBaseUrl);
+    final data = await _post('/api/search', body, customBaseUrl, cancelToken);
     if (data is! Map) return const [];
     final results = data['results'];
     if (results is! List) return const [];
@@ -91,6 +92,7 @@ class DanbooruApiService {
     int limit = 30,
     bool showNsfw = false,
     String? customBaseUrl,
+    CancelToken? cancelToken,
   }) async {
     if (tags.isEmpty) return const [];
     final body = <String, dynamic>{
@@ -98,7 +100,7 @@ class DanbooruApiService {
       'limit': limit,
       'show_nsfw': showNsfw,
     };
-    final data = await _post('/api/related', body, customBaseUrl);
+    final data = await _post('/api/related', body, customBaseUrl, cancelToken);
     if (data is! List) return const [];
     return data
         .whereType<Map>()
@@ -112,6 +114,7 @@ class DanbooruApiService {
     String path,
     Map<String, dynamic> body,
     String? customBaseUrl,
+    CancelToken? cancelToken,
   ) async {
     final baseUrls = _resolveBaseUrls(customBaseUrl);
     Object? lastError;
@@ -120,6 +123,7 @@ class DanbooruApiService {
         final response = await _dio.post<dynamic>(
           '$base$path',
           data: body,
+          cancelToken: cancelToken,
         );
         if (response.statusCode != null &&
             response.statusCode! >= 200 &&
@@ -128,6 +132,7 @@ class DanbooruApiService {
         }
         lastError = Exception('HTTP ${response.statusCode}');
       } on DioException catch (e) {
+        if (CancelToken.isCancel(e)) rethrow;
         lastError = e;
         // 继续下一个端点
       } catch (e) {

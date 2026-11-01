@@ -53,6 +53,8 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
+    - assets/tag_completion/
+    - assets/tag_completion/licenses/
     - lib/assets/nsfw_knowledge.json
     - assets/style_presets/
     - assets/artist_prompts/
