@@ -12,6 +12,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$ReleaseTag,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$ReleaseNotesPath,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$OutputDirectory,
+    [ValidateSet('Nai-WorldPainter.apk', 'app-release.apk')][string]$ApkAssetName = 'Nai-WorldPainter.apk',
     [string]$BaselineApkPath,
     [string]$ExpectedSignerSha256,
     [Nullable[int]]$BaselineVersionCode,
@@ -190,7 +191,7 @@ try {
         releaseNotes = $notes
         releaseUrl = "$repository/releases/tag/$ReleaseTag"
         apk = [ordered]@{
-            url = "$repository/releases/download/$ReleaseTag/app-release.apk"
+            url = "$repository/releases/download/$ReleaseTag/$ApkAssetName"
             sizeBytes = $apkStream.Length
             sha256 = $apkSha256
             abi = 'arm64-v8a'
@@ -208,7 +209,7 @@ try {
     $temporaryPaths.Add($temporarySums)
     [IO.File]::WriteAllText($temporaryManifest, $json, $utf8)
     $jsonSha256 = (Get-FileHash -LiteralPath $temporaryManifest -Algorithm SHA256).Hash.ToLowerInvariant()
-    $sums = "$apkSha256  app-release.apk`n$jsonSha256  update.json`n"
+    $sums = "$apkSha256  $ApkAssetName`n$jsonSha256  update.json`n"
     [IO.File]::WriteAllText($temporarySums, $sums, $utf8)
     # Publish the manifest locally last; never replace an existing output file.
     [IO.File]::Move($temporarySums, $sumsPath)
@@ -217,7 +218,7 @@ try {
     $createdOutputs.Add($manifestPath)
     [pscustomobject]@{
         ApkPath = $resolvedApk
-        ApkAssetName = 'app-release.apk'
+        ApkAssetName = $ApkAssetName
         ManifestPath = $manifestPath
         ChecksumsPath = $sumsPath
         VersionName = $candidate.VersionName

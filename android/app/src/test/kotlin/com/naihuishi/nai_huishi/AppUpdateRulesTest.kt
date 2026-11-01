@@ -33,6 +33,14 @@ class AppUpdateRulesTest {
         }
     }
 
+    @Test fun acceptsBrandedApkName() {
+        val data = manifest()
+        @Suppress("UNCHECKED_CAST")
+        val apk = data["apk"] as MutableMap<String, Any>
+        apk["url"] = (apk["url"] as String).replace("app-release.apk", "Nai-WorldPainter.apk")
+        assertTrue(AppUpdateRules.parseManifest(data).apkUrl.endsWith("/Nai-WorldPainter.apk"))
+    }
+
     @Test fun parsesAndRoundTripsOfficialRelease() {
         val parsed = AppUpdateRules.parseManifest(manifest())
         assertEquals(220053L, parsed.versionCode)

@@ -156,3 +156,10 @@ powershell.exe -NoProfile -File '.\scripts\Test-AppUpdateManifest.ps1'
 工具语义依据 [Android apksigner 文档](https://developer.android.com/tools/apksigner)（verify 与证书输出）和 [AAPT2 dump 文档](https://developer.android.com/tools/aapt2#dump)（badging 读取 APK 清单）；脚本默认调用 SDK 的 `aapt dump badging`。
 
 V1 仅处理完整 APK。差分下载、补丁合成、更多 ABI、其他渠道及签名轮换留待后续版本单独设计和验证。
+
+## APK 文件名（2026-11-01）
+
+对外交付文件统一为 `Nai-WorldPainter.apk`。新客户端接受同发布下的该名称及旧名称。
+首次迁移的发布保留同字节 `app-release.apk` 兼容资源，并在 `update.json` 中使用该旧地址，
+使已安装 220053/220054 的更新器仍能完成此次升级。生成脚本默认输出新名称；
+此次兼容清单显式传入 `-ApkAssetName app-release.apk`。本地交付与发布主下载均使用新名称。

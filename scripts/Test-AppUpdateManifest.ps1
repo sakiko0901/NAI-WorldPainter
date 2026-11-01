@@ -121,7 +121,7 @@ exit 0
     Assert-True ($manifest.schemaVersion -eq 1 -and $manifest.channel -ceq 'stable') 'Wrong release schema/channel'
     Assert-True ($manifest.packageName -ceq 'com.naihuishi.nai_huishi') 'Wrong package'
     Assert-True ($manifest.releaseUrl -ceq 'https://github.com/sakiko0901/NAI-WorldPainter/releases/tag/v1.2.5-220053') 'Wrong release URL'
-    Assert-True ($manifest.apk.url -ceq 'https://github.com/sakiko0901/NAI-WorldPainter/releases/download/v1.2.5-220053/app-release.apk') 'Wrong APK URL'
+    Assert-True ($manifest.apk.url -ceq 'https://github.com/sakiko0901/NAI-WorldPainter/releases/download/v1.2.5-220053/Nai-WorldPainter.apk') 'Wrong APK URL'
     Assert-True ($manifest.apk.sha256 -ceq $candidateHash) 'APK SHA-256 did not use actual bytes'
     Assert-True ($manifest.apk.sizeBytes -eq (Get-Item -LiteralPath $candidatePath).Length) 'APK size did not use actual bytes'
     Assert-True ($manifest.apk.abi -ceq 'arm64-v8a' -and $manifest.apk.minSdk -eq 24) 'Wrong platform metadata'
@@ -133,7 +133,7 @@ exit 0
     Assert-True ($apkKeys -ceq 'abi,minSdk,sha256,sizeBytes,url') 'Unexpected APK fields'
     $sums = [IO.File]::ReadAllText($result.ChecksumsPath, $utf8)
     $jsonHash = (Get-FileHash -LiteralPath $result.ManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-True ($sums -ceq "$candidateHash  app-release.apk`n$jsonHash  update.json`n") 'Incorrect checksums'
+    Assert-True ($sums -ceq "$candidateHash  Nai-WorldPainter.apk`n$jsonHash  update.json`n") 'Incorrect checksums'
     Assert-True ((Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $candidateHash) 'Candidate was modified'
     Assert-True ((Get-FileHash -LiteralPath $baselinePath -Algorithm SHA256).Hash -ceq $baselineHash) 'Baseline was modified'
     $caseCount++

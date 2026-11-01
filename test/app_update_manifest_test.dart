@@ -22,6 +22,19 @@ Map<String, Object> manifestJson({int code = 11}) => {
     };
 
 void main() {
+  test('accepts the branded APK filename within the exact same release', () {
+    final json = manifestJson();
+    final apk = json['apk'] as Map;
+    apk['url'] = (apk['url'] as String)
+        .replaceFirst('app-release.apk', 'Nai-WorldPainter.apk');
+    expect(
+        AppUpdateManifest.fromJson(json)
+            .apk
+            .url
+            .path
+            .endsWith('/Nai-WorldPainter.apk'),
+        true);
+  });
   test('stable release survives serialization with its exact artifact identity',
       () {
     final value = AppUpdateManifest.fromJson(manifestJson());

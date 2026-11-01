@@ -75,8 +75,10 @@ class AppUpdateManifest {
     final apkJson = json['apk'];
     if (apkJson is! Map) throw const FormatException('Missing APK metadata');
     final apk = AppUpdateApk.fromJson(Map<Object?, Object?>.from(apkJson));
-    if (apk.url.path !=
-        '$repositoryPath/releases/download/$tag/app-release.apk') {
+    if (!{
+      '$repositoryPath/releases/download/$tag/app-release.apk',
+      '$repositoryPath/releases/download/$tag/Nai-WorldPainter.apk'
+    }.contains(apk.url.path)) {
       throw const FormatException('APK must belong to the same release');
     }
     return AppUpdateManifest(
