@@ -266,6 +266,47 @@ class AppUpdateDownload {
       );
 }
 
+enum AppUpdateCheckOrigin { startup, resume, manual }
+
+enum AppUpdateCheckOutcome {
+  upToDate,
+  ahead,
+  available,
+  ignored,
+  incompatible,
+  failed,
+}
+
+/// One completed remote check. Its identity is independent of download state.
+/// Results are process-local so restoring an APK cannot replay a notification.
+class AppUpdateCheckResult {
+  final int revision;
+  final AppUpdateCheckOrigin origin;
+  final AppUpdateCheckOutcome outcome;
+  final DateTime completedAt;
+  final bool notifyUser;
+  final String? message;
+  final AppUpdateManifest? manifest;
+
+  const AppUpdateCheckResult({
+    required this.revision,
+    required this.origin,
+    required this.outcome,
+    required this.completedAt,
+    this.notifyUser = true,
+    this.message,
+    this.manifest,
+  });
+}
+
+enum AppUpdateFailureStage {
+  check,
+  download,
+  verification,
+  installation,
+  state
+}
+
 enum UpdatePhase {
   idle,
   checking,

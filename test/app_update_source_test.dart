@@ -86,9 +86,39 @@ void main() {
               (_) async => ResponseBody.fromString('not a manifest', status)));
       addTearDown(source.dispose);
       await expectLater(
-          source.fetchLatest(), throwsA(isA<AppUpdateException>()));
+          source.fetchLatest(),
+          throwsA(isA<AppUpdateException>().having(
+            (error) => error.reason,
+            'reason',
+            status == 404
+                ? AppUpdateExceptionReason.missingManifest
+                : status == 403 || status == 429
+                    ? AppUpdateExceptionReason.rateLimited
+                    : AppUpdateExceptionReason.unavailable,
+          )));
     });
   }
+
+  test('missing and malformed manifests report unavailable version information',
+      () async {
+    for (final status in [404, 200]) {
+      final source = AppUpdateSource(
+          adapter: _Adapter(
+              (_) async => ResponseBody.fromString('not JSON', status)));
+      addTearDown(source.dispose);
+      await expectLater(
+          source.fetchLatest(),
+          throwsA(isA<AppUpdateException>()
+              .having(
+                  (error) => error.message, 'message', startsWith('暂时无法获取版本信息'))
+              .having(
+                  (error) => error.reason,
+                  'reason',
+                  status == 404
+                      ? AppUpdateExceptionReason.missingManifest
+                      : AppUpdateExceptionReason.invalidManifest)));
+    }
+  });
 
   test('rejects oversized bodies with and without content length', () async {
     for (final knownLength in [true, false]) {
