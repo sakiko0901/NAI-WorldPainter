@@ -300,6 +300,176 @@ void main() {
     expect(base.getPixel(6, 5).r, 255);
   });
 
+  test('四倍缩小回贴保留棋盘格的平均亮度', () {
+    final layer = img.Image(width: 32, height: 32, numChannels: 4);
+    for (final pixel in layer) {
+      final value = (pixel.x + pixel.y).isEven ? 255 : 0;
+      pixel.setRgba(value, value, value, 255);
+    }
+    final composite = rasterizer.composeLayers(
+      source: source(),
+      strokes: const [],
+      layers: [
+        InpaintRasterLayer(
+          image: layer,
+          worldRect: const InpaintViewport(x: 3, y: 5, width: 8, height: 8),
+        ),
+      ],
+    );
+    for (var y = 5; y < 13; y++) {
+      for (var x = 3; x < 11; x++) {
+        final pixel = composite.getPixel(x, y);
+        expect([pixel.r, pixel.g, pixel.b], everyElement(closeTo(128, 1)));
+        expect(pixel.a, 255);
+      }
+    }
+    expect(composite.getPixel(2, 5).r, 20);
+    expect(layer.getPixel(0, 0).r, 255);
+  });
+
+  test('缩小不透明细线时比面积平均保留更多对比度且不产生过冲', () {
+    final layer = img.Image(width: 64, height: 1, numChannels: 4);
+    for (final pixel in layer) {
+      final value = pixel.x % 10 < 5 ? 200 : 40;
+      pixel.setRgba(value, value, value, 255);
+    }
+    final composite = rasterizer.composeLayers(
+      source: source(),
+      strokes: const [],
+      layers: [
+        InpaintRasterLayer(
+          image: layer,
+          worldRect: const InpaintViewport(x: 0, y: 0, width: 16, height: 1),
+        ),
+      ],
+    );
+    // The same footprints with area averaging give 80 and 160.
+    expect(composite.getPixel(6, 0).r, lessThan(80));
+    expect(composite.getPixel(8, 0).r, greaterThan(160));
+    for (var x = 0; x < 16; x++) {
+      expect(composite.getPixel(x, 0).r, inInclusiveRange(40, 200));
+    }
+  });
+
+  test('非整数缩小按覆盖面积分配边界像素，支持单轴缩放', () {
+    for (final vertical in [false, true]) {
+      final layer = img.Image(
+        width: vertical ? 1 : 3,
+        height: vertical ? 3 : 1,
+        numChannels: 4,
+      );
+      img.fill(layer, color: img.ColorRgba8(0, 0, 0, 255));
+      layer.setPixelRgba(0, 0, 255, 255, 255, 255);
+      final composite = rasterizer.composeLayers(
+        source: source(),
+        strokes: const [],
+        layers: [
+          InpaintRasterLayer(
+            image: layer,
+            worldRect: InpaintViewport(
+              x: 0,
+              y: 0,
+              width: vertical ? 1 : 2,
+              height: vertical ? 2 : 1,
+            ),
+          ),
+        ],
+      );
+      // The first destination pixel covers one white and half a black pixel.
+      expect(composite.getPixel(0, 0).r, 170);
+      expect(composite.getPixel(vertical ? 0 : 1, vertical ? 1 : 0).r, 0);
+    }
+  });
+
+  test('一轴缩小另一轴放大时仍滤除高频条纹', () {
+    for (final vertical in [false, true]) {
+      final layer = img.Image(
+        width: vertical ? 2 : 4,
+        height: vertical ? 4 : 2,
+        numChannels: 4,
+      );
+      for (final pixel in layer) {
+        final coordinate = vertical ? pixel.y : pixel.x;
+        final value = coordinate.isEven ? 255 : 0;
+        pixel.setRgba(value, value, value, 255);
+      }
+      final composite = rasterizer.composeLayers(
+        source: source(),
+        strokes: const [],
+        layers: [
+          InpaintRasterLayer(
+            image: layer,
+            worldRect: InpaintViewport(
+              x: 0,
+              y: 0,
+              width: vertical ? 4 : 2,
+              height: vertical ? 2 : 4,
+            ),
+          ),
+        ],
+      );
+      for (var y = 0; y < (vertical ? 2 : 4); y++) {
+        for (var x = 0; x < (vertical ? 4 : 2); x++) {
+          expect(composite.getPixel(x, y).r, 128);
+        }
+      }
+    }
+  });
+
+  test('缩小透明图层按 alpha 加权颜色并保留底图贡献', () {
+    final layer = img.Image(width: 4, height: 1, numChannels: 4);
+    img.fill(layer, color: img.ColorRgba8(0, 255, 0, 0));
+    layer.setPixelRgba(0, 0, 255, 0, 0, 255);
+    layer.setPixelRgba(1, 0, 0, 0, 255, 128);
+    final base = img.Image(width: 2, height: 1, numChannels: 4);
+    img.fill(base, color: img.ColorRgba8(0, 0, 0, 255));
+    final composite = rasterizer.composeLayers(
+      source: base,
+      strokes: const [],
+      layers: [
+        InpaintRasterLayer(
+          image: layer,
+          worldRect: const InpaintViewport(x: 0, y: 0, width: 2, height: 1),
+        ),
+      ],
+    );
+    final pixel = composite.getPixel(0, 0);
+    expect(pixel.r, closeTo(128, 1));
+    expect(pixel.g, 0);
+    expect(pixel.b, closeTo(64, 1));
+    expect(pixel.a, 255);
+    expect(composite.getPixel(1, 0).r, 0);
+    expect(composite.getPixel(1, 0).g, 0);
+    expect(base.getPixel(0, 0).r, 0);
+  });
+
+  test('缩小大图层时遮罩边缘仍按面积覆盖合成', () {
+    final layer = img.Image(width: 32, height: 1, numChannels: 4);
+    for (final pixel in layer) {
+      if (pixel.x >= 13) {
+        pixel.setRgba(255, 0, 0, 255);
+      } else {
+        pixel.setRgba(0, 255, 0, 0);
+      }
+    }
+    final base = img.Image(width: 8, height: 1, numChannels: 4);
+    img.fill(base, color: img.ColorRgba8(0, 0, 0, 255));
+    final composite = rasterizer.composeLayers(
+      source: base,
+      strokes: const [],
+      layers: [
+        InpaintRasterLayer(
+          image: layer,
+          worldRect: const InpaintViewport(x: 0, y: 0, width: 8, height: 1),
+        ),
+      ],
+    );
+    expect(composite.getPixel(2, 0).r, 0);
+    expect(composite.getPixel(3, 0).r, closeTo(191, 1));
+    expect(composite.getPixel(3, 0).g, 0);
+    expect(composite.getPixel(4, 0).r, 255);
+  });
+
   test('有底图时羽化遮罩内外边缘并平滑触及请求框的边界', () {
     final base = source();
     final original = img.Image.from(base);

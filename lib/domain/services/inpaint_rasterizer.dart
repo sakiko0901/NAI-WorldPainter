@@ -359,7 +359,7 @@ class InpaintRasterizer {
       final height = math.max(1, layer.worldRect.height.round());
       final sized = layer.image.width == width && layer.image.height == height
           ? layer.image
-          : _resizePremultipliedLinear(layer.image, width, height);
+          : _resizePremultiplied(layer.image, width, height);
       img.compositeImage(
         output,
         sized,
@@ -760,6 +760,157 @@ class InpaintRasterizer {
     }
     return distances;
   }
+
+  img.Image _resizePremultiplied(img.Image source, int width, int height) {
+    // Filter the full pixel footprint on shrinking axes before any enlargement.
+    // This also handles layers that shrink on one axis and grow on the other.
+    var filtered = source;
+    if (width < source.width || height < source.height) {
+      filtered = _downsample(
+        source,
+        math.min(width, source.width),
+        math.min(height, source.height),
+      );
+    }
+    if (filtered.width == width && filtered.height == height) return filtered;
+    return _resizePremultipliedLinear(filtered, width, height);
+  }
+
+  img.Image _downsample(img.Image source, int width, int height) {
+    final resized = _resampleOpaqueAxis(
+      _resampleOpaqueAxis(source, width, horizontal: true),
+      height,
+      horizontal: false,
+    );
+    final scaleX = source.width / width;
+    final scaleY = source.height / height;
+    final area = scaleX * scaleY;
+    final pixel = source.getPixel(0, 0);
+    final detail = resized.getPixel(0, 0);
+    for (var y = 0; y < height; y++) {
+      final top = y * scaleY;
+      final bottom = math.min((y + 1) * scaleY, source.height.toDouble());
+      for (var x = 0; x < width; x++) {
+        resized.getPixel(x, y, detail);
+        if (detail.a == 255) continue;
+        // Preserve area coverage where the sharper kernel crosses a mask
+        // transition or the edge of the generated patch.
+        final left = x * scaleX;
+        final right = math.min((x + 1) * scaleX, source.width.toDouble());
+        var alpha = 0.0;
+        var red = 0.0;
+        var green = 0.0;
+        var blue = 0.0;
+        for (var sy = top.floor(); sy < bottom.ceil(); sy++) {
+          final overlapY = math.min(bottom, sy + 1) - math.max(top, sy);
+          for (var sx = left.floor(); sx < right.ceil(); sx++) {
+            final overlapX = math.min(right, sx + 1) - math.max(left, sx);
+            source.getPixel(sx, sy, pixel);
+            final weightedAlpha = pixel.a * overlapX * overlapY;
+            alpha += weightedAlpha;
+            red += pixel.r * weightedAlpha;
+            green += pixel.g * weightedAlpha;
+            blue += pixel.b * weightedAlpha;
+          }
+        }
+        final alphaByte = (alpha / area).round().clamp(0, 255);
+        if (alphaByte == 0) continue;
+        // Unpremultiply only after filtering so transparent RGB cannot bleed.
+        resized.setPixelRgba(
+          x,
+          y,
+          (red / alpha).round().clamp(0, 255),
+          (green / alpha).round().clamp(0, 255),
+          (blue / alpha).round().clamp(0, 255),
+          alphaByte,
+        );
+      }
+    }
+    return resized;
+  }
+
+  img.Image _resampleOpaqueAxis(
+    img.Image source,
+    int length, {
+    required bool horizontal,
+  }) {
+    final sourceLength = horizontal ? source.width : source.height;
+    if (length == sourceLength) return source;
+    final output = img.Image(
+      width: horizontal ? length : source.width,
+      height: horizontal ? source.height : length,
+      numChannels: 4,
+    );
+    final lineCount = horizontal ? source.height : source.width;
+    final scale = sourceLength / length;
+    final radius = 2 * scale;
+    final pixel = source.getPixel(0, 0);
+    for (var position = 0; position < length; position++) {
+      final center = (position + 0.5) * scale - 0.5;
+      final first = (center - radius).ceil();
+      final last = (center + radius).floor();
+      if (first < 0 || last >= sourceLength) continue;
+
+      final weights = Float64List(last - first + 1);
+      var weightSum = 0.0;
+      for (var index = first; index <= last; index++) {
+        final distance = (index - center) * math.pi / scale;
+        final weight = _sinc(distance) * _sinc(distance / 2);
+        weights[index - first] = weight;
+        weightSum += weight;
+      }
+      final footprintStart = (position * scale).floor();
+      final footprintEnd = ((position + 1) * scale).ceil();
+      for (var line = 0; line < lineCount; line++) {
+        var opaque = true;
+        var red = 0.0;
+        var green = 0.0;
+        var blue = 0.0;
+        var minRed = 255, minGreen = 255, minBlue = 255;
+        var maxRed = 0, maxGreen = 0, maxBlue = 0;
+        for (var index = first; index <= last; index++) {
+          source.getPixel(
+            horizontal ? index : line,
+            horizontal ? line : index,
+            pixel,
+          );
+          if (pixel.a != 255) {
+            opaque = false;
+            break;
+          }
+          final weight = weights[index - first];
+          final r = pixel.r.toInt();
+          final g = pixel.g.toInt();
+          final b = pixel.b.toInt();
+          red += r * weight;
+          green += g * weight;
+          blue += b * weight;
+          if (index >= footprintStart && index < footprintEnd) {
+            minRed = math.min(minRed, r);
+            minGreen = math.min(minGreen, g);
+            minBlue = math.min(minBlue, b);
+            maxRed = math.max(maxRed, r);
+            maxGreen = math.max(maxGreen, g);
+            maxBlue = math.max(maxBlue, b);
+          }
+        }
+        if (!opaque) continue;
+        // Negative Lanczos weights can overshoot a high-contrast edge.
+        // Bound the result to the colors that the output pixel covers.
+        output.setPixelRgba(
+          horizontal ? position : line,
+          horizontal ? line : position,
+          (red / weightSum).round().clamp(minRed, maxRed),
+          (green / weightSum).round().clamp(minGreen, maxGreen),
+          (blue / weightSum).round().clamp(minBlue, maxBlue),
+          255,
+        );
+      }
+    }
+    return output;
+  }
+
+  double _sinc(double value) => value == 0 ? 1 : math.sin(value) / value;
 
   img.Image _resizePremultipliedLinear(
     img.Image source,
