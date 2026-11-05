@@ -9,10 +9,14 @@ import 'package:nai_huishi/data/datasources/remote/official_novelai_api_service.
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/novelai_connection.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
+import 'package:nai_huishi/presentation/widgets/api_config_widgets.dart';
+import 'package:nai_huishi/presentation/widgets/api_endpoint_editor.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
-import 'package:uuid/uuid.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 
 class ApiConfigPage extends StatefulWidget {
   const ApiConfigPage({super.key});
@@ -53,29 +57,69 @@ class _ApiConfigPageState extends State<ApiConfigPage>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          title: const Text('API 与账号'),
-          bottom: TabBar(
-            controller: _tabController,
-            tabs: const [
-              Tab(text: 'NovelAI'),
-              Tab(text: 'GPT'),
-              Tab(text: 'Nano Banana'),
-            ],
+  Widget build(BuildContext context) {
+    final glass = FrostedTheme.of(context);
+    return StudioScaffold(
+      appBar: AppBar(
+        title: const Text('API 与账号'),
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+      ),
+      body: SafeArea(
+        top: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: FrostedSurface(
+                    radius: 18,
+                    padding: const EdgeInsets.all(4),
+                    child: TabBar(
+                      controller: _tabController,
+                      dividerColor: Colors.transparent,
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      indicator: BoxDecoration(
+                        color: glass.selection,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      labelColor: glass.onSelection,
+                      unselectedLabelColor:
+                          Theme.of(context).colorScheme.onSurfaceVariant,
+                      labelStyle: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600),
+                      labelPadding: EdgeInsets.zero,
+                      tabs: const [
+                        Tab(text: 'NovelAI'),
+                        Tab(text: 'GPT'),
+                        Tab(text: 'Nano Banana'),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : TabBarView(
+                          controller: _tabController,
+                          children: const [
+                            _ProviderTab(provider: ImageProviderType.novelAi),
+                            _ProviderTab(provider: ImageProviderType.gpt),
+                            _ProviderTab(
+                                provider: ImageProviderType.nanoBanana),
+                          ],
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                controller: _tabController,
-                children: const [
-                  _ProviderTab(provider: ImageProviderType.novelAi),
-                  _ProviderTab(provider: ImageProviderType.gpt),
-                  _ProviderTab(provider: ImageProviderType.nanoBanana),
-                ],
-              ),
-      );
+      ),
+    );
+  }
 }
 
 class _ProviderTab extends StatefulWidget {
@@ -112,29 +156,68 @@ class _ProviderTabState extends State<_ProviderTab> {
     final activeId = _vm.activeEndpointId(provider);
     final activeModel = _vm.activeModel(provider);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+      key: PageStorageKey('api-provider-${provider.name}'),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
-        for (final endpoint in endpoints)
-          endpoint.id == AppConstants.novelAiOfficialEndpointId
-              ? _OfficialNovelAiCard(
-                  endpoint: endpoint,
-                  isActive: endpoint.id == activeId,
-                  activeModel: activeModel,
-                )
-              : _EndpointCard(
-                  provider: provider,
-                  endpoint: endpoint,
-                  isActive: endpoint.id == activeId,
-                  activeModel: activeModel,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+          child: Text('渠道与模型', style: Theme.of(context).textTheme.labelLarge),
+        ),
+        FrostedSurface(
+          radius: 22,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < endpoints.length; i++) ...[
+                if (i > 0)
+                  Divider(
+                      height: 1,
+                      indent: 16,
+                      endIndent: 16,
+                      color: FrostedTheme.of(context).border),
+                if (endpoints[i].id == AppConstants.novelAiOfficialEndpointId)
+                  _OfficialNovelAiCard(
+                    key: ValueKey(endpoints[i].id),
+                    endpoint: endpoints[i],
+                    isActive: endpoints[i].id == activeId,
+                    activeModel: activeModel,
+                  )
+                else
+                  _EndpointCard(
+                    key: ValueKey(endpoints[i].id),
+                    provider: provider,
+                    endpoint: endpoints[i],
+                    isActive: endpoints[i].id == activeId,
+                    activeModel: activeModel,
+                  ),
+              ],
+              if (endpoints.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('添加一个渠道，填写连接信息与模型即可开始使用。',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
                 ),
-        if (provider != ImageProviderType.novelAi) ...[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => _showEditDialog(context, provider, null),
-            icon: const Icon(CupertinoIcons.add_circled, size: 18),
-            label: const Text('添加中转站'),
+              if (provider != ImageProviderType.novelAi) ...[
+                if (endpoints.isNotEmpty)
+                  Divider(
+                      height: 1,
+                      indent: 16,
+                      endIndent: 16,
+                      color: FrostedTheme.of(context).border),
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: TextButton.icon(
+                    onPressed: () => _showEditDialog(context, provider, null),
+                    icon: const Icon(CupertinoIcons.plus, size: 18),
+                    label: const Text('添加中转站'),
+                  ),
+                ),
+              ],
+            ],
           ),
-        ],
+        ),
       ],
     );
   }
@@ -146,6 +229,7 @@ class _OfficialNovelAiCard extends StatefulWidget {
   final String? activeModel;
 
   const _OfficialNovelAiCard({
+    super.key,
     required this.endpoint,
     required this.isActive,
     required this.activeModel,
@@ -252,9 +336,10 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
         });
       }
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() => _status =
             error.toString().replaceFirst('AppException(null): ', ''));
+      }
     } finally {
       if (mounted) setState(() => _testing = false);
     }
@@ -263,137 +348,104 @@ class _OfficialNovelAiCardState extends State<_OfficialNovelAiCard> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: widget.isActive
-              ? colors.primary.withValues(alpha: .5)
-              : colors.onSurface.withValues(alpha: .08),
-          width: widget.isActive ? 1.2 : .5,
+    return Column(
+      children: [
+        ApiEndpointHeader(
+          onTap: () => setState(() => _expanded = !_expanded),
+          title: _isCustom ? 'NovelAI 自定义渠道' : 'NovelAI 官方',
+          url: _isCustom
+              ? widget.endpoint.baseUrl
+              : ApiConstants.officialImageBaseUrl,
+          active: widget.isActive,
+          expanded: _expanded,
         ),
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            ListTile(
-              onTap: () => setState(() => _expanded = !_expanded),
-              leading: Icon(CupertinoIcons.shield_lefthalf_fill,
-                  color: colors.primary),
-              title: Text(_isCustom ? 'NovelAI 自定义渠道' : 'NovelAI 官方'),
-              subtitle: Text(
-                _isCustom
-                    ? widget.endpoint.baseUrl
-                    : ApiConstants.officialImageBaseUrl,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: Icon(_expanded
-                  ? CupertinoIcons.chevron_up
-                  : CupertinoIcons.chevron_down),
-            ),
-            if (_expanded)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _isCustom
+                      ? '使用自定义 URL 与 API Key，适用于兼容 NovelAI 原生接口的中转平台。'
+                      : 'URL 留空时使用官方渠道，也可填写中转平台的 URL 与 API Key。',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Text(
-                      _isCustom
-                          ? '使用自定义 URL 与 API Key，适用于兼容 NovelAI 原生接口的中转平台。'
-                          : 'URL 留空时使用官方渠道，也可填写中转平台的 URL 与 API Key。',
-                      style: const TextStyle(fontSize: 12),
+                    OutlinedButton.icon(
+                      onPressed: _testing ? null : _editConnection,
+                      icon: const Icon(CupertinoIcons.lock_fill, size: 16),
+                      label: const Text('设置 URL 与 API Key'),
                     ),
-                    const SizedBox(height: 12),
-                    SwitchListTile.adaptive(
-                      key: const ValueKey('novelai-streaming-switch'),
-                      contentPadding: EdgeInsets.zero,
-                      title:
-                          const Text('启用流式传输', style: TextStyle(fontSize: 14)),
-                      subtitle: Text(
-                        _isCustom
-                            ? '实时预览生成进度，需要中转平台支持流式传输。'
-                            : '实时预览生成进度；关闭后仅显示完成的图片。',
-                        style: const TextStyle(fontSize: 12),
+                    if (!_isCustom)
+                      OutlinedButton.icon(
+                        onPressed: _testing ? null : _test,
+                        icon: _testing
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(CupertinoIcons.wifi, size: 16),
+                        label: Text(_testing ? '验证中…' : '验证 Token'),
                       ),
-                      value: widget.endpoint.streamEnabled ?? !_isCustom,
-                      onChanged: _savingStreaming ? null : _setStreaming,
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ...widget.endpoint.models.map((model) => ChoiceChip(
-                              label: Text(model),
-                              selected: widget.isActive &&
-                                  widget.activeModel == model,
-                              onSelected: (_) => _activate(model),
-                            )),
-                        ActionChip(
-                          key: const ValueKey('novelai-add-model'),
-                          avatar: const Icon(CupertinoIcons.plus, size: 16),
-                          label: const Text('新增模型'),
-                          onPressed: _addModel,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: _testing ? null : _editConnection,
-                          icon: const Icon(CupertinoIcons.lock_fill, size: 16),
-                          label: const Text('设置 URL 与 API Key'),
-                        ),
-                        if (!_isCustom)
-                          OutlinedButton.icon(
-                            onPressed: _testing ? null : _test,
-                            icon: _testing
-                                ? const SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2))
-                                : const Icon(CupertinoIcons.wifi, size: 16),
-                            label: Text(_testing ? '验证中…' : '验证 Token'),
-                          ),
-                      ],
-                    ),
-                    if (_status != null) ...[
-                      const SizedBox(height: 10),
-                      Text(_status!,
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: _account == null
-                                  ? colors.onSurfaceVariant
-                                  : Colors.greenAccent.shade400)),
-                    ],
-                    if (!_isCustom && _account != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                          [
-                            if (_account!.tier?.isNotEmpty == true)
-                              '套餐：${_account!.tier}',
-                            if (_account!.anlas != null)
-                              'Anlas：${_account!.anlas}',
-                            if (_account!.v5UsagePercent != null)
-                              'V5 额度：${_account!.v5UsagePercent!.toStringAsFixed(1)}%',
-                          ].join(' · '),
-                          style: TextStyle(
-                              fontSize: 12, color: colors.onSurfaceVariant)),
-                    ],
                   ],
                 ),
-              ),
-          ],
-        ),
-      ),
+                if (_status != null) ...[
+                  const SizedBox(height: 10),
+                  Text(_status!,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: _account == null
+                              ? colors.onSurfaceVariant
+                              : colors.primary)),
+                ],
+                if (!_isCustom && _account != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                      [
+                        if (_account!.tier?.isNotEmpty == true)
+                          '套餐：${_account!.tier}',
+                        if (_account!.anlas != null) 'Anlas：${_account!.anlas}',
+                        if (_account!.v5UsagePercent != null)
+                          'V5 额度：${_account!.v5UsagePercent!.toStringAsFixed(1)}%',
+                      ].join(' · '),
+                      style: TextStyle(
+                          fontSize: 12, color: colors.onSurfaceVariant)),
+                ],
+                const SizedBox(height: 12),
+                SwitchListTile.adaptive(
+                  key: const ValueKey('novelai-streaming-switch'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('启用流式传输', style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    _isCustom
+                        ? '实时预览生成进度，需要中转平台支持流式传输。'
+                        : '实时预览生成进度；关闭后仅显示完成的图片。',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  value: widget.endpoint.streamEnabled ?? !_isCustom,
+                  onChanged: _savingStreaming ? null : _setStreaming,
+                ),
+                const SizedBox(height: 12),
+                ApiModelList(
+                  models: widget.endpoint.models,
+                  activeModel: widget.isActive ? widget.activeModel : null,
+                  onSelected: _activate,
+                  action: TextButton.icon(
+                    key: const ValueKey('novelai-add-model'),
+                    icon: const Icon(CupertinoIcons.plus, size: 16),
+                    label: const Text('新增模型'),
+                    onPressed: _addModel,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -424,8 +476,8 @@ class _NovelAiModelDialogState extends State<_NovelAiModelDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: const Text('新增模型'),
+  Widget build(BuildContext context) => ApiConfigDialog(
+        title: '新增模型',
         content: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -563,8 +615,8 @@ class _NovelAiConnectionDialogState extends State<_NovelAiConnectionDialog> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final custom = NovelAiConnection.isCustomBaseUrl(_url.text);
-    return AlertDialog(
-      title: const Text('NovelAI 渠道配置'),
+    return ApiConfigDialog(
+      title: 'NovelAI 渠道配置',
       content: SingleChildScrollView(
         child: Form(
           key: _formKey,
@@ -639,6 +691,7 @@ class _EndpointCard extends StatefulWidget {
   final String? activeModel;
 
   const _EndpointCard({
+    super.key,
     required this.provider,
     required this.endpoint,
     required this.isActive,
@@ -680,14 +733,16 @@ class _EndpointCardState extends State<_EndpointCard> {
           options: Options(
               headers: {'Authorization': 'Bearer ${widget.endpoint.apiKey}'}));
       stopwatch.stop();
-      if (mounted)
+      if (mounted) {
         setState(
             () => _testStatus = '连接成功 · ${stopwatch.elapsedMilliseconds}ms');
+      }
     } on DioException catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() => _testStatus = error.response == null
             ? '连接失败：${error.type.name}'
             : '服务器返回 ${error.response!.statusCode}，但连接成功');
+      }
     } finally {
       if (mounted) setState(() => _isTesting = false);
     }
@@ -696,183 +751,64 @@ class _EndpointCardState extends State<_EndpointCard> {
   Future<void> _activate(String model) async {
     await sl<SettingsViewModel>()
         .setActive(widget.provider, widget.endpoint.id, model);
-    if (mounted)
+    if (mounted) {
       showFloatingToast(context, '已切换到 ${widget.endpoint.name} · $model',
           icon: CupertinoIcons.checkmark_circle_fill);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final endpoint = widget.endpoint;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: widget.isActive
-                ? colors.primary.withValues(alpha: .5)
-                : colors.onSurface.withValues(alpha: .08)),
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            ListTile(
-              onTap: () => setState(() => _expanded = !_expanded),
-              leading: Icon(
-                  widget.isActive
-                      ? CupertinoIcons.checkmark_circle_fill
-                      : CupertinoIcons.circle,
-                  color: widget.isActive
-                      ? colors.primary
-                      : colors.onSurfaceVariant),
-              title: Text(_displayName(endpoint)),
-              subtitle: Text(
-                  endpoint.baseUrl.isEmpty ? '未填写 Base URL' : endpoint.baseUrl,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-              trailing: Icon(_expanded
-                  ? CupertinoIcons.chevron_up
-                  : CupertinoIcons.chevron_down),
-            ),
-            if (_expanded)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (endpoint.models.isEmpty)
-                        const Text('尚未添加任何模型', style: TextStyle(fontSize: 12))
-                      else
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: endpoint.models
-                              .map((model) => ChoiceChip(
-                                    label: Text(model),
-                                    selected: widget.isActive &&
-                                        widget.activeModel == model,
-                                    onSelected: (_) => _activate(model),
-                                  ))
-                              .toList(),
-                        ),
-                      const SizedBox(height: 12),
-                      Wrap(spacing: 8, children: [
-                        OutlinedButton.icon(
-                            onPressed: _isTesting ? null : _runTest,
-                            icon: const Icon(CupertinoIcons.wifi, size: 16),
-                            label: Text(_isTesting ? '测试中…' : '测试连接')),
-                        OutlinedButton.icon(
-                            onPressed: () => _showEditDialog(
-                                context, widget.provider, endpoint),
-                            icon: const Icon(CupertinoIcons.pencil, size: 16),
-                            label: const Text('编辑')),
-                      ]),
-                      if (_testStatus != null) ...[
-                        const SizedBox(height: 8),
-                        Text(_testStatus!,
-                            style: TextStyle(
-                                fontSize: 12, color: colors.onSurfaceVariant))
-                      ],
-                    ]),
-              ),
-          ],
+    return Column(
+      children: [
+        ApiEndpointHeader(
+          onTap: () => setState(() => _expanded = !_expanded),
+          title: _displayName(endpoint),
+          url: endpoint.baseUrl.isEmpty ? '未填写 Base URL' : endpoint.baseUrl,
+          active: widget.isActive,
+          expanded: _expanded,
         ),
-      ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    OutlinedButton.icon(
+                        onPressed: _isTesting ? null : _runTest,
+                        icon: const Icon(CupertinoIcons.wifi, size: 16),
+                        label: Text(_isTesting ? '测试中…' : '测试连接')),
+                    OutlinedButton.icon(
+                        onPressed: () =>
+                            _showEditDialog(context, widget.provider, endpoint),
+                        icon: const Icon(CupertinoIcons.pencil, size: 16),
+                        label: const Text('编辑')),
+                  ]),
+                  if (_testStatus != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_testStatus!,
+                        style: TextStyle(
+                            fontSize: 12, color: colors.onSurfaceVariant))
+                  ],
+                  const SizedBox(height: 16),
+                  ApiModelList(
+                    models: endpoint.models,
+                    activeModel: widget.isActive ? widget.activeModel : null,
+                    onSelected: _activate,
+                  ),
+                ]),
+          ),
+      ],
     );
   }
 }
 
 Future<void> _showEditDialog(BuildContext context, ImageProviderType provider,
-    ApiEndpoint? existing) async {
-  final name = TextEditingController(text: existing?.name ?? '');
-  final url = TextEditingController(text: existing?.baseUrl ?? '');
-  final key = TextEditingController(text: existing?.apiKey ?? '');
-  final modelInput = TextEditingController();
-  final models = [...(existing?.models ?? const <String>[])];
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setState) => AlertDialog(
-              title: Text(existing == null ? '添加中转站' : '编辑中转站'),
-              content: SingleChildScrollView(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                TextField(
-                    controller: name,
-                    decoration: const InputDecoration(labelText: '名称')),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: url,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(labelText: 'Base URL')),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: key,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'API Key')),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(
-                      child: TextField(
-                          controller: modelInput,
-                          decoration: const InputDecoration(hintText: '输入模型名'),
-                          onSubmitted: (value) => setState(() {
-                                if (value.trim().isNotEmpty &&
-                                    !models.contains(value.trim()))
-                                  models.add(value.trim());
-                                modelInput.clear();
-                              }))),
-                  IconButton(
-                      onPressed: () => setState(() {
-                            final value = modelInput.text.trim();
-                            if (value.isNotEmpty && !models.contains(value))
-                              models.add(value);
-                            modelInput.clear();
-                          }),
-                      icon: const Icon(CupertinoIcons.add_circled_solid)),
-                ]),
-                Wrap(
-                    spacing: 6,
-                    children: models
-                        .map((model) => Chip(
-                            label: Text(model),
-                            onDeleted: () =>
-                                setState(() => models.remove(model))))
-                        .toList()),
-              ])),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    child: const Text('取消')),
-                FilledButton(
-                    onPressed: () async {
-                      if (name.text.trim().isEmpty || url.text.trim().isEmpty)
-                        return;
-                      final endpoint = ApiEndpoint(
-                          id: existing?.id ?? const Uuid().v4(),
-                          name: name.text.trim(),
-                          baseUrl: url.text.trim(),
-                          apiKey: key.text.trim(),
-                          models: models,
-                          protocol: existing?.protocol ?? 'openaiChat');
-                      final vm = sl<SettingsViewModel>();
-                      if (existing == null) {
-                        await vm.addEndpoint(provider, endpoint);
-                      } else {
-                        await vm.updateEndpoint(provider, endpoint);
-                      }
-                      if (dialogContext.mounted) Navigator.pop(dialogContext);
-                    },
-                    child: const Text('保存')),
-              ],
-            )),
-  );
-  name.dispose();
-  url.dispose();
-  key.dispose();
-  modelInput.dispose();
-}
+        ApiEndpoint? existing) =>
+    showDialog<void>(
+      context: context,
+      builder: (_) => ApiEndpointEditor(provider: provider, endpoint: existing),
+    );

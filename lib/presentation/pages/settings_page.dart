@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:nai_huishi/presentation/pages/watermark_page.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/di/injection.dart';
@@ -271,6 +272,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       CupertinoPageRoute(
                         builder: (_) => const OfficialUpscalePage(),
                       ),
+                    ),
+                  ),
+                  _SettingsTile(
+                    icon: CupertinoIcons.square_stack_3d_up,
+                    title: '添加水印',
+                    subtitle: '图片水印图层、自由调整与常用水印库',
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute(builder: (_) => const WatermarkPage()),
                     ),
                   ),
                 ],

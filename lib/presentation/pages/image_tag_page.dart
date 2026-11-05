@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
@@ -14,6 +12,7 @@ import 'package:nai_huishi/presentation/viewmodels/image_tag_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
 import 'package:nai_huishi/presentation/pages/image_metadata_editor_page.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
+import 'package:nai_huishi/presentation/widgets/image_tag_workspace.dart';
 
 /// 图片解析页面：导入图片 → 选择分析方式（NAI 元数据 / WD-Tagger）→ 选择标签 → 复制 / 导入文生图
 class ImageTagPage extends StatefulWidget {
@@ -176,29 +175,44 @@ class _ImageTagPageState extends State<ImageTagPage> {
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          padding: const EdgeInsets.only(top: 8, bottom: 32),
           children: [
-            _buildPreview(isDark),
-            if (_vm.imagePath != null) ...[
-              const SizedBox(height: 12),
-              _buildMetadataActions(),
-            ],
-            const SizedBox(height: 18),
-            _buildModeSelector(isDark),
-            if (_vm.mode == TagAnalysisMode.wdTagger) ...[
-              const SizedBox(height: 14),
-              _buildWdSettings(isDark),
-            ],
-            const SizedBox(height: 18),
-            _buildAnalyzeButton(),
-            if (_vm.error != null) ...[
-              const SizedBox(height: 12),
-              _buildError(isDark),
-            ],
-            if (_vm.result != null) ...[
-              const SizedBox(height: 22),
-              _buildResultSection(isDark),
-            ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: ImageTagWorkspace(
+                imagePath: _vm.imagePath,
+                busy: _vm.isAnalyzing,
+                onPickImage: _pickImage,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_vm.imagePath != null) ...[
+                    const SizedBox(height: 12),
+                    _buildMetadataActions(),
+                  ],
+                  const SizedBox(height: 18),
+                  _buildModeSelector(isDark),
+                  if (_vm.mode == TagAnalysisMode.wdTagger) ...[
+                    const SizedBox(height: 14),
+                    _buildWdSettings(isDark),
+                  ],
+                  const SizedBox(height: 18),
+                  _buildAnalyzeButton(),
+                  if (_vm.error != null) ...[
+                    const SizedBox(height: 12),
+                    _buildError(isDark),
+                  ],
+                  if (_vm.result != null) ...[
+                    const SizedBox(height: 22),
+                    _buildResultSection(isDark),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -233,48 +247,6 @@ class _ImageTagPageState extends State<ImageTagPage> {
         const SizedBox(height: 4),
         const Text('编辑 PNG 内的提示词等数据，另存副本并保留原文件。',
             style: TextStyle(fontSize: 12, height: 1.4)),
-      ],
-    );
-  }
-
-  Widget _buildPreview(bool isDark) {
-    final cardColor = FrostedTheme.of(context).surface;
-    final imagePath = _vm.imagePath;
-    Widget child;
-    if (imagePath == null || !File(imagePath).existsSync()) {
-      child = _buildPlaceholder(isDark);
-    } else {
-      child = Image.file(File(imagePath), fit: BoxFit.contain);
-    }
-    final preview = GestureDetector(
-      onTap: _pickImage,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Container(color: cardColor, child: child),
-      ),
-    );
-    if (imagePath == null || !File(imagePath).existsSync()) {
-      return AspectRatio(aspectRatio: 1, child: preview);
-    }
-
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    final previewHeight = (screenHeight * 0.58).clamp(380.0, 640.0);
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-      height: previewHeight,
-      child: preview,
-    );
-  }
-
-  Widget _buildPlaceholder(bool isDark) {
-    final hint = isDark ? Colors.white54 : Colors.black38;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(CupertinoIcons.photo_on_rectangle, size: 48, color: hint),
-        const SizedBox(height: 12),
-        Text('点击选择图片', style: TextStyle(color: hint, fontSize: 15)),
       ],
     );
   }

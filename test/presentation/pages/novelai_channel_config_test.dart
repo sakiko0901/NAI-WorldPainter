@@ -54,6 +54,7 @@ void main() {
       await tester.pumpAndSettle();
       final addModel = find.byKey(const ValueKey('novelai-add-model'));
       await tester.ensureVisible(addModel);
+      await tester.pumpAndSettle();
       await tester.tap(addModel);
       await tester.pumpAndSettle();
       final field = find.byKey(const ValueKey('novelai-model-name'));
@@ -70,12 +71,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(settings.endpoint.models.last, 'channel-model-vNext');
       expect(settings.endpoint.streamEnabled, isFalse);
-      final modelChip = find.widgetWithText(ChoiceChip, 'channel-model-vNext');
-      await tester.ensureVisible(modelChip);
-      await tester.tap(modelChip);
+      final modelRow =
+          find.byKey(const ValueKey('api-model-channel-model-vNext'));
+      await tester.ensureVisible(modelRow);
+      await tester.pumpAndSettle();
+      await tester.tap(modelRow);
       await tester.pumpAndSettle();
       expect(settings.selectedModel, 'channel-model-vNext');
-      expect(tester.widget<ChoiceChip>(modelChip).selected, isTrue);
+      expect(tester.widget<ListTile>(modelRow).selected, isTrue);
       expect(api.accountRequests, 0);
       await tester.pump(const Duration(milliseconds: 1800));
       await tester.pumpAndSettle();
@@ -124,6 +127,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('NovelAI 官方'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('设置 URL 与 API Key'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('设置 URL 与 API Key'));
     await tester.pumpAndSettle();
 
@@ -151,6 +156,8 @@ void main() {
     expect(find.text('验证 Token'), findsNothing);
     expect(api.accountRequests, 0);
 
+    await tester.ensureVisible(find.text('设置 URL 与 API Key'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('设置 URL 与 API Key'));
     await tester.pumpAndSettle();
     await tester.enterText(urlFinder, '');

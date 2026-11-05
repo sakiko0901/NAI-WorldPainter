@@ -6,6 +6,8 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/api_config_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_background.dart';
 
 void main() {
   late _SettingsFake settings;
@@ -22,8 +24,7 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-    testWidgets(
-        'relay card keeps its surface during interaction in $brightness',
+    testWidgets('relay keeps shared glass and model selection in $brightness',
         (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(320, 720);
@@ -40,15 +41,15 @@ void main() {
       await tester.pumpAndSettle();
 
       final title = find.text(settings.endpoint.name);
-      _expectCardSurface(tester, title, theme, active: false);
-      expect(find.widgetWithText(ChoiceChip, 'model-b'), findsNothing);
+      _expectGlassSurface(tester, title, theme);
+      expect(find.byKey(const ValueKey('api-model-model-b')), findsNothing);
       await tester.tap(title);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      _expectCardSurface(tester, title, theme, active: false);
+      _expectGlassSurface(tester, title, theme);
 
-      final model = find.widgetWithText(ChoiceChip, 'model-b');
-      expect(tester.widget<ChoiceChip>(model).selected, isFalse);
+      final model = find.byKey(const ValueKey('api-model-model-b'));
+      expect(tester.widget<ListTile>(model).selected, isFalse);
       await tester.ensureVisible(model);
       await tester.tap(model);
       await tester.pumpAndSettle();
@@ -56,16 +57,16 @@ void main() {
       expect(settings.selectedProvider, ImageProviderType.gpt);
       expect(settings.selectedEndpointId, settings.endpoint.id);
       expect(settings.selectedModel, 'model-b');
-      expect(tester.widget<ChoiceChip>(model).selected, isTrue);
-      _expectCardSurface(tester, title, theme, active: true);
+      expect(tester.widget<ListTile>(model).selected, isTrue);
+      _expectGlassSurface(tester, title, theme);
 
       await tester.tap(title);
       await tester.pumpAndSettle();
       expect(model, findsNothing);
       await tester.tap(title);
       await tester.pumpAndSettle();
-      expect(tester.widget<ChoiceChip>(model).selected, isTrue);
-      _expectCardSurface(tester, title, theme, active: true);
+      expect(tester.widget<ListTile>(model).selected, isTrue);
+      _expectGlassSurface(tester, title, theme);
       // Let the selection toast leave its overlay before the page is disposed.
       await tester.pump(const Duration(milliseconds: 1800));
       await tester.pumpAndSettle();
@@ -74,31 +75,19 @@ void main() {
   }
 }
 
-void _expectCardSurface(
+void _expectGlassSurface(
   WidgetTester tester,
   Finder title,
-  ThemeData theme, {
-  required bool active,
-}) {
-  final card = find.ancestor(
-    of: title,
-    matching: find.byWidgetPredicate(
-      (widget) => widget is Container && widget.decoration is BoxDecoration,
-    ),
-  );
-  expect(card, findsOneWidget);
-  final decoration =
-      tester.widget<Container>(card).decoration! as BoxDecoration;
-  expect(decoration.color, theme.cardTheme.color);
-  expect(decoration.borderRadius, BorderRadius.circular(20));
-  expect(
-    decoration.border,
-    Border.all(
-      color: active
-          ? theme.colorScheme.primary.withValues(alpha: .5)
-          : theme.colorScheme.onSurface.withValues(alpha: .08),
-    ),
-  );
+  ThemeData theme,
+) {
+  expect(find.byType(StudioBackground), findsOneWidget);
+  final surface =
+      find.ancestor(of: title, matching: find.byType(FrostedSurface));
+  expect(surface, findsOneWidget);
+  final filter =
+      find.descendant(of: surface, matching: find.byType(BackdropFilter));
+  expect(tester.widget<BackdropFilter>(filter).enabled,
+      theme.extension<FrostedTheme>()!.blurEnabled);
 }
 
 class _SettingsFake extends ChangeNotifier implements SettingsViewModel {
