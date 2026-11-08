@@ -4,8 +4,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:image/image.dart' as img;
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -124,10 +124,15 @@ class OfficialNovelAiApiService {
   }
 
   Options _options(String token,
-          {ResponseType responseType = ResponseType.bytes}) =>
+          {ResponseType responseType = ResponseType.bytes,
+          bool jsonGeneration = false}) =>
       Options(
         responseType: responseType,
-        headers: {'Authorization': 'Bearer ${token.trim()}'},
+        contentType: jsonGeneration ? Headers.jsonContentType : null,
+        headers: {
+          'Authorization': 'Bearer ${token.trim()}',
+          if (jsonGeneration) 'Accept': Headers.jsonContentType,
+        },
       );
 
   Future<OfficialNovelAiAccount> verifyToken(String token) async {
@@ -249,19 +254,14 @@ class OfficialNovelAiApiService {
     try {
       final payload = await buildPayload(task);
       final hasPrecise = task.preciseReferences.isNotEmpty;
-      final response = hasPrecise
-          ? await _dio.post<List<int>>(
-              ApiConstants.officialGenerateImage,
-              data: await _buildMultipart(payload, task),
-              options: _options(token),
-            )
-          : await _dio.post<List<int>>(
-              ApiConstants.officialGenerateImage,
-              data: payload,
-              options: _options(token),
-            );
-      final filePath =
-          await _saveImage(_extractImageBytes(response.data, '生成'));
+      final response = await _dio.post<List<int>>(
+        ApiConstants.officialGenerateImage,
+        data: payload,
+        options: _options(token, jsonGeneration: hasPrecise),
+      );
+      final filePath = await _saveImage(hasPrecise
+          ? _extractPreciseGenerationImage(response)
+          : _extractImageBytes(response.data, '生成'));
       return task.copyWith(
         status: 'success',
         imagePath: filePath,
@@ -272,7 +272,7 @@ class OfficialNovelAiApiService {
     }
   }
 
-  /// 流式生成：官方 V4/V4.5/V5 模型可用（V3 与精确参考 multipart 不支持）。
+  /// 流式生成：官方 V4/V4.5/V5 模型可用，精确参考走同步接口。
   ///
   /// 协议（参考 NekoAI-JS StreamingMsgpackParser）：
   /// 响应为重复的 [4字节大端长度][MessagePack 消息体]；
@@ -641,15 +641,30 @@ class OfficialNovelAiApiService {
     }
   }
 
+  static bool supportsPreciseReference(String model) {
+    final baseModel = model.trim().toLowerCase().replaceFirst(
+          RegExp(r'-inpainting$'),
+          '',
+        );
+    return const {'nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated'}
+        .contains(baseModel);
+  }
+
   Future<Map<String, dynamic>> buildPayload(GenerationTask task) async {
     final action = task.mode == GenerationMode.inpainting
         ? 'infill'
         : task.img2imgSourceImagePath != null
             ? 'img2img'
             : 'generate';
-    if (_isV5(task.model) &&
-        (task.vibeReferences.isNotEmpty || task.preciseReferences.isNotEmpty)) {
-      throw ApiException(message: 'NovelAI V5 当前不支持 Vibe 或精密参考，请切换 V4.5 模型');
+    final hasPrecise = task.preciseReferences.isNotEmpty;
+    if (hasPrecise && !supportsPreciseReference(task.model)) {
+      throw ApiException(message: 'NovelAI 官方精确参考仅支持 V4.5 Full / Curated');
+    }
+    if (hasPrecise && task.vibeReferences.isNotEmpty) {
+      throw ApiException(message: '精确参考与氛围转移不能同时使用');
+    }
+    if (_isV5(task.model) && task.vibeReferences.isNotEmpty) {
+      throw ApiException(message: 'NovelAI V5 当前不支持 Vibe，请切换 V4.5 模型');
     }
     final negative = task.negativePrompt ?? '';
     final characters =
@@ -674,7 +689,7 @@ class OfficialNovelAiApiService {
             })
         .toList();
     final parameters = <String, dynamic>{
-      'params_version': 4,
+      'params_version': hasPrecise ? 3 : 4,
       'width': task.width,
       'height': task.height,
       'steps': task.steps,
@@ -696,7 +711,7 @@ class OfficialNovelAiApiService {
         'use_coords': hasCoords,
         'v4_prompt': {
           'caption': {
-            'base_caption': task.prompt,
+            'base_caption': task.requestPrompt,
             'char_captions': characterCaptions
           },
           'use_coords': hasCoords,
@@ -743,7 +758,7 @@ class OfficialNovelAiApiService {
           .map((reference) => reference.informationExtracted.clamp(0, 1))
           .toList();
     }
-    if (task.preciseReferences.isNotEmpty) {
+    if (hasPrecise) {
       parameters
           .addAll(await _preciseReferenceParameters(task.preciseReferences));
     }
@@ -751,58 +766,27 @@ class OfficialNovelAiApiService {
         ? '${task.model}-inpainting'
         : task.model;
     return {
-      'input': task.prompt,
+      'input': task.requestPrompt,
       'model': model,
       'action': action,
       'parameters': parameters
     };
   }
 
-  Future<FormData> _buildMultipart(
-      Map<String, dynamic> payload, GenerationTask task) async {
-    final parameters = Map<String, dynamic>.from(payload['parameters'] as Map);
-    final files = <MapEntry<String, MultipartFile>>[];
-    for (var index = 0; index < task.preciseReferences.length; index++) {
-      final bytes =
-          await File(task.preciseReferences[index].path).readAsBytes();
-      files.add(MapEntry('director_ref_$index',
-          MultipartFile.fromBytes(bytes, filename: 'reference_$index.png')));
-    }
-    for (final name in ['image', 'mask']) {
-      final value = parameters[name];
-      if (value is String && value.isNotEmpty) {
-        files.add(MapEntry(
-            name,
-            MultipartFile.fromBytes(base64Decode(value),
-                filename: '$name.png')));
-        parameters[name] = name;
-      }
-    }
-    payload['parameters'] = parameters;
-    return FormData.fromMap({
-      'request': MultipartFile.fromString(jsonEncode(payload),
-          filename: 'request.json'),
-      for (final file in files) file.key: file.value,
-    });
-  }
-
   Future<Map<String, dynamic>> _preciseReferenceParameters(
       List<PreciseReferenceImage> references) async {
     final encoded = <String>[];
-    for (final reference in references) {
-      final file = File(reference.path);
-      if (!await file.exists()) throw ApiException(message: '精密参考图像不可用，请重新选择');
-      encoded.add(base64Encode(await file.readAsBytes()));
+    for (final (index, reference) in references.indexed) {
+      try {
+        encoded.add(await compute(_encodePreciseReference, reference.path));
+      } on FileSystemException {
+        throw ApiException(message: '精确参考图 ${index + 1} 不可用，请重新选择');
+      } on FormatException {
+        throw ApiException(message: '无法读取精确参考图 ${index + 1}，请重新选择');
+      }
     }
     return {
-      'director_reference_images_cached': [
-        for (var index = 0; index < encoded.length; index++)
-          {
-            'cache_secret_key':
-                sha256.convert(base64Decode(encoded[index])).toString(),
-            'data': 'director_ref_$index'
-          },
-      ],
+      'director_reference_images': encoded,
       'director_reference_descriptions': [
         for (final reference in references)
           {
@@ -816,12 +800,38 @@ class OfficialNovelAiApiService {
       'director_reference_strength_values': references
           .map((reference) => reference.strength.clamp(0, 1))
           .toList(),
-      'director_reference_secondary_strength_values':
-          List.filled(references.length, 0),
+      'director_reference_secondary_strength_values': references
+          .map((reference) => 1.0 - reference.fidelity.clamp(0.0, 1.0))
+          .toList(),
       'director_reference_information_extracted':
           List.filled(references.length, 1),
       'normalize_reference_strength_multiple': true,
     };
+  }
+
+  Uint8List _extractPreciseGenerationImage(Response<List<int>> response) {
+    final contentType = response.headers.value(Headers.contentTypeHeader);
+    if (contentType?.split(';').first.trim() != Headers.jsonContentType) {
+      return _extractImageBytes(response.data, '生成');
+    }
+    try {
+      final payload = jsonDecode(utf8.decode(response.data ?? const []));
+      final images = _map(payload)?['images'];
+      final first =
+          images is List && images.isNotEmpty ? _map(images.first) : null;
+      final image = first?['image'];
+      if (image is String) {
+        final separator = image.indexOf(';base64,');
+        final encoded = image.startsWith('data:image/') && separator >= 0
+            ? image.substring(separator + ';base64,'.length)
+            : image;
+        final bytes = base64Decode(encoded);
+        if (bytes.isNotEmpty) return bytes;
+      }
+    } on FormatException {
+      // Invalid JSON or Base64 is reported below as an image response error.
+    }
+    throw ApiException(message: '官方精确参考未返回有效的图片数据');
   }
 
   Future<String> _readBase64(String? path, String label) async {
@@ -888,4 +898,33 @@ class OfficialNovelAiApiService {
   bool _isV5(String model) => model.toLowerCase().contains('diffusion-5');
   bool _isV4Plus(String model) =>
       model.toLowerCase().contains('diffusion-4') || _isV5(model);
+}
+
+Future<String> _encodePreciseReference(String path) async {
+  final bytes = await File(path).readAsBytes();
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) throw const FormatException('Invalid reference image');
+  final image = img.bakeOrientation(decoded);
+  final ratio = image.width / image.height;
+  const sizes = [(1024, 1536), (1536, 1024), (1472, 1472)];
+  final (width, height) = sizes.reduce((best, candidate) =>
+      (ratio - candidate.$1 / candidate.$2).abs() <
+              (ratio - best.$1 / best.$2).abs()
+          ? candidate
+          : best);
+  final scale = math.min(width / image.width, height / image.height);
+  final resized = img.copyResize(
+    image,
+    width: (image.width * scale).round().clamp(1, width),
+    height: (image.height * scale).round().clamp(1, height),
+    interpolation: img.Interpolation.linear,
+  );
+  final canvas = img.Image(width: width, height: height);
+  img.compositeImage(
+    canvas,
+    resized,
+    dstX: (width - resized.width) ~/ 2,
+    dstY: (height - resized.height) ~/ 2,
+  );
+  return base64Encode(img.encodePng(canvas));
 }

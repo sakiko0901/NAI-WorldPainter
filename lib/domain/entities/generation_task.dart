@@ -23,6 +23,7 @@ class GenerationTask extends Equatable {
   final String? endpointId;
   final String? protocol;
   final String prompt;
+  final bool transparentBackground;
   final String? negativePrompt;
   final int width;
   final int height;
@@ -64,6 +65,7 @@ class GenerationTask extends Equatable {
     this.endpointId,
     this.protocol,
     required this.prompt,
+    this.transparentBackground = false,
     this.negativePrompt,
     required this.width,
     required this.height,
@@ -99,6 +101,20 @@ class GenerationTask extends Equatable {
     this.isInternal = false,
   });
 
+  static final _transparentTag = RegExp(
+    r'(?:^|,)\s*transparent background\s*(?=,|$)',
+    caseSensitive: false,
+  );
+
+  String get requestPrompt {
+    if (!transparentBackground || _transparentTag.hasMatch(prompt)) {
+      return prompt;
+    }
+    return prompt.trim().isEmpty
+        ? 'transparent background'
+        : 'transparent background, $prompt';
+  }
+
   GenerationTask copyWith({
     int? id,
     bool clearId = false,
@@ -107,6 +123,7 @@ class GenerationTask extends Equatable {
     String? endpointId,
     String? protocol,
     String? prompt,
+    bool? transparentBackground,
     String? negativePrompt,
     int? width,
     int? height,
@@ -149,6 +166,8 @@ class GenerationTask extends Equatable {
       endpointId: endpointId ?? this.endpointId,
       protocol: protocol ?? this.protocol,
       prompt: prompt ?? this.prompt,
+      transparentBackground:
+          transparentBackground ?? this.transparentBackground,
       negativePrompt: negativePrompt ?? this.negativePrompt,
       width: width ?? this.width,
       height: height ?? this.height,
@@ -197,28 +216,33 @@ class PreciseReferenceImage extends Equatable {
   final String path;
   final String referenceType;
   final double strength;
+  final double fidelity;
 
   const PreciseReferenceImage({
     required this.path,
     this.referenceType = 'character&style',
     this.strength = 1.0,
+    this.fidelity = 1.0,
   });
 
   PreciseReferenceImage copyWith({
     String? path,
     String? referenceType,
     double? strength,
+    double? fidelity,
   }) =>
       PreciseReferenceImage(
         path: path ?? this.path,
         referenceType: referenceType ?? this.referenceType,
         strength: strength ?? this.strength,
+        fidelity: fidelity ?? this.fidelity,
       );
 
   Map<String, dynamic> toJson() => {
         'path': path,
         'reference_type': referenceType,
         'strength': strength,
+        'fidelity': fidelity,
       };
 
   factory PreciseReferenceImage.fromJson(Map<String, dynamic> json) {
@@ -228,11 +252,12 @@ class PreciseReferenceImage extends Equatable {
       referenceType:
           types.contains(referenceType) ? referenceType! : 'character&style',
       strength: (json['strength'] as num?)?.toDouble() ?? 1.0,
+      fidelity: ((json['fidelity'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
     );
   }
 
   @override
-  List<Object?> get props => [path, referenceType, strength];
+  List<Object?> get props => [path, referenceType, strength, fidelity];
 }
 
 class CharacterReferenceImage extends Equatable {

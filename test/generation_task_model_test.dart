@@ -156,7 +156,7 @@ void main() {
     expect(restored.img2imgSourceImagePath, isNull);
   });
 
-  test('legacy Precise history ignores fidelity when reserialized', () {
+  test('Precise history preserves fidelity when reserialized', () {
     final row = GenerationTaskModel.fromEntity(task()).toDb()
       ..['precise_references'] = jsonEncode([
         {
@@ -175,6 +175,6 @@ void main() {
     expect(restored.preciseReferences.single.strength, 0.8);
     final saved = jsonDecode(restored.toDb()['precise_references'] as String)
         as List<dynamic>;
-    expect(saved.single, isNot(contains('fidelity')));
+    expect(saved.single['fidelity'], 0.4);
   });
 }

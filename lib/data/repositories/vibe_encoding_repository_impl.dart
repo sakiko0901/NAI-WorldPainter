@@ -21,6 +21,8 @@ class VibeEncodingRepositoryImpl implements VibeEncodingRepository {
     'source_image_path',
     'encoded_vibe_path',
     'encoded_model',
+    'information_extracted',
+    'source_hash',
     'created_at',
     'updated_at',
   ];
@@ -78,6 +80,8 @@ class VibeEncodingRepositoryImpl implements VibeEncodingRepository {
     required String encodedVibe,
     required String sourceImagePath,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   }) async {
     if (encodedVibe.isEmpty) {
       throw ArgumentError('Vibe 编码不能为空');
@@ -93,6 +97,8 @@ class VibeEncodingRepositoryImpl implements VibeEncodingRepository {
         sourceImagePath: sourceImagePath,
         encodedVibePath: encodedVibePath,
         encodedModel: encodedModel,
+        informationExtracted: informationExtracted,
+        sourceHash: sourceHash,
         createdAt: now,
         updatedAt: now,
       );
@@ -113,6 +119,8 @@ class VibeEncodingRepositoryImpl implements VibeEncodingRepository {
     required String sourceImagePath,
     required List<String> encodedVibes,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   }) async {
     final result = <VibeEncoding>[];
     for (var index = 0; index < encodedVibes.length; index++) {
@@ -121,6 +129,8 @@ class VibeEncodingRepositoryImpl implements VibeEncodingRepository {
         encodedVibe: encodedVibes[index],
         sourceImagePath: sourceImagePath,
         encodedModel: encodedModel,
+        informationExtracted: informationExtracted,
+        sourceHash: sourceHash,
       ));
     }
     return result;

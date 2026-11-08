@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
 import 'dart:io';
 import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
 import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
@@ -9,6 +10,7 @@ import 'package:nai_huishi/core/utils/prompt_text.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_templates.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_notebook_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
+import 'package:nai_huishi/presentation/widgets/emphasis_controller.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -321,32 +323,7 @@ class _GeneratePageState extends State<GeneratePage> {
                             children: [
                               _buildResultSection(workspaceHeight: imageHeight),
                               const SizedBox(height: 12),
-                              _buildPromptSection(),
-                              const SizedBox(height: 12),
-                              if (!_vm.isNonNovelAiProvider &&
-                                  _vm.supportsCharacterPrompts) ...[
-                                _CharacterControlSection(
-                                  vm: _vm,
-                                  imageAspectRatio: _outputAspectRatio,
-                                  onPositionGestureChanged: (active) {
-                                    if (mounted &&
-                                        active != _characterPositionLocked) {
-                                      setState(() =>
-                                          _characterPositionLocked = active);
-                                    }
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              if (!_vm.isNonNovelAiProvider &&
-                                  (_vm.supportsVibeReferences ||
-                                      _vm.supportsPreciseReferences))
-                                _CharacterReferenceSection(
-                                    vm: _vm,
-                                    imagePicker: _imagePicker,
-                                    onShowMessage: _showToast),
-                              if (_vm.isNonNovelAiProvider)
-                                _buildGptReferenceImageSection(),
+                              _buildPromptWorkspace(),
                             ],
                           ),
                           _hasOpenedInpaint
@@ -369,6 +346,24 @@ class _GeneratePageState extends State<GeneratePage> {
       ],
     );
   }
+
+  Widget _buildPromptWorkspace() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildPromptSection(),
+          const SizedBox(height: 12),
+          if (!_vm.isNonNovelAiProvider && _vm.supportsCharacterPrompts)
+            _CharacterControlSection(
+              vm: _vm,
+              imageAspectRatio: _outputAspectRatio,
+              onPositionGestureChanged: (active) {
+                if (mounted && active != _characterPositionLocked) {
+                  setState(() => _characterPositionLocked = active);
+                }
+              },
+            ),
+        ],
+      );
 
   Widget _buildModeSection() {
     // 统一重绘工作区目前只支持 NovelAI。
@@ -687,6 +682,10 @@ class _GeneratePageState extends State<GeneratePage> {
     return applied;
   }
 
+  bool get _numericEmphasisEnabled => EmphasisController.modelSupportsNumeric(
+        _vm.currentModelOption?.actualModel ?? _vm.selectedModel,
+      );
+
   Widget _buildPromptField({
     required TextEditingController controller,
     required FocusNode focusNode,
@@ -699,6 +698,10 @@ class _GeneratePageState extends State<GeneratePage> {
   }) {
     return PromptEditorField(
       controller: controller,
+      showFooter: identical(controller, _promptController),
+      transparentBackground: _vm.transparentBackground,
+      onTransparentBackgroundChanged: _vm.updateTransparentBackground,
+      numericEmphasisEnabled: _numericEmphasisEnabled,
       focusNode: focusNode,
       hintText: hintText,
       onChanged: onChanged,
@@ -760,6 +763,7 @@ class _GeneratePageState extends State<GeneratePage> {
             context: context,
             title: '正向提示词',
             initialValue: _promptController.text,
+            numericEmphasisEnabled: _numericEmphasisEnabled,
             onSubmitted: _vm.updatePrompt,
           ),
           icon: const Icon(CupertinoIcons.arrow_up_left_arrow_down_right,
@@ -1067,9 +1071,15 @@ class _GeneratePageState extends State<GeneratePage> {
         const SizedBox(height: 24),
         Text('参考图像', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
-        if (!_vm.isNonNovelAiProvider)
-          _buildImg2ImgSection()
-        else
+        if (!_vm.isNonNovelAiProvider) ...[
+          _buildImg2ImgSection(),
+          const SizedBox(height: 12),
+          _CharacterReferenceSection(
+            vm: _vm,
+            imagePicker: _imagePicker,
+            onShowMessage: _showToast,
+          ),
+        ] else
           _buildGptReferenceImageSection(),
       ],
     );
@@ -1805,13 +1815,11 @@ class _PremiumAccordion extends StatefulWidget {
   final String title;
   final IconData icon;
   final List<Widget> children;
-  final bool initiallyExpanded;
 
   const _PremiumAccordion({
     required this.title,
     required this.icon,
     required this.children,
-    this.initiallyExpanded = false,
   });
 
   @override
@@ -1827,7 +1835,7 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
   @override
   void initState() {
     super.initState();
-    _isExpanded = widget.initiallyExpanded;
+    _isExpanded = true;
     _controller = AnimationController(
       duration: const Duration(milliseconds: 240),
       vsync: this,
@@ -1899,22 +1907,20 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
               ),
             ),
           ),
-          AnimatedCrossFade(
-            firstChild: SizedBox(width: double.infinity, height: 0),
-            secondChild: Padding(
+          SizeTransition(
+            sizeFactor: _controller,
+            axisAlignment: -1,
+            child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: widget.children,
+                children: [
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  ...widget.children,
+                ],
               ),
             ),
-            crossFadeState: _isExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : const Duration(milliseconds: 240),
-            sizeCurve: Curves.easeInOutCubic,
           ),
         ],
       ),
@@ -2004,95 +2010,136 @@ class _CharacterReferenceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final vibeActive =
-        !vm.supportsPreciseReferences || vm.referenceMode == ReferenceMode.vibe;
-    return _PremiumAccordion(
-      title: '参考图像',
-      icon: CupertinoIcons.photo_on_rectangle,
-      initiallyExpanded: false,
+    final canAddVibe = vm.supportsVibeReferences &&
+        vm.vibeReferences.length < vm.maxVibeReferences;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReferenceModePanel(
-          title: '氛围转移（${vm.vibeReferences.length}/${vm.maxVibeReferences}）',
-          icon: CupertinoIcons.photo,
-          isActive: vibeActive,
-          onTap: () => _switchMode(context, ReferenceMode.vibe),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              OutlinedButton.icon(
-                onPressed: vm.vibeReferences.length >= vm.maxVibeReferences
-                    ? null
-                    : () => _showVibeSourceMenu(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(
-                    color: colors.primary.withValues(alpha: 0.45),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                icon: const Icon(CupertinoIcons.add, size: 17),
-                label: Text(
-                  vm.vibeReferences.isEmpty ? '添加氛围参考图' : '继续添加氛围参考图',
-                ),
-              ),
-              for (final entry in vm.vibeReferences.asMap().entries)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: _ReferenceImageCard(
-                    image: entry.value,
-                    onReplace: () =>
-                        _showVibeSourceMenu(context, replaceIndex: entry.key),
-                    onUpdate: (reference) =>
-                        vm.updateVibeReference(entry.key, reference),
-                    onDelete: () => vm.removeVibeReference(entry.key),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (vm.supportsPreciseReferences) ...[
-          const SizedBox(height: 12),
-          _ReferenceModePanel(
-            title: '精密参照图像',
-            icon: CupertinoIcons.person_crop_rectangle,
-            isActive: !vibeActive,
-            onTap: () => _switchMode(context, ReferenceMode.precise),
-            trailing: IconButton.outlined(
-              tooltip: '导入参照图像',
-              onPressed: () => _addPreciseReference(),
-              style: IconButton.styleFrom(
-                foregroundColor: colors.primary,
-                side: BorderSide(color: colors.primary.withValues(alpha: 0.45)),
-                visualDensity: VisualDensity.standard,
-              ),
-              icon: const Icon(CupertinoIcons.add, size: 19),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+        _PremiumAccordion(
+          title: '氛围转移 · ${vm.vibeReferences.length}/${vm.maxVibeReferences}',
+          icon: CupertinoIcons.wand_stars,
+          children: [
+            const Text('参考图像的色调、质感与构图。首次编码每张 2 Anlas，第 5 张起每张额外 2 Anlas。'),
+            const SizedBox(height: 12),
+            if (!vm.supportsVibeReferences)
+              _unavailableHint(colors, '当前模型或渠道不支持氛围转移'),
+            Row(
               children: [
-                for (final entry in vm.preciseReferences.asMap().entries)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: _PreciseReferenceCard(
-                      image: entry.value,
-                      onReplace: () => _replacePreciseReference(entry.key),
-                      onUpdate: (reference) =>
-                          vm.updatePreciseReference(entry.key, reference),
-                      onDelete: () => vm.removePreciseReference(entry.key),
-                    ),
-                  ),
+                Expanded(
+                    child: _vibeAction(
+                  icon: Icons.add_photo_alternate_outlined,
+                  title: '添加图片',
+                  subtitle: '从本机选取',
+                  onPressed: canAddVibe ? () => _pickVibes(context) : null,
+                )),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: _vibeAction(
+                  icon: Icons.folder_open_outlined,
+                  title: '从库导入',
+                  subtitle: '选择 Vibe 编码',
+                  onPressed:
+                      canAddVibe ? () => _pickVibeLibrary(context) : null,
+                )),
               ],
             ),
-          ),
-        ],
+            TextButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const VibeEncodingLibraryPage(),
+              )),
+              icon: const Icon(Icons.folder_outlined, size: 17),
+              label: const Text('管理编码库'),
+            ),
+            if (vm.vibeReferences.isNotEmpty)
+              Text(
+                  '参考强度合计 ${vm.vibeReferences.fold<double>(0, (sum, image) => sum + image.strength).toStringAsFixed(2)} · 建议不超过 1.0'),
+            for (final entry in vm.vibeReferences.asMap().entries)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _ReferenceImageCard(
+                  image: entry.value,
+                  onReplace: () =>
+                      _showVibeSourceMenu(context, replaceIndex: entry.key),
+                  onUpdate: (reference) =>
+                      vm.updateVibeReference(entry.key, reference),
+                  onDelete: () => vm.removeVibeReference(entry.key),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _PremiumAccordion(
+          title: '角色精确参考 · ${vm.preciseReferences.length}/4',
+          icon: CupertinoIcons.person_crop_rectangle,
+          children: [
+            if (!vm.supportsPreciseReferences)
+              _unavailableHint(colors, '当前模型或渠道不支持精确参考，官方线路需使用 V4.5。'),
+            const Text('按参考图锁定角色外观、画风或两者。与氛围转移互斥，官方额外费用从每张生成图 5 Anlas 起。'),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: vm.supportsPreciseReferences &&
+                      vm.preciseReferences.length < 4
+                  ? () => _addPreciseReference(context)
+                  : null,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('添加参考图'),
+            ),
+            for (final entry in vm.preciseReferences.asMap().entries)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _PreciseReferenceCard(
+                  image: entry.value,
+                  onReplace: () => _replacePreciseReference(entry.key),
+                  onUpdate: (reference) =>
+                      vm.updatePreciseReference(entry.key, reference),
+                  onDelete: () => vm.removePreciseReference(entry.key),
+                ),
+              ),
+          ],
+        ),
       ],
     );
   }
 
-  Future<void> _switchMode(BuildContext context, ReferenceMode target) async {
-    if (vm.referenceMode == target) return;
+  Widget _unavailableHint(ColorScheme colors, String text) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: colors.errorContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(text, style: TextStyle(color: colors.onErrorContainer)),
+      );
+
+  Widget _vibeAction({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onPressed,
+  }) =>
+      FilledButton.tonal(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+          minimumSize: const Size(0, 104),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 26),
+            const SizedBox(height: 8),
+            Text(title, textAlign: TextAlign.center),
+            Text(subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+      );
+
+  Future<bool> _switchMode(BuildContext context, ReferenceMode target) async {
+    if (vm.referenceMode == target) return true;
     final hasCurrentReferences = vm.referenceMode == ReferenceMode.vibe
         ? vm.vibeReferences.isNotEmpty
         : vm.preciseReferences.isNotEmpty;
@@ -2118,11 +2165,10 @@ class _CharacterReferenceSection extends StatelessWidget {
           ],
         ),
       );
-      if (confirmed != true) return;
+      if (confirmed != true || !context.mounted) return false;
     }
     await vm.switchReferenceMode(target);
-    if (!context.mounted) return;
-    onShowMessage(target == ReferenceMode.vibe ? '已切换为氛围转移' : '已切换为精密参照图像');
+    return context.mounted;
   }
 
   Future<void> _showVibeSourceMenu(
@@ -2149,24 +2195,31 @@ class _CharacterReferenceSection extends StatelessWidget {
         ),
       ),
     );
+    if (!context.mounted) return;
     if (source == 'image') {
-      await _pickVibes(replaceIndex: replaceIndex);
-    } else if (source == 'library' && context.mounted) {
-      final selected = await _showVibeLibraryPicker(
-        context,
-        maxSelection: replaceIndex == null
-            ? vm.maxVibeReferences - vm.vibeReferences.length
-            : 1,
-      );
-      if (selected.isEmpty) return;
-      if (replaceIndex == null) {
-        final added = await vm.addVibeEncodings(selected);
-        if (context.mounted && added < selected.length) {
-          onShowMessage('已添加 $added 条氛围参考，最多 ${vm.maxVibeReferences} 条');
-        }
-      } else {
-        await vm.replaceVibeReferenceWithEncoding(replaceIndex, selected.first);
+      await _pickVibes(context, replaceIndex: replaceIndex);
+    } else if (source == 'library') {
+      await _pickVibeLibrary(context, replaceIndex: replaceIndex);
+    }
+  }
+
+  Future<void> _pickVibeLibrary(BuildContext context,
+      {int? replaceIndex}) async {
+    final selected = await _showVibeLibraryPicker(
+      context,
+      maxSelection: replaceIndex == null
+          ? vm.maxVibeReferences - vm.vibeReferences.length
+          : 1,
+    );
+    if (!context.mounted || selected.isEmpty) return;
+    if (replaceIndex == null) {
+      if (!await _switchMode(context, ReferenceMode.vibe)) return;
+      final added = await vm.addVibeEncodings(selected);
+      if (context.mounted && added < selected.length) {
+        onShowMessage('已添加 $added 条氛围参考，最多 ${vm.maxVibeReferences} 条');
       }
+    } else {
+      await vm.replaceVibeReferenceWithEncoding(replaceIndex, selected.first);
     }
   }
 
@@ -2189,26 +2242,31 @@ class _CharacterReferenceSection extends StatelessWidget {
         const [];
   }
 
-  Future<void> _pickVibes({int? replaceIndex}) async {
+  Future<void> _pickVibes(BuildContext context, {int? replaceIndex}) async {
     if (replaceIndex == null) {
       final images = await imagePicker.pickMultiImage();
+      if (!context.mounted || images.isEmpty) return;
+      if (!await _switchMode(context, ReferenceMode.vibe)) return;
       final added = await vm.addVibeReferences(
         images.map((image) => image.path),
       );
-      if (images.isNotEmpty && added < images.length) {
+      if (context.mounted && added < images.length) {
         onShowMessage('已添加 $added 条氛围参考，最多 ${vm.maxVibeReferences} 条');
       }
       return;
     }
     final image = await imagePicker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
+    if (context.mounted && image != null) {
       await vm.replaceVibeReferenceWithPath(replaceIndex, image.path);
     }
   }
 
-  Future<void> _addPreciseReference() async {
+  Future<void> _addPreciseReference(BuildContext context) async {
     final picked = await imagePicker.pickImage(source: ImageSource.gallery);
-    if (picked != null) await vm.addPreciseReference(picked.path);
+    if (!context.mounted || picked == null) return;
+    if (await _switchMode(context, ReferenceMode.precise)) {
+      await vm.addPreciseReference(picked.path);
+    }
   }
 
   Future<void> _replacePreciseReference(int index) async {
@@ -2366,201 +2424,84 @@ class _VibeEncodingMultiPickerState extends State<_VibeEncodingMultiPicker> {
   }
 }
 
-class _ReferenceModePanel extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final bool isActive;
-  final VoidCallback onTap;
-  final Widget child;
-  final Widget? trailing;
-
-  const _ReferenceModePanel({
-    required this.title,
-    required this.icon,
-    required this.isActive,
-    required this.onTap,
-    required this.child,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final foreground = isActive ? colors.primary : colors.onSurfaceVariant;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: isActive ? null : onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: isActive
-                ? colors.primary.withValues(alpha: 0.1)
-                : colors.surfaceContainerHighest.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isActive
-                  ? colors.primary
-                  : colors.outlineVariant.withValues(alpha: 0.55),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, size: 19, color: foreground),
-                  const SizedBox(width: 8),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: foreground,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (isActive && trailing != null) trailing!,
-                  if (!isActive)
-                    Icon(
-                      CupertinoIcons.chevron_right,
-                      size: 15,
-                      color: colors.onSurfaceVariant,
-                    ),
-                ],
-              ),
-              if (isActive) ...[const SizedBox(height: 12), child],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ReferenceImageCard extends StatelessWidget {
   final CharacterReferenceImage image;
   final VoidCallback onReplace;
   final ValueChanged<CharacterReferenceImage> onUpdate;
   final VoidCallback onDelete;
-
-  const _ReferenceImageCard({
-    required this.image,
-    required this.onReplace,
-    required this.onUpdate,
-    required this.onDelete,
-  });
+  const _ReferenceImageCard(
+      {required this.image,
+      required this.onReplace,
+      required this.onUpdate,
+      required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final previewPath = image.thumbnailPath?.isNotEmpty == true
+    final path = image.thumbnailPath?.isNotEmpty == true
         ? image.thumbnailPath!
         : image.path;
-    final sourceLabel = image.vibeLibraryId != null ? '已保存编码' : '首次生成时自动编码并保存';
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.45,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      child: Column(
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                onTap: () =>
-                    showFullscreenImagePreview(context, imagePath: previewPath),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    File(previewPath),
-                    width: 82,
-                    height: 108,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 82,
-                      height: 108,
-                      color: theme.colorScheme.errorContainer,
-                      child: Icon(
-                        CupertinoIcons.exclamationmark_triangle,
-                        color: theme.colorScheme.onErrorContainer,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  children: [
-                    if (image.title?.isNotEmpty == true)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          image.title!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        sourceLabel,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton.icon(
-                          onPressed: onReplace,
-                          icon: const Icon(
-                            CupertinoIcons.arrow_2_circlepath,
-                            size: 15,
-                          ),
-                          label: const Text('替换'),
-                        ),
-                        IconButton(
-                          tooltip: '删除参考图',
-                          onPressed: onDelete,
-                          icon: const Icon(CupertinoIcons.trash, size: 17),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _ReferenceSlider(
-            label: '参考强度',
-            value: image.strength,
-            onChanged: (value) => onUpdate(image.copyWith(strength: value)),
-          ),
-          _ReferenceSlider(
-            label: '信息提取',
-            value: image.informationExtracted,
-            onChanged: (value) =>
-                onUpdate(image.copyWith(informationExtracted: value)),
-          ),
-        ],
-      ),
-    );
+    return FrostedSurface(
+        radius: 18,
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _ReferencePreview(path: path),
+            const SizedBox(height: 14),
+            Text(image.title ?? '氛围参考',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(
+                image.vibeLibraryId != null
+                    ? '已保存编码 · 信息提取度 ${image.informationExtracted.toStringAsFixed(2)}'
+                    : '首次生成时编码并保存至编码库',
+                style: Theme.of(context).textTheme.bodySmall),
+            Wrap(alignment: WrapAlignment.end, children: [
+              TextButton.icon(
+                  onPressed: onReplace,
+                  icon: const Icon(Icons.swap_horiz_rounded),
+                  label: const Text('替换')),
+              IconButton(
+                  onPressed: onDelete,
+                  tooltip: '删除参考图',
+                  icon: const Icon(Icons.delete_outline_rounded)),
+            ]),
+            _PreciseReferenceSlider(
+                label: 'Reference Strength · 参考强度',
+                value: image.strength,
+                onChanged: (value) =>
+                    onUpdate(image.copyWith(strength: value))),
+            if (image.vibeLibraryId == null)
+              _PreciseReferenceSlider(
+                  label: 'Information Extracted · 信息提取度',
+                  value: image.informationExtracted,
+                  onChanged: (value) =>
+                      onUpdate(image.copyWith(informationExtracted: value))),
+          ],
+        ));
   }
+}
+
+class _ReferencePreview extends StatelessWidget {
+  final String path;
+  const _ReferencePreview({required this.path});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: () => showFullscreenImagePreview(context, imagePath: path),
+        child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              color: Colors.black.withValues(alpha: .12),
+              height: 220,
+              width: double.infinity,
+              child: Image.file(File(path),
+                  fit: BoxFit.contain,
+                  cacheWidth: 720,
+                  errorBuilder: (_, __, ___) => const Center(
+                      child:
+                          Icon(Icons.image_not_supported_outlined, size: 36))),
+            )),
+      );
 }
 
 class _PreciseReferenceCard extends StatelessWidget {
@@ -2568,137 +2509,57 @@ class _PreciseReferenceCard extends StatelessWidget {
   final VoidCallback onReplace;
   final ValueChanged<PreciseReferenceImage> onUpdate;
   final VoidCallback onDelete;
-
-  const _PreciseReferenceCard({
-    required this.image,
-    required this.onReplace,
-    required this.onUpdate,
-    required this.onDelete,
-  });
-
+  const _PreciseReferenceCard(
+      {required this.image,
+      required this.onReplace,
+      required this.onUpdate,
+      required this.onDelete});
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.45,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
+  Widget build(BuildContext context) => FrostedSurface(
+      radius: 18,
+      padding: const EdgeInsets.all(14),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              IconButton.outlined(
-                tooltip: '删除参照图像',
+          _ReferencePreview(path: image.path),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            key: ValueKey(image.referenceType),
+            initialValue: image.referenceType,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: '参考类型'),
+            items: const [
+              DropdownMenuItem(
+                  value: 'character', child: Text('角色 · Character')),
+              DropdownMenuItem(value: 'style', child: Text('画风 · Style')),
+              DropdownMenuItem(
+                  value: 'character&style',
+                  child: Text('角色与画风 · Character & Style')),
+            ],
+            onChanged: (value) {
+              if (value != null) onUpdate(image.copyWith(referenceType: value));
+            },
+          ),
+          Wrap(alignment: WrapAlignment.end, children: [
+            TextButton.icon(
+                onPressed: onReplace,
+                icon: const Icon(Icons.swap_horiz_rounded),
+                label: const Text('替换')),
+            IconButton(
                 onPressed: onDelete,
-                style: IconButton.styleFrom(
-                  foregroundColor: theme.colorScheme.primary,
-                  side: BorderSide(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.45),
-                  ),
-                ),
-                icon: const Icon(CupertinoIcons.trash, size: 17),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('有效', style: TextStyle(fontWeight: FontWeight.w700)),
-                    SizedBox(width: 6),
-                    Icon(CupertinoIcons.check_mark, size: 16),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: image.referenceType,
-                  isExpanded: true,
-                  decoration: const InputDecoration(isDense: true),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'character&style',
-                      child: Text('角色与画风'),
-                    ),
-                    DropdownMenuItem(value: 'character', child: Text('角色')),
-                    DropdownMenuItem(value: 'style', child: Text('画风')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      onUpdate(image.copyWith(referenceType: value));
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                onTap: () =>
-                    showFullscreenImagePreview(context, imagePath: image.path),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    File(image.path),
-                    width: 106,
-                    height: 160,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 106,
-                      height: 160,
-                      color: theme.colorScheme.errorContainer,
-                      child: Icon(
-                        CupertinoIcons.exclamationmark_triangle,
-                        color: theme.colorScheme.onErrorContainer,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.bottomRight,
-                  child: TextButton.icon(
-                    onPressed: onReplace,
-                    icon: const Icon(
-                      CupertinoIcons.arrow_2_circlepath,
-                      size: 15,
-                    ),
-                    label: const Text('替换图片'),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
+                tooltip: '删除参考图',
+                icon: const Icon(Icons.delete_outline_rounded)),
+          ]),
           _PreciseReferenceSlider(
-            label: '强度',
-            value: image.strength,
-            onChanged: (value) => onUpdate(image.copyWith(strength: value)),
-          ),
+              label: 'Strength · 强度',
+              value: image.strength,
+              onChanged: (value) => onUpdate(image.copyWith(strength: value))),
+          _PreciseReferenceSlider(
+              label: 'Fidelity · 保真度',
+              value: image.fidelity,
+              onChanged: (value) => onUpdate(image.copyWith(fidelity: value))),
         ],
-      ),
-    );
-  }
+      ));
 }
 
 class _PreciseReferenceSlider extends StatelessWidget {
@@ -3686,12 +3547,13 @@ class _CharacterReferenceCard extends StatelessWidget {
             value: image.strength,
             onChanged: (value) => onUpdate(image.copyWith(strength: value)),
           ),
-          _ReferenceSlider(
-            label: '信息提取',
-            value: image.informationExtracted,
-            onChanged: (value) =>
-                onUpdate(image.copyWith(informationExtracted: value)),
-          ),
+          if (image.vibeLibraryId == null)
+            _ReferenceSlider(
+              label: '信息提取',
+              value: image.informationExtracted,
+              onChanged: (value) =>
+                  onUpdate(image.copyWith(informationExtracted: value)),
+            ),
         ],
       ),
     );

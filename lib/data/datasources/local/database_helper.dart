@@ -191,6 +191,8 @@ class DatabaseHelper {
         encoded_vibe TEXT NOT NULL DEFAULT '',
         encoded_vibe_path TEXT,
         encoded_model TEXT,
+        information_extracted REAL NOT NULL DEFAULT 1.0,
+        source_hash TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -511,6 +513,8 @@ class DatabaseHelper {
 
   Future<void> _ensureVibeEncodingTable(Database db) async {
     await _createVibeEncodingTables(db);
+    await _ensureColumn(db, 'vibe_encodings', 'information_extracted REAL NOT NULL DEFAULT 1.0');
+    await _ensureColumn(db, 'vibe_encodings', 'source_hash TEXT');
     final table = await db.rawQuery('PRAGMA table_info(vibe_encodings)');
     final columns = table.map((column) => column['name'] as String).toSet();
     if (!columns.contains('source_image_path')) {

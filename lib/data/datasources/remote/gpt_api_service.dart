@@ -78,7 +78,7 @@ class GptApiService {
         multiImageFormData.files
             .add(MapEntry('image', await MultipartFile.fromFile(path)));
       }
-      multiImageFormData.fields.add(MapEntry('prompt', task.prompt));
+      multiImageFormData.fields.add(MapEntry('prompt', task.requestPrompt));
       multiImageFormData.fields.add(MapEntry('model', task.model));
       multiImageFormData.fields
           .add(MapEntry('size', task.size ?? '${task.width}x${task.height}'));
@@ -112,7 +112,7 @@ class GptApiService {
     final size = task.size ?? '${task.width}x${task.height}';
     return {
       'model': task.model,
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       'size': size,
       'response_format': 'url',
     };

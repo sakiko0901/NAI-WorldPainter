@@ -236,7 +236,7 @@ void main() {
     );
   });
 
-  test('旧 Precise 草稿会保留有效字段并移除可变 fidelity', () async {
+  test('Precise 草稿会保留保真度', () async {
     SharedPreferences.setMockInitialValues({
       AppConstants.keyPreciseReferencesDraft: jsonEncode([
         {
@@ -259,7 +259,7 @@ void main() {
     final saved = jsonDecode(
       preferences.getString(AppConstants.keyPreciseReferencesDraft)!,
     ) as List;
-    expect(saved.single, isNot(contains('fidelity')));
+    expect(saved.single['fidelity'], 0.4);
   });
 
   test('角色精细参考不会迁移或在读取时清空', () async {

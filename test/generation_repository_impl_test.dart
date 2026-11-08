@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:nai_huishi/data/datasources/remote/gpt_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/nano_banana_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/novelai_api_service.dart';
@@ -29,6 +31,75 @@ const _ikunEndpoint = ApiEndpoint(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+      'official Vibe caches content/model/extraction and saves reusable library entries',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final tokens = OfficialNovelAiTokenStore();
+    await tokens.write('test-token');
+    final api = _EncodingApi();
+    final library = _EncodingLibrary();
+    final repository = GenerationRepositoryImpl(
+        apiService: _RecordingNovelAiService(),
+        officialApiService: api,
+        officialTokenStore: tokens,
+        gptApiService: GptApiService(Dio()),
+        nanoApiService: NanoBananaApiService(Dio()),
+        settingsRepo:
+            _FakeSettingsRepository(endpoints: const [], activeId: ''),
+        vibeEncodingRepo: library);
+    final dir = await Directory.systemTemp.createTemp('vibe-cache-test');
+    addTearDown(() => dir.delete(recursive: true));
+    final source = await File('${dir.path}/image.png').writeAsBytes([1, 2, 3]);
+    final copy = await source.copy('${dir.path}/copy.png');
+    GenerationTask task(String path, double info,
+            {String model = 'nai-diffusion-4-5-full'}) =>
+        _task(
+            endpointId: AppConstants.novelAiOfficialEndpointId,
+            protocol: AppConstants.novelAiOfficialProtocol,
+            vibeReferences: [
+              CharacterReferenceImage(path: path, informationExtracted: info)
+            ]).copyWith(model: model);
+    await repository.submitGeneration(task(source.path, .7));
+    await repository.submitGeneration(task(copy.path, .7));
+    expect(api.encodes, 1);
+    expect(library.entries, hasLength(1));
+    await repository.submitGeneration(task(source.path, .8));
+    expect(api.encodes, 2);
+    await repository
+        .submitGeneration(task(source.path, .7, model: 'nai-diffusion-4-full'));
+    expect(api.encodes, 3);
+    final saved = library.entries.first;
+    await repository.submitGeneration(_task(
+        endpointId: AppConstants.novelAiOfficialEndpointId,
+        protocol: AppConstants.novelAiOfficialProtocol,
+        vibeReferences: [
+          CharacterReferenceImage(path: '', vibeLibraryId: saved.id)
+        ]).copyWith(model: saved.encodedModel));
+    expect(api.encodes, 3, reason: 'imported encoding needs no source image');
+  });
+
+  test('official payload maps fidelity to one minus the slider value',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('precise-payload');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = await File('${dir.path}/ref.png')
+        .writeAsBytes(img.encodePng(img.Image(width: 4, height: 4)));
+    final payload = await OfficialNovelAiApiService(Dio()).buildPayload(_task()
+        .copyWith(model: 'nai-diffusion-4-5-full', preciseReferences: [
+      PreciseReferenceImage(
+          path: file.path, fidelity: .35, referenceType: 'style')
+    ]));
+    final params = payload['parameters'] as Map;
+    expect(
+        (params['director_reference_secondary_strength_values'] as List).single,
+        closeTo(.65, .00001));
+    expect(
+        (params['director_reference_descriptions'] as List).single['caption']
+            ['base_caption'],
+        'style');
+  });
 
   for (final custom in [false, true]) {
     for (final enabled in <bool?>[null, false, true]) {
@@ -418,4 +489,56 @@ class _FakeSettingsRepository implements SettingsRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _EncodingApi extends OfficialNovelAiApiService {
+  _EncodingApi() : super(Dio());
+  int encodes = 0;
+  @override
+  OfficialNovelAiApiService forBaseUrl(String baseUrl) => this;
+  @override
+  Future<String> encodeVibeReference(
+      {required String imagePath,
+      required String model,
+      required double informationExtracted,
+      required String token}) async {
+    encodes++;
+    return 'AQID';
+  }
+
+  @override
+  Future<GenerationTask> generateImageStream(GenerationTask task, String token,
+          {void Function(Uint8List, int?)? onFrame}) async =>
+      task;
+}
+
+class _EncodingLibrary extends _FakeVibeEncodingRepository {
+  final entries = <VibeEncoding>[];
+  @override
+  Future<List<VibeEncoding>> getAll() async => entries;
+  @override
+  Future<VibeEncoding?> getById(int id) async =>
+      entries.where((e) => e.id == id).firstOrNull;
+  @override
+  Future<VibeEncoding> createFromEncoding(
+      {required String title,
+      required String encodedVibe,
+      required String sourceImagePath,
+      String? encodedModel,
+      double informationExtracted = 1,
+      String? sourceHash}) async {
+    final entry = VibeEncoding(
+        id: entries.length + 1,
+        title: title,
+        thumbnailPath: '',
+        sourceImagePath: sourceImagePath,
+        encodedVibe: encodedVibe,
+        encodedModel: encodedModel,
+        informationExtracted: informationExtracted,
+        sourceHash: sourceHash,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026));
+    entries.add(entry);
+    return entry;
+  }
 }

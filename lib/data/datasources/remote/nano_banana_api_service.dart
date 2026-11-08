@@ -97,7 +97,7 @@ class NanoBananaApiService {
     final aspectRatio = task.size ?? '1:1';
     final imageSize = task.nanoImageSize ?? '1K';
     final enrichedPrompt =
-        '[aspect_ratio:$aspectRatio,image_size:$imageSize] ${task.prompt}';
+        '[aspect_ratio:$aspectRatio,image_size:$imageSize] ${task.requestPrompt}';
 
     return {
       'contents': [

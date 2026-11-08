@@ -16,12 +16,16 @@ class ManageVibeEncodingsUseCase {
     required String encodedVibe,
     required String sourceImagePath,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   }) =>
       _repository.createFromEncoding(
         title: title,
         encodedVibe: encodedVibe,
         sourceImagePath: sourceImagePath,
         encodedModel: encodedModel,
+        informationExtracted: informationExtracted,
+        sourceHash: sourceHash,
       );
 
   Future<List<VibeEncoding>> createManyFromEncodings({
@@ -29,12 +33,16 @@ class ManageVibeEncodingsUseCase {
     required String sourceImagePath,
     required List<String> encodedVibes,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   }) =>
       _repository.createManyFromEncodings(
         titlePrefix: titlePrefix,
         sourceImagePath: sourceImagePath,
         encodedVibes: encodedVibes,
         encodedModel: encodedModel,
+        informationExtracted: informationExtracted,
+        sourceHash: sourceHash,
       );
 
   Future<VibeEncoding> updateTitle(VibeEncoding encoding, String title) =>

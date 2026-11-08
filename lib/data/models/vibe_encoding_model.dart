@@ -9,6 +9,9 @@ class VibeEncodingModel {
         encodedVibe: row['encoded_vibe'] as String? ?? '',
         encodedVibePath: row['encoded_vibe_path'] as String?,
         encodedModel: row['encoded_model'] as String?,
+        informationExtracted:
+            (row['information_extracted'] as num?)?.toDouble() ?? 1.0,
+        sourceHash: row['source_hash'] as String?,
         createdAt:
             DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
         updatedAt:
@@ -23,6 +26,8 @@ class VibeEncodingModel {
         'encoded_vibe': value.encodedVibe,
         'encoded_vibe_path': value.encodedVibePath,
         'encoded_model': value.encodedModel,
+        'information_extracted': value.informationExtracted,
+        'source_hash': value.sourceHash,
         'created_at': value.createdAt.millisecondsSinceEpoch,
         'updated_at': value.updatedAt.millisecondsSinceEpoch,
       };

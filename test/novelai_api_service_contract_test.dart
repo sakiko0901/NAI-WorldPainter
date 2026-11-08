@@ -70,6 +70,16 @@ void main() {
           request.response.add(data);
           await request.response.flush();
         }
+      } else if (request.uri.path == ApiConstants.officialGenerateImage &&
+          request.headers.value('accept') == 'application/json') {
+        final image = img.encodePng(img.Image(width: 2, height: 2));
+        request.response
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'images': [
+              {'image': base64Encode(image)}
+            ]
+          }));
       } else if (request.uri.path.startsWith('/origin/') ||
           request.uri.path == ApiConstants.officialGenerateImage) {
         final archive = Archive()
@@ -91,6 +101,70 @@ void main() {
   });
 
   tearDown(() => server.close(force: true));
+
+  test(
+      'official precise reference sends padded PNGs in a synchronous JSON request',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('nai_precise_');
+    addTearDown(() => directory.delete(recursive: true));
+    final portrait = img.Image(width: 8, height: 16);
+    img.fill(portrait, color: img.ColorRgb8(255, 0, 0));
+    final source = await File('${directory.path}/portrait.jpg')
+        .writeAsBytes(img.encodeJpg(portrait));
+    final result = await OfficialNovelAiApiService(
+      Dio(BaseOptions(baseUrl: baseUri.toString())),
+    ).generateImage(
+      _task(model: 'nai-diffusion-4-5-full', preciseReferences: [
+        PreciseReferenceImage(path: source.path, strength: 0.7, fidelity: 0.35),
+      ]).copyWith(transparentBackground: true),
+      'key',
+    );
+    addTearDown(() => _deleteIfPresent(result.imagePath));
+
+    final request = requests.single;
+    expect(request.path, ApiConstants.officialGenerateImage);
+    expect(request.headers['content-type'], startsWith('application/json'));
+    final body = _body(request);
+    expect(body['action'], 'generate');
+    expect(body['input'], 'transparent background, 1girl');
+    expect(body['parameters']['v4_prompt']['caption']['base_caption'],
+        body['input']);
+    expect(result.prompt, '1girl');
+    final params = body['parameters'] as Map;
+    expect(params, isNot(contains('director_reference_images_cached')));
+    final image = img.decodePng(base64Decode(
+        (params['director_reference_images'] as List).single as String))!;
+    expect((image.width, image.height), (1024, 1536));
+    expect(image.getPixel(0, 768).r, 0);
+    expect(image.getPixel(512, 768).r, greaterThan(250));
+    expect(params['director_reference_strength_values'], [0.7]);
+    expect(
+        (params['director_reference_secondary_strength_values'] as List).single,
+        closeTo(0.65, 0.00001));
+    expect(
+        img.decodePng(await File(result.imagePath!).readAsBytes()), isNotNull);
+  });
+
+  test('official V4 and V5 reject precise references before sending', () async {
+    final service = OfficialNovelAiApiService(
+        Dio(BaseOptions(baseUrl: baseUri.toString())));
+    for (final model in ['nai-diffusion-4-full', 'nai-diffusion-5-full']) {
+      await expectLater(
+        service.generateImage(
+          _task(model: model, preciseReferences: const [
+            PreciseReferenceImage(path: 'unused.png'),
+          ]),
+          'key',
+        ),
+        throwsA(isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('仅支持 V4.5'),
+        )),
+      );
+    }
+    expect(requests, isEmpty);
+  });
 
   for (final model in ['nai-diffusion-4-5-full', 'nai-diffusion-5-full']) {
     for (final stream in [false, true]) {
@@ -1212,6 +1286,7 @@ void main() {
             path: source.path,
             referenceType: 'character',
             strength: 0.7,
+            fidelity: 0.4,
           ),
         ],
       ),
@@ -1227,7 +1302,7 @@ void main() {
         'reference_image': base64Encode(const [1, 2, 3]),
         'reference_type': 'character',
         'strength': 0.7,
-        'fidelity': 1.0,
+        'fidelity': 0.4,
       },
     ]);
   });

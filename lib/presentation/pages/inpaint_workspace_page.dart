@@ -3,6 +3,7 @@ import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
 import 'package:nai_huishi/presentation/widgets/batch_generation_control.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_brush_sheet.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_editor_field.dart';
+import 'package:nai_huishi/presentation/widgets/emphasis_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -1428,7 +1429,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           ]),
         ),
         const SizedBox(height: 12),
-        _buildPromptPanel(colors),
+        ListenableBuilder(
+          listenable: _generation,
+          builder: (context, _) => _buildPromptPanel(colors),
+        ),
         const SizedBox(height: 12),
         _buildCharacterPrompts(colors),
       ],
@@ -1468,6 +1472,14 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                     ? 'inpaint-negative-prompt'
                     : 'inpaint-positive-prompt'),
                 controller: negative ? _negativeController : _promptController,
+                showFooter: !negative,
+                transparentBackground: _generation.inpaintTransparentBackground,
+                onTransparentBackgroundChanged: (value) => _generation
+                    .updateTransparentBackground(value, inpaint: true),
+                numericEmphasisEnabled: EmphasisController.modelSupportsNumeric(
+                  _generation.currentModelOption?.actualModel ??
+                      _generation.selectedModel,
+                ),
                 enabled: !_busy,
                 hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',
                 onChanged: negative

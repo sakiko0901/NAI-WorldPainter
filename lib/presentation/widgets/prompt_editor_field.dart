@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/prompt_footer.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
@@ -15,6 +16,10 @@ class PromptEditorField extends StatelessWidget {
     required this.editorTitle,
     required this.onExpandedSubmit,
     this.enabled = true,
+    this.showFooter = false,
+    this.transparentBackground = false,
+    this.onTransparentBackgroundChanged,
+    this.numericEmphasisEnabled = true,
     this.showExpandButton = true,
   });
 
@@ -27,71 +32,85 @@ class PromptEditorField extends StatelessWidget {
   final String editorTitle;
   final Future<void> Function(String value) onExpandedSubmit;
   final bool enabled;
+  final bool showFooter;
+  final bool transparentBackground;
+  final ValueChanged<bool>? onTransparentBackgroundChanged;
+  final bool numericEmphasisEnabled;
   final bool showExpandButton;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        PromptTagField(
-          fieldKey: fieldKey,
-          enabled: enabled,
-          controller: controller,
-          focusNode: focusNode,
-          minLines: 6,
-          maxLines: 14,
-          style: TextStyle(fontSize: 14, height: 1.5, color: textColor),
-          decoration: InputDecoration(
-            hintText: hintText,
-            hintStyle: TextStyle(
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.55),
-            ),
-            fillColor: Colors.transparent,
-            border: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            contentPadding: EdgeInsets.only(right: showExpandButton ? 48 : 0),
-          ),
-          onChanged: onChanged,
-        ),
-        if (showExpandButton)
-          Positioned(
-            top: 0,
-            right: -4,
-            child: IconButton(
-              onPressed: !enabled
-                  ? null
-                  : () => openExpandedEditor(
-                        context: context,
-                        title: editorTitle,
-                        initialValue: controller.text,
-                        onSubmitted: onExpandedSubmit,
-                      ),
-              tooltip: '放大编辑',
-              visualDensity: VisualDensity.standard,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              icon: Icon(
-                CupertinoIcons.arrow_up_left_arrow_down_right,
-                size: 15,
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Stack(
+        children: [
+          PromptTagField(
+            fieldKey: fieldKey,
+            numericEmphasisEnabled: numericEmphasisEnabled,
+            enabled: enabled,
+            controller: controller,
+            focusNode: focusNode,
+            minLines: 6,
+            maxLines: 14,
+            style: TextStyle(fontSize: 14, height: 1.5, color: textColor),
+            decoration: InputDecoration(
+              hintText: hintText,
+              hintStyle: TextStyle(
                 color: Theme.of(context)
                     .colorScheme
                     .onSurfaceVariant
-                    .withValues(alpha: 0.45),
+                    .withValues(alpha: 0.55),
+              ),
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              contentPadding: EdgeInsets.only(right: showExpandButton ? 48 : 0),
+            ),
+            onChanged: onChanged,
+          ),
+          if (showExpandButton)
+            Positioned(
+              top: 0,
+              right: -4,
+              child: IconButton(
+                onPressed: !enabled
+                    ? null
+                    : () => openExpandedEditor(
+                          context: context,
+                          title: editorTitle,
+                          initialValue: controller.text,
+                          numericEmphasisEnabled: numericEmphasisEnabled,
+                          onSubmitted: onExpandedSubmit,
+                        ),
+                tooltip: '放大编辑',
+                visualDensity: VisualDensity.standard,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: Icon(
+                  CupertinoIcons.arrow_up_left_arrow_down_right,
+                  size: 15,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant
+                      .withValues(alpha: 0.45),
+                ),
               ),
             ),
-          ),
-      ],
-    );
+        ],
+      ),
+      if (showFooter)
+        PromptFooter(
+            transparentBackground: transparentBackground,
+            onTransparentBackgroundChanged:
+                enabled ? onTransparentBackgroundChanged : null),
+    ]);
   }
 
   static Future<void> openExpandedEditor({
     required BuildContext context,
     required String title,
     required String initialValue,
+    bool numericEmphasisEnabled = true,
     required Future<void> Function(String value) onSubmitted,
   }) =>
       showModalBottomSheet<void>(
@@ -101,6 +120,7 @@ class PromptEditorField extends StatelessWidget {
         builder: (context) => _ExpandedPromptEditor(
           title: title,
           initialValue: initialValue,
+          numericEmphasisEnabled: numericEmphasisEnabled,
           onSubmitted: onSubmitted,
         ),
       );
@@ -110,11 +130,13 @@ class _ExpandedPromptEditor extends StatefulWidget {
   const _ExpandedPromptEditor({
     required this.title,
     required this.initialValue,
+    required this.numericEmphasisEnabled,
     required this.onSubmitted,
   });
 
   final String title;
   final String initialValue;
+  final bool numericEmphasisEnabled;
   final Future<void> Function(String value) onSubmitted;
 
   @override
@@ -192,6 +214,7 @@ class _ExpandedPromptEditorState extends State<_ExpandedPromptEditor> {
               Expanded(
                 child: PromptTagField(
                   controller: controller,
+                  numericEmphasisEnabled: widget.numericEmphasisEnabled,
                   autofocus: true,
                   minLines: null,
                   maxLines: null,

@@ -333,7 +333,7 @@ class NovelAiApiService {
         'reference_image': referenceImage,
         'reference_type': reference.referenceType,
         'strength': reference.strength,
-        'fidelity': 1.0,
+        'fidelity': reference.fidelity.clamp(0.0, 1.0),
       });
     }
 
@@ -343,7 +343,7 @@ class NovelAiApiService {
             : 'b64_json';
     return {
       'novelai_operation': 'precise-reference',
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
         'negative_prompt': task.negativePrompt,
       'model': task.model,
@@ -411,7 +411,7 @@ class NovelAiApiService {
     final characters = _buildCharacterPrompts(task.characters);
     return {
       'model': _normalize7877Model(task.model),
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       'n': 1,
       'size': '${task.width}x${task.height}',
       'width': task.width,
@@ -592,7 +592,7 @@ class NovelAiApiService {
     }
 
     return {
-      'input': task.prompt,
+      'input': task.requestPrompt,
       'model': _normalize7877Model(
         action == 'infill' ? _nativeInpaintingModel(task.model) : task.model,
       ),
@@ -754,7 +754,7 @@ class NovelAiApiService {
         is7877: is7877,
         inpainting: operation == 'inpainting',
       ),
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       'n': 1,
       'size': '${task.width}x${task.height}',
       'width': task.width,
@@ -835,7 +835,7 @@ class NovelAiApiService {
       final characterPrompts = _buildCharacterPrompts(task.characters);
       return {
         'model': _normalize7877Model(task.model),
-        'prompt': task.prompt,
+        'prompt': task.requestPrompt,
         'image': base64Encode(await file.readAsBytes()),
         'strength': task.img2imgStrength ?? 0.7,
         'noise': 0.0,
@@ -878,7 +878,7 @@ class NovelAiApiService {
     return {
       'novelai_operation': 'img2img',
       'model': task.model,
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
         'negative_prompt': task.negativePrompt,
       'image': base64Encode(await file.readAsBytes()),
@@ -920,7 +920,7 @@ class NovelAiApiService {
     final characterNegativePrompt =
         _buildIkunCharacterNegativePrompt(task, characters);
     return {
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       'model': task.model,
       'n': 1,
       'size': '${task.width}x${task.height}',
@@ -1287,7 +1287,7 @@ class NovelAiApiService {
       final characterPrompts = _buildCharacterPrompts(_enabledCharacters(task));
       return {
         'model': _normalize7877Model(task.model),
-        'prompt': task.prompt,
+        'prompt': task.requestPrompt,
         'image': base64Encode(await source.readAsBytes()),
         'mask': base64Encode(await mask.readAsBytes()),
         'strength': task.inpaintStrength ?? 1.0,
@@ -1321,7 +1321,7 @@ class NovelAiApiService {
     return {
       'novelai_operation': 'inpainting',
       'model': task.model,
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       if (task.negativePrompt != null && task.negativePrompt!.isNotEmpty)
         'negative_prompt': task.negativePrompt,
       'image': base64Encode(await source.readAsBytes()),
@@ -1352,7 +1352,7 @@ class NovelAiApiService {
 
   String _buildStructuredPrompt(GenerationTask task) {
     return jsonEncode({
-      'prompt': task.prompt,
+      'prompt': task.requestPrompt,
       'size': [task.width, task.height],
     });
   }

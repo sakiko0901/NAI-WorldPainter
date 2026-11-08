@@ -9,12 +9,16 @@ abstract class VibeEncodingRepository {
     required String encodedVibe,
     required String sourceImagePath,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   });
   Future<List<VibeEncoding>> createManyFromEncodings({
     required String titlePrefix,
     required String sourceImagePath,
     required List<String> encodedVibes,
     String? encodedModel,
+    double informationExtracted = 1.0,
+    String? sourceHash,
   });
   Future<VibeEncoding> updateTitle(VibeEncoding encoding, String title);
   Future<void> delete(int id);

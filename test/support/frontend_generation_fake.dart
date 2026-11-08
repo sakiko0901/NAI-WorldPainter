@@ -170,9 +170,24 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   List<String> get availableResolutions => ['832x1216', '1024x1024'];
   @override
+  bool transparentBackground = false;
+  @override
+  bool inpaintTransparentBackground = false;
+  @override
+  void updateTransparentBackground(bool value, {bool inpaint = false}) {
+    if (inpaint) {
+      inpaintTransparentBackground = value;
+    } else {
+      transparentBackground = value;
+    }
+    notifyListeners();
+  }
+  @override
   bool get supportsPreciseReferences => false;
   @override
   bool get supportsVibeReferences => false;
+  @override
+  int get maxVibeReferences => 16;
   @override
   bool get supportsCharacterPrompts => true;
   @override

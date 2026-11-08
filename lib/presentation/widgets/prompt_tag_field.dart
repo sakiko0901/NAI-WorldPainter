@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/emphasis_controller.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show PointerDeviceKind;
@@ -20,6 +21,7 @@ class PromptTagField extends StatefulWidget {
       this.focusNode,
       this.onChanged,
       this.enabled = true,
+      this.numericEmphasisEnabled = true,
       this.autofocus = false,
       this.minLines,
       this.maxLines = 1,
@@ -34,6 +36,7 @@ class PromptTagField extends StatefulWidget {
   final FocusNode? focusNode;
   final ValueChanged<String>? onChanged;
   final bool enabled;
+  final bool numericEmphasisEnabled;
   final bool autofocus;
   final int? minLines;
   final int? maxLines;
@@ -51,6 +54,23 @@ class PromptTagField extends StatefulWidget {
 class _PromptTagFieldState extends State<PromptTagField>
     with WidgetsBindingObserver {
   final _anchor = GlobalKey();
+  late final EmphasisController _displayController;
+  bool _syncingDisplay = false;
+
+  void _syncToDisplay() {
+    if (_syncingDisplay) return;
+    _syncingDisplay = true;
+    _displayController.value = widget.controller.value;
+    _syncingDisplay = false;
+  }
+
+  void _syncFromDisplay() {
+    if (_syncingDisplay) return;
+    _syncingDisplay = true;
+    widget.controller.value = _displayController.value;
+    _syncingDisplay = false;
+  }
+
   final _tapGroup = Object();
   final _textScroll = ScrollController();
   final _listScroll = ScrollController();
@@ -76,6 +96,11 @@ class _PromptTagFieldState extends State<PromptTagField>
   @override
   void initState() {
     super.initState();
+    _displayController = EmphasisController()
+      ..numericEmphasisEnabled = widget.numericEmphasisEnabled
+      ..value = widget.controller.value;
+    _displayController.addListener(_syncFromDisplay);
+    widget.controller.addListener(_syncToDisplay);
     _service = widget.service ?? TagCompletionService.instance;
     _service.addListener(_settingsChanged);
     _previous = widget.controller.value;
@@ -101,7 +126,11 @@ class _PromptTagFieldState extends State<PromptTagField>
   @override
   void didUpdateWidget(covariant PromptTagField oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _displayController.numericEmphasisEnabled = widget.numericEmphasisEnabled;
     if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_syncToDisplay);
+      widget.controller.addListener(_syncToDisplay);
+      _syncToDisplay();
       oldWidget.controller.removeListener(_textChanged);
       widget.controller.addListener(_textChanged);
       _previous = widget.controller.value;
@@ -135,6 +164,8 @@ class _PromptTagFieldState extends State<PromptTagField>
     WidgetsBinding.instance.removeObserver(this);
     _dismiss();
     _parentScroll?.removeListener(_dismiss);
+    widget.controller.removeListener(_syncToDisplay);
+    _displayController.dispose();
     widget.controller.removeListener(_textChanged);
     _service.removeListener(_settingsChanged);
     _detachFocus(widget.focusNode);
@@ -597,7 +628,7 @@ class _PromptTagFieldState extends State<PromptTagField>
       child: TextField(
         key: widget.fieldKey,
         groupId: _tapGroup,
-        controller: widget.controller,
+        controller: _displayController,
         focusNode: _focus,
         scrollController: _textScroll,
         enabled: widget.enabled,

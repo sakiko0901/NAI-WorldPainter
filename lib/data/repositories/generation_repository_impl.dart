@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'dart:typed_data';
 
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -133,8 +135,8 @@ class GenerationRepositoryImpl implements GenerationRepository {
       final handler = _streamHandlers.remove(task.taskId);
       final hasPrecise = prepared.preciseReferences.isNotEmpty;
       // Older official configurations streamed by default. Relays opt in, since
-      // many only implement the regular endpoint. Multipart references require
-      // the regular endpoint regardless of the preference.
+      // many only implement the regular endpoint. Precise Reference always
+      // uses synchronous generation.
       final canStream = !hasPrecise && (endpoint?.streamEnabled ?? !isCustom);
       if (canStream) {
         return api.generateImageStream(
@@ -197,12 +199,16 @@ class GenerationRepositoryImpl implements GenerationRepository {
         if (saved == null) {
           throw ApiException(message: '已保存的氛围编码不存在，请重新选择');
         }
-      } else if (reference.path.isNotEmpty) {
-        saved = await _vibeEncodingRepo.findBySourceImagePath(reference.path);
+      } else if (reference.path.isNotEmpty && !route.isIkun) {
+        saved = await _findCachedVibe(reference, task.model);
       }
 
       if (saved != null) {
+        if (saved.encodedModel != null && saved.encodedModel != task.model) {
+          throw ApiException(message: '此编码与当前模型不匹配，请选择对应模型或重新添加原图');
+        }
         prepared.add(reference.copyWith(
+          informationExtracted: saved.informationExtracted,
           vibeLibraryId: saved.id,
           encodedVibe: saved.encodedVibe,
           thumbnailPath: saved.thumbnailPath,
@@ -229,6 +235,8 @@ class GenerationRepositoryImpl implements GenerationRepository {
         encodedVibe: encoded,
         sourceImagePath: reference.path,
         encodedModel: task.model,
+        informationExtracted: reference.informationExtracted,
+        sourceHash: await _vibeHash(reference.path),
       );
       prepared.add(reference.copyWith(
         vibeLibraryId: created.id,
@@ -248,8 +256,25 @@ class GenerationRepositoryImpl implements GenerationRepository {
     if (task.vibeReferences.isEmpty) return task;
     final prepared = <CharacterReferenceImage>[];
     for (final reference in task.vibeReferences) {
-      if (reference.path.isEmpty) {
-        throw ApiException(message: '氛围参考图像不可用，请重新选择');
+      if (reference.encodedVibe?.isNotEmpty == true) {
+        prepared.add(reference);
+        continue;
+      }
+      final saved = reference.vibeLibraryId != null
+          ? await _vibeEncodingRepo.getById(reference.vibeLibraryId!)
+          : await _findCachedVibe(reference, task.model);
+      if (reference.vibeLibraryId != null && saved == null) {
+        throw ApiException(message: '已保存的氛围编码不存在，请重新选择');
+      }
+      if (saved != null) {
+        if (saved.encodedModel != null && saved.encodedModel != task.model) {
+          throw ApiException(message: '此编码与当前模型不匹配，请选择对应模型或重新添加原图');
+        }
+        prepared.add(reference.copyWith(
+            encodedVibe: saved.encodedVibe,
+            vibeLibraryId: saved.id,
+            informationExtracted: saved.informationExtracted));
+        continue;
       }
       final encoded = await api.encodeVibeReference(
         imagePath: reference.path,
@@ -257,9 +282,37 @@ class GenerationRepositoryImpl implements GenerationRepository {
         informationExtracted: reference.informationExtracted,
         token: token,
       );
-      prepared.add(reference.copyWith(encodedVibe: encoded));
+      final created = await _vibeEncodingRepo.createFromEncoding(
+        title: _vibeTitleForPath(reference.path),
+        encodedVibe: encoded,
+        sourceImagePath: reference.path,
+        encodedModel: task.model,
+        informationExtracted: reference.informationExtracted,
+        sourceHash: await _vibeHash(reference.path),
+      );
+      prepared.add(
+          reference.copyWith(encodedVibe: encoded, vibeLibraryId: created.id));
     }
     return task.copyWith(vibeReferences: prepared);
+  }
+
+  Future<String> _vibeHash(String path) async =>
+      sha256.convert(await File(path).readAsBytes()).toString();
+
+  Future<VibeEncoding?> _findCachedVibe(
+      CharacterReferenceImage reference, String model) async {
+    if (reference.path.isEmpty) return null;
+    final hash = await _vibeHash(reference.path);
+    final entries = await _vibeEncodingRepo.getAll();
+    for (final entry in entries) {
+      if (entry.sourceHash == hash &&
+          entry.encodedModel == model &&
+          entry.informationExtracted == reference.informationExtracted &&
+          entry.id != null) {
+        return _vibeEncodingRepo.getById(entry.id!);
+      }
+    }
+    return null;
   }
 
   String _vibeTitleForPath(String path) {

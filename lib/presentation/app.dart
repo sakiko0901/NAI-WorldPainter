@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/slow_selection_scroll.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -103,7 +104,7 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
         brightness,
         frostedGlassEnabled: _frostedGlassEnabled,
       ),
-      builder: (context, child) => _buildAppContent(child!),
+      builder: (context, child) => SlowSelectionScroll(child: _buildAppContent(child!)),
       home: HomePage(
         appearanceMode: _appearanceMode,
         onAppearanceChanged: _setAppearance,

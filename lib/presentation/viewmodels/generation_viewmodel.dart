@@ -298,8 +298,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);
     if (_isLimitModel(model)) return false;
-    return _supportsPreciseReference(model) ||
-        (isIkunEndpoint && _isV5ModelId(model));
+    return _supportsPreciseReference(model);
   }
 
   List<ImageModelOption> imageModelOptions = [];
@@ -1625,6 +1624,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       additions.add(CharacterReferenceImage(
         path: encoding.sourceImagePath ?? '',
         vibeLibraryId: id,
+        informationExtracted: encoding.informationExtracted,
         thumbnailPath: encoding.thumbnailPath,
         title: encoding.title,
       ));
@@ -1673,7 +1673,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       CharacterReferenceImage(
         path: encoding.sourceImagePath ?? '',
         strength: current.strength,
-        informationExtracted: current.informationExtracted,
+        informationExtracted: encoding.informationExtracted,
         vibeLibraryId: encoding.id,
         thumbnailPath: encoding.thumbnailPath,
         title: encoding.title,
@@ -1682,7 +1682,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   Future<void> addPreciseReference(String path) async {
-    if (!supportsPreciseReferences) return;
+    if (!supportsPreciseReferences || preciseReferences.length >= 4) return;
     referenceMode = ReferenceMode.precise;
     preciseReferences = [
       ...preciseReferences,
@@ -1860,6 +1860,18 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     notifyListeners();
   }
 
+  bool transparentBackground = false;
+  bool inpaintTransparentBackground = false;
+
+  void updateTransparentBackground(bool value, {bool inpaint = false}) {
+    if (inpaint) {
+      inpaintTransparentBackground = value;
+    } else {
+      transparentBackground = value;
+    }
+    notifyListeners();
+  }
+
   GenerationTask buildInpaintTask({
     required String sourcePath,
     required String maskPath,
@@ -1891,6 +1903,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       endpointId: option?.endpointId ?? _selectedNovelAiEndpointId,
       protocol: option?.protocol,
       prompt: prompt.trim(),
+      transparentBackground: inpaintTransparentBackground,
       negativePrompt: _isGatewayMediumEffort || negativePrompt.trim().isEmpty
           ? null
           : negativePrompt.trim(),
@@ -2122,9 +2135,8 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
         notifyListeners();
         return;
       }
-      if (!_supportsPreciseReference(actualModelId) &&
-          !(isIkunEndpoint && _isV5ModelId(actualModelId))) {
-        errorMessage = '精密参照图像仅支持 NovelAI V4/V4.5 模型，ikun 渠道也支持 V5 模型';
+      if (!_supportsPreciseReference(actualModelId)) {
+        errorMessage = '当前模型不支持精确参考，请切换为该渠道支持的模型';
         notifyListeners();
         return;
       }
@@ -2165,6 +2177,9 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       endpointId: selectedOption?.endpointId ?? _selectedNovelAiEndpointId,
       protocol: selectedOption?.protocol,
       prompt: effectivePrompt,
+      transparentBackground: generationMode == GenerationMode.inpainting
+          ? inpaintTransparentBackground
+          : transparentBackground,
       negativePrompt: (provider == ImageProviderType.gpt ||
               provider == ImageProviderType.nanoBanana ||
               _isGatewayMediumEffort ||
@@ -3173,11 +3188,15 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
   }
 
   bool _supportsPreciseReference(String model) {
+    if (isOfficialEndpoint) {
+      return OfficialNovelAiApiService.supportsPreciseReference(model);
+    }
     final normalized = model.trim().toLowerCase();
     return normalized.startsWith('nai-v4-') ||
         normalized.startsWith('nai-v4.') ||
         normalized.contains('nai-diffusion-4-') ||
-        normalized.contains('nai-diffusion-4.');
+        normalized.contains('nai-diffusion-4.') ||
+        (isIkunEndpoint && _isV5ModelId(model));
   }
 
   /// 官方原生名称与网关别名分别成对切换，保留渠道的模型命名方式。

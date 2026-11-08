@@ -624,12 +624,13 @@ void main() {
     final stageRect = tester.getRect(
       find.byKey(const ValueKey('inpaint-workspace-stage')),
     );
+    final offsetBeforePainting = scrollController.offset;
     final gesture = await tester.startGesture(stageRect.center);
     await tester.pump();
     expect(InpaintWorkspaceCard.gestureActive.value, isTrue);
     await gesture.moveBy(const Offset(0, 60));
     await tester.pump(const Duration(milliseconds: 50));
-    expect(scrollController.offset, 0);
+    expect(scrollController.offset, offsetBeforePainting);
     expect(InpaintWorkspaceCard.gestureActive.value, isTrue);
     await gesture.up();
     await tester.pumpAndSettle();

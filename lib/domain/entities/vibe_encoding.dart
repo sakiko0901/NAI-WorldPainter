@@ -10,6 +10,8 @@ class VibeEncoding extends Equatable {
   final String encodedVibe;
   final String? encodedVibePath;
   final String? encodedModel;
+  final double informationExtracted;
+  final String? sourceHash;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -21,6 +23,8 @@ class VibeEncoding extends Equatable {
     this.encodedVibe = '',
     this.encodedVibePath,
     this.encodedModel,
+    this.informationExtracted = 1.0,
+    this.sourceHash,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -33,6 +37,8 @@ class VibeEncoding extends Equatable {
     String? encodedVibe,
     String? encodedVibePath,
     String? encodedModel,
+    double? informationExtracted,
+    String? sourceHash,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) =>
@@ -44,6 +50,8 @@ class VibeEncoding extends Equatable {
         encodedVibe: encodedVibe ?? this.encodedVibe,
         encodedVibePath: encodedVibePath ?? this.encodedVibePath,
         encodedModel: encodedModel ?? this.encodedModel,
+        informationExtracted: informationExtracted ?? this.informationExtracted,
+        sourceHash: sourceHash ?? this.sourceHash,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
@@ -57,6 +65,8 @@ class VibeEncoding extends Equatable {
         encodedVibe,
         encodedVibePath,
         encodedModel,
+        informationExtracted,
+        sourceHash,
         createdAt,
         updatedAt,
       ];
