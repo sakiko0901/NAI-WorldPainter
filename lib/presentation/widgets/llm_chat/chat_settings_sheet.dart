@@ -1,4 +1,6 @@
-import 'dart:ui';
+import 'package:nai_huishi/presentation/widgets/llm_chat/model_selection_sheet.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/model_connection_button.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +21,7 @@ Future<void> showChatSettingsSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    showDragHandle: false,
     builder: (context) => _ChatSettingsSheet(vm: vm),
   );
 }
@@ -35,13 +38,10 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   late final TextEditingController _systemPromptController;
-  late final TextEditingController _contextLimitController;
-  late final TextEditingController _nsfwBookPathController;
+  late final TextEditingController _negativeV5Controller;
+  late final TextEditingController _negativeV45Controller;
   late final TextEditingController _defaultStyleWordsV5Controller;
   late final TextEditingController _defaultStyleWordsV45Controller;
-
-  bool _nsfwBookLoaded = false;
-  String _nsfwBookStatus = '';
 
   @override
   void initState() {
@@ -49,31 +49,22 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
     final vm = widget.vm;
     _tabController = TabController(length: 2, vsync: this); // 模型配置 / 通用
     _systemPromptController = TextEditingController(text: vm.systemPrompt);
-    _contextLimitController =
-        TextEditingController(text: vm.contextLimit.toString());
-    _nsfwBookPathController = TextEditingController(text: '');
+    _negativeV5Controller =
+        TextEditingController(text: vm.defaultNegativeWordsV5);
+    _negativeV45Controller =
+        TextEditingController(text: vm.defaultNegativeWordsV45);
     _defaultStyleWordsV5Controller =
         TextEditingController(text: vm.defaultStyleWordsV5);
     _defaultStyleWordsV45Controller =
         TextEditingController(text: vm.defaultStyleWordsV45);
-
-    _loadNsfwBookStatus();
-  }
-
-  Future<void> _loadNsfwBookStatus() async {
-    final vm = widget.vm;
-    _nsfwBookLoaded = vm.nsfwBook.isLoaded;
-    _nsfwBookStatus =
-        _nsfwBookLoaded ? '已加载（${vm.nsfwBook.entryCount} 条）' : '未加载';
-    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _systemPromptController.dispose();
-    _contextLimitController.dispose();
-    _nsfwBookPathController.dispose();
+    _negativeV5Controller.dispose();
+    _negativeV45Controller.dispose();
     _defaultStyleWordsV5Controller.dispose();
     _defaultStyleWordsV45Controller.dispose();
     super.dispose();
@@ -82,456 +73,410 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return DraggableScrollableSheet(
-      initialChildSize: 0.85,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      builder: (context, scrollController) => Container(
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF14141A) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        child: Column(
-          children: [
-            // 顶部拖拽条
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        top: false,
+        child: FractionallySizedBox(
+          heightFactor: 0.9,
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.scaffoldBackgroundColor,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(28)),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                children: [
-                  Text(
-                    'LLM 配置',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: theme.colorScheme.onSurface,
-                    ),
+            child: Column(
+              children: [
+                // 顶部拖拽条
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(CupertinoIcons.xmark_circle_fill,
-                        color: theme.colorScheme.onSurfaceVariant
-                            .withValues(alpha: 0.6)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      Text(
+                        '助手设置',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: Icon(CupertinoIcons.xmark_circle_fill,
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.6)),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-            TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabs: const [
-                Tab(text: '模型配置'),
-                Tab(text: '通用'),
+                ),
+                Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    child: DecoratedBox(
+                        decoration: BoxDecoration(
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.04),
+                            borderRadius: BorderRadius.circular(16)),
+                        child: TabBar(
+                          controller: _tabController,
+                          dividerColor: Colors.transparent,
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          indicatorPadding: const EdgeInsets.all(4),
+                          indicator: BoxDecoration(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12)),
+                          tabs: const [
+                            Tab(text: '模型'),
+                            Tab(text: '通用'),
+                          ],
+                          labelColor: theme.colorScheme.primary,
+                          unselectedLabelColor:
+                              theme.colorScheme.onSurfaceVariant,
+                        ))),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildModelTab(),
+                      _buildGeneralTab(),
+                    ],
+                  ),
+                ),
               ],
-              labelColor: theme.colorScheme.primary,
-              unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
-              indicatorColor: theme.colorScheme.primary,
             ),
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildModelTab(),
-                  _buildGeneralTab(),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  // ── 模型配置 tab ──
+  Future<void> _manageProviders() async {
+    await Navigator.push(
+        context,
+        CupertinoPageRoute(
+            builder: (_) => LlmProviderManagePage(vm: widget.vm)));
+    if (mounted) setState(() {});
+  }
+
   Widget _buildModelTab() {
     final theme = Theme.of(context);
-    final vm = widget.vm;
-    final providers = vm.providers;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 供应商管理入口
-          OutlinedButton.icon(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                CupertinoPageRoute(
-                  builder: (_) => LlmProviderManagePage(vm: vm),
-                ),
-              );
-              if (mounted) setState(() {});
-            },
-            icon: const Icon(CupertinoIcons.cube_box),
-            label: const Text('供应商管理'),
-          ),
-          const SizedBox(height: 16),
-          if (providers.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(CupertinoIcons.info_circle,
-                      size: 18, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '尚未配置任何供应商。点击上方"供应商管理"新建一个，然后回到这里为各角色绑定模型。',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            Text('供应商（${providers.length}）',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.onSurfaceVariant,
-                )),
-          const SizedBox(height: 12),
-          _buildRoleSection(
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      children: [
+        Text('选择对话与识图模型', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 16),
+        _buildRoleSection(
             role: LlmProfileRole.main,
             label: '主模型',
-            description: 'Agent 主循环使用，负责工具调用与最终回复',
-          ),
-          const SizedBox(height: 16),
-          _buildRoleSection(
+            description: '编排提示词，调用工具，与你交流'),
+        const SizedBox(height: 16),
+        _buildRoleSection(
             role: LlmProfileRole.vision,
             label: '识图模型',
-            description: '图片理解任务使用，需支持 vision 输入',
-          ),
-          const SizedBox(height: 32),
-        ],
-      ),
+            description:
+                widget.vm.multimodal ? '多模态已开启，当前由主模型看图' : '理解参考图的角色、画风与构图'),
+        const SizedBox(height: 24),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: const Icon(CupertinoIcons.cube_box),
+          title: const Text('供应商管理'),
+          subtitle: Text(widget.vm.providers.isEmpty
+              ? '添加供应商，开始配置模型'
+              : '${widget.vm.providers.length} 个供应商'),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: _manageProviders,
+        ),
+      ],
     );
   }
 
-  Widget _buildRoleSection({
-    required LlmProfileRole role,
-    required String label,
-    required String description,
-  }) {
+  Widget _buildRoleSection(
+      {required LlmProfileRole role,
+      required String label,
+      required String description}) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final vm = widget.vm;
-    final providers = vm.providers;
     final binding = vm.getBinding(role);
-
-    LlmProvider? selectedProvider;
-    if (binding.providerId != null) {
-      for (final p in providers) {
-        if (p.id == binding.providerId) {
-          selectedProvider = p;
-          break;
-        }
-      }
+    LlmProvider? provider;
+    for (final item in vm.providers) {
+      if (item.id == binding.providerId) provider = item;
     }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(label,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.onSurface,
-                  )),
+    final configured = provider != null && binding.model.isNotEmpty;
+    final selectedProvider = provider;
+    return FrostedSurface(
+      blur: 0,
+      radius: 24,
+      padding: EdgeInsets.zero,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Row(children: [
+              Icon(
+                  role == LlmProfileRole.main
+                      ? CupertinoIcons.sparkles
+                      : CupertinoIcons.photo,
+                  size: 19,
+                  color: colors.primary),
               const SizedBox(width: 8),
-              if (binding.isConfigured)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.greenAccent.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text('已配置',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.greenAccent.shade700,
-                      )),
-                )
-              else
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text('未配置',
-                      style: TextStyle(fontSize: 10, color: Colors.orange)),
-                ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(description,
-              style: TextStyle(
-                fontSize: 11,
-                color: theme.colorScheme.onSurfaceVariant,
-              )),
-          const SizedBox(height: 12),
-          _Label('供应商'),
-          DropdownButton<String?>(
-            value: binding.providerId,
-            isExpanded: true,
-            hint: const Text('选择供应商'),
-            items: [
-              const DropdownMenuItem<String?>(
-                value: null,
-                child: Text('（未选择）', style: TextStyle(fontSize: 13)),
-              ),
-              ...providers.map((p) => DropdownMenuItem<String?>(
-                    value: p.id,
-                    child: Text(
-                      '${p.name}  ·  ${p.baseUrl}',
-                      style: const TextStyle(fontSize: 13),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  )),
-            ],
-            onChanged: providers.isEmpty
-                ? null
-                : (newId) async {
-                    final newBinding = LlmRoleBinding(
-                      providerId: newId,
-                      model: '',
-                    );
-                    await vm.setRoleBinding(role, newBinding);
-                    if (mounted) setState(() {});
-                  },
-          ),
-          const SizedBox(height: 12),
-          _Label('模型'),
-          DropdownButton<String>(
-            value: (selectedProvider != null &&
-                    binding.model.isNotEmpty &&
-                    selectedProvider.models.contains(binding.model))
-                ? binding.model
-                : null,
-            isExpanded: true,
-            hint: Text(
-              selectedProvider == null
-                  ? '请先选择供应商'
-                  : (selectedProvider.models.isEmpty
-                      ? '该供应商下没有模型，去供应商管理添加'
-                      : '选择模型'),
-              style: const TextStyle(fontSize: 13),
+              Text(label,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(color: colors.onSurfaceVariant)),
+            ])),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _selectModel(role),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 16, 18),
+              child: Row(children: [
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(configured ? binding.model : '选择模型',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleLarge
+                              ?.copyWith(fontSize: 21, height: 1.25)),
+                      const SizedBox(height: 6),
+                      Text(provider?.name ?? '点击选择供应商与模型',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: colors.primary)),
+                    ])),
+                const SizedBox(width: 12),
+                Icon(Icons.unfold_more_rounded, color: colors.onSurfaceVariant),
+              ]),
             ),
-            items: (selectedProvider?.models ?? const <String>[])
-                .map((m) => DropdownMenuItem<String>(
-                      value: m,
-                      child: Text(m, style: const TextStyle(fontSize: 13)),
-                    ))
-                .toList(),
-            onChanged:
-                (selectedProvider == null || selectedProvider.models.isEmpty)
-                    ? null
-                    : (newModel) async {
-                        if (newModel == null) return;
-                        final provider = selectedProvider;
-                        if (provider == null) return;
-                        final newBinding = LlmRoleBinding(
-                          providerId: provider.id,
-                          model: newModel,
-                        );
-                        await vm.setRoleBinding(role, newBinding);
-                        if (mounted) setState(() {});
-                      },
           ),
+        ),
+        if (role == LlmProfileRole.vision && vm.multimodal)
+          Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(description,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: colors.onSurfaceVariant))),
+        if (configured) ...[
+          Divider(
+              height: 1,
+              indent: 20,
+              endIndent: 20,
+              color: colors.onSurface.withValues(alpha: 0.07)),
+          SwitchListTile.adaptive(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            title: const Text('流式输出'),
+            subtitle: Text(role == LlmProfileRole.vision
+                ? (vm.streamingFor(role) ? '分段接收识图结果' : '完整接收识图结果')
+                : (vm.streamingFor(role) ? '边生成边显示' : '生成完成后显示')),
+            value: vm.streamingFor(role),
+            onChanged: (value) async {
+              await vm.setModelStreaming(role, value);
+              if (mounted) setState(() {});
+            },
+          ),
+          Theme(
+              data: theme.copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: ValueKey(
+                    '${role.name}-${binding.providerId}-${binding.model}'),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 20),
+                childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                title: Text('连接与能力检测', style: theme.textTheme.bodySmall),
+                children: [
+                  ModelConnectionButton(
+                      streaming: vm.streamingFor(role),
+                      apiKey: selectedProvider!.apiKey,
+                      baseUrl: selectedProvider.baseUrl,
+                      model: binding.model)
+                ],
+              )),
         ],
-      ),
+      ]),
+    );
+  }
+
+  Future<void> _selectModel(LlmProfileRole role) async {
+    if (widget.vm.providers.isEmpty) {
+      await _manageProviders();
+      return;
+    }
+    final selected = await showModalBottomSheet<LlmRoleBinding>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (_) => ModelSelectionSheet(
+          providers: widget.vm.providers,
+          selected: widget.vm.getBinding(role),
+          title: role == LlmProfileRole.main ? '选择主模型' : '选择识图模型'),
+    );
+    if (selected != null) await widget.vm.setRoleBinding(role, selected);
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildPromptDefaultsSection({
+    required String version,
+    required TextEditingController styleController,
+    required TextEditingController negativeController,
+  }) {
+    final isV5 = version == 'V5';
+    final savedStyle =
+        isV5 ? widget.vm.defaultStyleWordsV5 : widget.vm.defaultStyleWordsV45;
+    final savedNegative = isV5
+        ? widget.vm.defaultNegativeWordsV5
+        : widget.vm.defaultNegativeWordsV45;
+    return _PromptCard(
+      title: '$version 默认提示词',
+      badge: version,
+      summary:
+          '画风${savedStyle.trim().isEmpty ? "未设置" : "已设置"} · 负面词${savedNegative.trim().isEmpty ? "未设置" : "已设置"}',
+      children: [
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _PromptEditor(
+            label: '画风与画师',
+            controller: styleController,
+            hint: '如：masterpiece, best quality, artist:xxx',
+          ),
+          const SizedBox(height: 16),
+          _PromptEditor(
+            label: '负面提示词',
+            controller: negativeController,
+            hint: '输入希望排除的内容',
+          ),
+          const SizedBox(height: 12),
+          Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: () async {
+                  if (isV5) {
+                    await widget.vm
+                        .setDefaultStyleWordsV5(styleController.text.trim());
+                    await widget.vm.setDefaultNegativeWordsV5(
+                        negativeController.text.trim());
+                  } else {
+                    await widget.vm
+                        .setDefaultStyleWordsV45(styleController.text.trim());
+                    await widget.vm.setDefaultNegativeWordsV45(
+                        negativeController.text.trim());
+                  }
+                  if (mounted) {
+                    setState(() {});
+                    showFloatingToast(context, '$version 默认提示词已保存');
+                  }
+                },
+                child: Text('保存 $version'),
+              )),
+        ]),
+      ],
     );
   }
 
   // ── 通用 tab ──
   Widget _buildGeneralTab() {
-    final theme = Theme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Label('系统提示词'),
-          TextField(
-            controller: _systemPromptController,
-            maxLines: 10,
-            minLines: 4,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
+          _PromptCard(
+            title: '系统提示词',
+            summary:
+                widget.vm.systemPrompt.replaceAll(RegExp(r'\s+'), ' ').trim(),
             children: [
-              TextButton(
-                onPressed: () {
-                  _systemPromptController.text =
-                      AppConstants.defaultLlmSystemPrompt;
-                },
-                child: const Text('恢复默认'),
+              _PromptEditor(
+                label: '助手的角色与行为',
+                controller: _systemPromptController,
+                hint: '描述助手如何理解和回应你的需求',
+                maxLines: 8,
               ),
-              const Spacer(),
-              FilledButton(
-                onPressed: () async {
-                  await widget.vm.setSystemPrompt(_systemPromptController.text);
-                  if (mounted) showFloatingToast(context, '已保存');
-                },
-                child: const Text('保存'),
-              ),
+              const SizedBox(height: 12),
+              Row(children: [
+                TextButton(
+                  onPressed: () {
+                    _systemPromptController.text =
+                        AppConstants.defaultLlmSystemPrompt;
+                  },
+                  child: const Text('恢复默认'),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: () async {
+                    await widget.vm
+                        .setSystemPrompt(_systemPromptController.text);
+                    if (!mounted) return;
+                    setState(() {});
+                    showFloatingToast(context, '系统提示词已保存');
+                  },
+                  child: const Text('保存'),
+                ),
+              ]),
             ],
+          ),
+          const SizedBox(height: 12),
+          _buildPromptDefaultsSection(
+            version: 'V5',
+            styleController: _defaultStyleWordsV5Controller,
+            negativeController: _negativeV5Controller,
+          ),
+          const SizedBox(height: 12),
+          _buildPromptDefaultsSection(
+            version: 'V4.5',
+            styleController: _defaultStyleWordsV45Controller,
+            negativeController: _negativeV45Controller,
           ),
           const SizedBox(height: 24),
-          _Label('上下文条数'),
-          Row(
-            children: [
-              Expanded(
-                child: Slider(
-                  min: 1,
-                  max: 50,
-                  divisions: 49,
-                  value: double.tryParse(_contextLimitController.text) ?? 20,
-                  onChanged: (v) {
-                    _contextLimitController.text = v.toInt().toString();
-                    setState(() {});
+          FrostedSurface(
+              blur: 0,
+              padding: const EdgeInsets.all(4),
+              child: Column(children: [
+                SwitchListTile.adaptive(
+                  title: const Text('多模态'),
+                  subtitle: const Text('直接让主模型理解图片；主模型需支持图片输入和工具调用。'),
+                  value: widget.vm.multimodal,
+                  onChanged: (value) async {
+                    await widget.vm.setMultimodal(value);
+                    if (mounted) setState(() {});
                   },
                 ),
-              ),
-              SizedBox(
-                width: 50,
-                child: Text(
-                  _contextLimitController.text,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.primary,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              IconButton(
-                onPressed: () async {
-                  final v = int.tryParse(_contextLimitController.text) ?? 20;
-                  await widget.vm.setContextLimit(v);
-                  if (mounted) showFloatingToast(context, '已保存');
-                },
-                icon: Icon(CupertinoIcons.checkmark_circle_fill,
-                    color: theme.colorScheme.primary),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _Label('V5 默认画风画师词'),
-          TextField(
-            controller: _defaultStyleWordsV5Controller,
-            maxLines: 3,
-            minLines: 1,
-            decoration: const InputDecoration(
-              hintText: '如：masterpiece, best quality, artist:xxx',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 10),
-          _Label('V4.5 默认画风画师词'),
-          TextField(
-            controller: _defaultStyleWordsV45Controller,
-            maxLines: 3,
-            minLines: 1,
-            decoration: const InputDecoration(
-              hintText: '如：masterpiece, best quality, artist:xxx',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '新会话选择的版本决定使用哪一串，并会自动拼到正向 prompt 最前面；空则不拼。',
-            style: TextStyle(
-              fontSize: 11,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Spacer(),
-              FilledButton(
-                onPressed: () async {
-                  await widget.vm.setDefaultStyleWordsV5(
-                      _defaultStyleWordsV5Controller.text.trim());
-                  await widget.vm.setDefaultStyleWordsV45(
-                      _defaultStyleWordsV45Controller.text.trim());
-                  if (mounted) showFloatingToast(context, '已保存');
-                },
-                child: const Text('保存'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _Label('知识库'),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _nsfwBookStatus,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.onSurfaceVariant,
+                ListTile(
+                  leading: const Icon(Icons.cached),
+                  title: const Text('WD-Tagger 缓存'),
+                  subtitle: const Text(
+                      '仅保存 WD-Tagger 标签；相同图片和标签配置可复用。最多保留 256 条，LLM 识图每次重新请求。'),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      try {
+                        await widget.vm.clearImageAnalysisCache();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('WD-Tagger 缓存已清除')));
+                      } catch (_) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('清除失败，请重试')));
+                      }
+                    },
+                    child: const Text('清除'),
                   ),
                 ),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await widget.vm.reloadNsfwBook();
-                  await _loadNsfwBookStatus();
-                },
-                child: const Text('重新加载'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _nsfwBookPathController,
-            decoration: const InputDecoration(
-              hintText: '外部知识库 JSON 路径（可选）',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
+                const ListTile(
+                    leading: Icon(Icons.all_inclusive),
+                    title: Text('无限条数 · 自动压缩'),
+                    subtitle: Text('完整保留聊天记录，较长对话自动生成历史摘要，保留最近的交流。')),
+              ])),
           const SizedBox(height: 32),
         ],
       ),
@@ -539,22 +484,121 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
   }
 }
 
-class _Label extends StatelessWidget {
-  final String text;
-  const _Label(this.text);
+class _PromptCard extends StatelessWidget {
+  final String title;
+  final String summary;
+  final String? badge;
+  final List<Widget> children;
+
+  const _PromptCard({
+    required this.title,
+    required this.summary,
+    required this.children,
+    this.badge,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return FrostedSurface(
+      blur: 0,
+      radius: 24,
+      child: ExpansionTile(
+        maintainState: true,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        onExpansionChanged: (expanded) {
+          if (!expanded) FocusScope.of(context).unfocus();
+        },
+        leading: Container(
+          width: 42,
+          height: 42,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: colors.primary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: badge == null
+              ? Icon(CupertinoIcons.text_alignleft,
+                  size: 20, color: colors.primary)
+              : Text(badge!,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                      color: colors.primary, fontWeight: FontWeight.w700)),
         ),
+        title: Text(title,
+            style: theme.textTheme.titleSmall
+                ?.copyWith(fontWeight: FontWeight.w600)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 5),
+          child: Text(summary,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: colors.onSurfaceVariant, height: 1.5)),
+        ),
+        children: children,
       ),
     );
+  }
+}
+
+class _PromptEditor extends StatelessWidget {
+  final String label;
+  final String hint;
+  final TextEditingController controller;
+  final int maxLines;
+
+  const _PromptEditor({
+    required this.label,
+    required this.hint,
+    required this.controller,
+    this.maxLines = 5,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide.none,
+    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 9),
+        child: Row(children: [
+          Expanded(
+              child: Text(label,
+                  style: theme.textTheme.labelMedium
+                      ?.copyWith(color: colors.onSurfaceVariant))),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (_, value, __) => Text('${value.text.runes.length} 字',
+                style: theme.textTheme.labelSmall?.copyWith(
+                    color: colors.onSurfaceVariant.withValues(alpha: 0.65))),
+          ),
+        ]),
+      ),
+      TextField(
+        controller: controller,
+        minLines: 3,
+        maxLines: maxLines,
+        style: theme.textTheme.bodyMedium?.copyWith(height: 1.65),
+        decoration: InputDecoration(
+          hintText: hint,
+          filled: true,
+          fillColor: colors.onSurface.withValues(alpha: 0.035),
+          contentPadding: const EdgeInsets.all(16),
+          border: border,
+          enabledBorder: border,
+          focusedBorder: border.copyWith(
+              borderSide:
+                  BorderSide(color: colors.primary.withValues(alpha: 0.5))),
+        ),
+      ),
+    ]);
   }
 }

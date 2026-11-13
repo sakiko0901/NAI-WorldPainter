@@ -57,6 +57,9 @@ void main() {
     ];
     vm.notifyListeners();
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('角色精确参考 · 1/4'));
+    await tester.tap(find.text('角色精确参考 · 1/4'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Fidelity · 保真度: 0.4'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

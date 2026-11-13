@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/data/datasources/remote/app_update_source.dart';
+import 'package:nai_huishi/domain/entities/app_update.dart';
 
 import 'app_update_manifest_test.dart' show manifestJson;
 
@@ -57,6 +59,78 @@ void main() {
     expect((await source.fetchLatest()).versionCode, 11);
     expect(adapter.requests.length, 2);
   });
+
+  for (final apkDigestMatches in [true, false]) {
+    test(
+        'uses API after HTTP 504 and only routes a verified APK ($apkDigestMatches)',
+        () async {
+      final json = manifestJson();
+      final apk = json['apk'] as Map;
+      final manifestBody = jsonEncode(json);
+      final manifestBytes = utf8.encode(manifestBody);
+      final adapter = _Adapter((options) async {
+        if (options.uri == AppUpdateSource.manifestUri) {
+          return ResponseBody.fromString('Gateway timeout', 504);
+        }
+        if (options.uri.path.endsWith('/releases/latest')) {
+          return ResponseBody.fromString(
+              jsonEncode({
+                'tag_name': 'v1.2.5-11',
+                'draft': false,
+                'prerelease': false,
+                'assets': [
+                  {
+                    'name': 'update.json',
+                    'id': 123,
+                    'state': 'uploaded',
+                    'size': manifestBytes.length,
+                    'digest': 'sha256:${sha256.convert(manifestBytes)}',
+                  },
+                  {
+                    'name': 'app-release.apk',
+                    'id': 124,
+                    'state': 'uploaded',
+                    'size': apk['sizeBytes'],
+                    'digest':
+                        apkDigestMatches ? 'sha256:${apk['sha256']}' : 'other',
+                    'browser_download_url': apk['url'],
+                  },
+                ],
+              }),
+              200);
+        }
+        if (options.uri.host == 'api.github.com') {
+          expect(options.uri.path,
+              '/repos/sakiko0901/NAI-WorldPainter/releases/assets/123');
+          expect(options.uri.queryParameters['download'], '1');
+          expect(options.headers['Accept'], 'application/octet-stream');
+          return ResponseBody.fromString('', 302, headers: {
+            'location': [
+              'https://release-assets.githubusercontent.com/update.json?sig=temporary'
+            ],
+          });
+        }
+        return ResponseBody.fromString(manifestBody, 200);
+      });
+      final source = AppUpdateSource(adapter: adapter);
+      addTearDown(source.dispose);
+      final manifest = await source.fetchLatest();
+      expect(manifest.versionCode, 11);
+      expect(
+          manifest.validated().githubApkAssetId, apkDigestMatches ? 124 : null);
+      expect(manifest.toJson(), AppUpdateManifest.fromJson(json).toJson());
+      expect(adapter.requests.map((request) => request.uri.host), [
+        'github.com',
+        'api.github.com',
+        'api.github.com',
+        'release-assets.githubusercontent.com',
+      ]);
+      for (final request in adapter.requests) {
+        expect(request.headers.keys.map((key) => key.toLowerCase()),
+            isNot(contains('authorization')));
+      }
+    });
+  }
 
   for (final url in [
     'https://github.com.evil.invalid/update.json',

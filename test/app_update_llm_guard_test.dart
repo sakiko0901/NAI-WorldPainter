@@ -1,3 +1,4 @@
+import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -28,14 +29,12 @@ class _GatedRepository extends FakeLlmChatRepository {
           .toList();
 
   @override
-  Future<void> deleteMessagesFrom(int messageId, String sessionId) async {
+  Future<LlmSession> forkSession(String sessionId, int messageId) async {
     deleteCalls++;
     if (!deleteEntered.isCompleted) deleteEntered.complete();
     await deleteGate?.future;
     if (failDelete) throw StateError('database deletion failed');
-    for (final message in await super.listMessages(sessionId)) {
-      if (message.id! >= messageId) _deletedIds.add(message.id!);
-    }
+    return super.forkSession(sessionId, messageId);
   }
 
   @override
@@ -108,7 +107,7 @@ void main() {
 
   for (final edit in [false, true]) {
     final action = edit ? 'editAndResend' : 'retryFromIndex';
-    test('$action blocks installation throughout the history deletion await',
+    test('$action blocks installation throughout the branch creation await',
         () async {
       final h = await start();
       final vm = h.viewModel;
@@ -118,7 +117,7 @@ void main() {
       expect(guard.tryBeginInstall(), isFalse,
           reason: 'Protection must be acquired before the first await');
       await repository.deleteEntered.future;
-      expect(vm.isSending, isFalse,
+      expect(vm.isSending, isTrue,
           reason: 'This is the old unprotected preparation window');
       expect(guard.tryBeginInstall(), isFalse);
       expect(await repository.listMessages(vm.activeSessionId!), hasLength(2));
@@ -139,7 +138,7 @@ void main() {
     });
 
     test(
-        '$action refuses before deleting history when installation already owns the lock',
+        '$action refuses before creating a branch when installation already owns the lock',
         () async {
       final h = await start();
       final vm = h.viewModel;
@@ -210,11 +209,12 @@ void main() {
     repository.failDelete = true;
     final before = await repository.listMessages(vm.activeSessionId!);
     final pending = vm.retryFromIndex(0);
-    final failure = expectLater(pending, throwsStateError);
+
     await repository.deleteEntered.future;
     expect(guard.tryBeginInstall(), isFalse);
     repository.deleteGate!.complete();
-    await failure;
+    await pending;
+    expect(vm.errorMessage, contains('创建分支失败'));
     expect(await repository.listMessages(vm.activeSessionId!), before);
     expect(guard.tryBeginInstall(), isTrue);
     expect(h.api.mainCalls, isEmpty);

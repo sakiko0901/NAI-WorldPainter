@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
@@ -15,7 +17,9 @@ class LlmChatLocalDatasource {
   Future<void> _deleteImageFile(String? path) async {
     if (path == null || path.isEmpty) return;
     try {
-      await ImageUtils.deleteImage(path);
+      for (final file in LlmMessage.decodeImagePaths(path)) {
+        await ImageUtils.deleteImage(file);
+      }
     } catch (_) {
       // 忽略文件删除失败
     }
@@ -147,7 +151,9 @@ class LlmChatLocalDatasource {
       'session_id': message.sessionId,
       'role': message.roleString,
       'content': message.content,
-      'image_path': message.imagePath,
+      'image_path': message.imagePaths.isNotEmpty
+          ? jsonEncode(message.imagePaths)
+          : message.imagePath,
       'tool_calls': toolCallsJson,
       'interaction_json': message.interaction?.toJsonString(),
       'created_at': message.createdAt.millisecondsSinceEpoch,
@@ -259,7 +265,9 @@ class LlmChatLocalDatasource {
       sessionId: row['session_id'] as String,
       role: LlmMessage.roleFromString(row['role'] as String),
       content: row['content'] as String,
-      imagePath: row['image_path'] as String?,
+      imagePath:
+          LlmMessage.decodeImagePaths(row['image_path'] as String?).firstOrNull,
+      imagePaths: LlmMessage.decodeImagePaths(row['image_path'] as String?),
       toolCallsJson: toolCallsJson,
       agentTimeline: AgentEvent.fromJsonList(toolCallsJson),
       interaction: interaction,

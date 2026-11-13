@@ -1,3 +1,4 @@
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -917,6 +918,62 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     _promptVersion++;
     await _manageSettings.setInpaintNegativePromptDraft(value);
     notifyListeners();
+  }
+
+  PromptDraftSnapshot capturePromptDraft() => PromptDraftSnapshot(
+      positive: prompt,
+      negative: negativePrompt,
+      inpaintPositive: inpaintPrompt,
+      inpaintNegative: inpaintNegativePrompt,
+      characters: characters,
+      inpainting: isInpaintingMode,
+      version: version);
+
+  Future<bool> restorePromptDraft(
+      PromptDraftSnapshot snapshot, int expectedVersion) async {
+    if (version != expectedVersion || isInpaintingMode != snapshot.inpainting)
+      return false;
+    prompt = snapshot.positive;
+    negativePrompt = snapshot.negative;
+    inpaintPrompt = snapshot.inpaintPositive;
+    inpaintNegativePrompt = snapshot.inpaintNegative;
+    characters = List.of(snapshot.characters);
+    _promptVersion++;
+    await Future.wait([
+      _manageSettings.setPromptDraft(prompt),
+      _manageSettings.setNegativePromptDraft(negativePrompt),
+      _manageSettings.setInpaintPromptDraft(inpaintPrompt),
+      _manageSettings.setInpaintNegativePromptDraft(inpaintNegativePrompt),
+      _saveCharactersDraft(),
+    ]);
+    notifyListeners();
+    return true;
+  }
+
+  Map<String, dynamic> previewAssistantWrite(Map<String, dynamic> args) {
+    final target = (args['target'] as String? ?? '').trim();
+    final incoming = (args['content'] as String? ?? '').trim();
+    final append = (args['mode'] as String?)?.trim() != 'replace';
+    var before = switch (target) {
+      'positive' => prompt,
+      'negative' => negativePrompt,
+      'inpaint_positive' => inpaintPrompt,
+      'inpaint_negative' => inpaintNegativePrompt,
+      _ => '',
+    };
+    final match = RegExp(r'^character_([1-6])(_uc)?$').firstMatch(target);
+    if (match != null) {
+      final index = int.parse(match.group(1)!) - 1;
+      if (index < characters.length)
+        before = match.group(2) == null
+            ? characters[index].prompt
+            : characters[index].uc ?? '';
+    }
+    return {
+      ...args,
+      'before': before,
+      'after': append ? _mergePrompt(before, incoming) : incoming
+    };
   }
 
   // ───── PromptBoxAccessor 实现 ─────

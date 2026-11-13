@@ -12,8 +12,11 @@ import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 
 class ChatInputBar extends StatefulWidget {
   final bool isSending;
+  final VoidCallback? onStop;
   final void Function(String text,
-      {String? imageBase64, String? textAttachment}) onSend;
+      {String? imageBase64,
+      List<String> imageBase64s,
+      String? textAttachment}) onSend;
   final TextEditingController? controller;
   final bool includeKeyboardInset;
   final VoidCallback? onOpenStylePresets;
@@ -23,6 +26,7 @@ class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     super.key,
     required this.isSending,
+    this.onStop,
     required this.onSend,
     this.controller,
     this.includeKeyboardInset = true,
@@ -44,8 +48,10 @@ class _ChatInputBarState extends State<ChatInputBar>
   bool _ownsController = false;
   bool _hasText = false;
   bool _attachmentMenuOpen = false;
-  String? _pendingImageBase64;
-  String? _pendingImagePath;
+  final List<String> _pendingImages = [];
+  final List<String> _pendingPaths = [];
+  final List<String> _imagePurposes = [];
+  bool _pickingImages = false;
   String? _pendingTextAttachment;
 
   @override
@@ -84,7 +90,7 @@ class _ChatInputBarState extends State<ChatInputBar>
   void _onFocusChanged() => setState(() {});
 
   String? _updateWarning() => _controller.text.trim().isNotEmpty ||
-          _pendingImageBase64 != null ||
+          _pendingImages.isNotEmpty ||
           _pendingTextAttachment != null
       ? 'AI 助手还有未发送的文字或附件，请先保存或发送'
       : null;
@@ -128,28 +134,40 @@ class _ChatInputBarState extends State<ChatInputBar>
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1920,
-      maxHeight: 1920,
-    );
-    if (picked == null) return;
-    final bytes = await File(picked.path).readAsBytes();
-    final base64Str = base64Encode(bytes);
-    if (!mounted) return;
-    setState(() {
-      _pendingImageBase64 = base64Str;
-      _pendingImagePath = picked.path;
-    });
-  }
-
-  void _removeImage() {
-    setState(() {
-      _pendingImageBase64 = null;
-      _pendingImagePath = null;
-    });
+    if (_pickingImages || widget.isSending) return;
+    final remaining = 10 - _pendingImages.length;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('每条消息最多 10 张图片')));
+      return;
+    }
+    setState(() => _pickingImages = true);
+    try {
+      final picked = await ImagePicker()
+          .pickMultiImage(imageQuality: 85, maxWidth: 1920, maxHeight: 1920);
+      final images = <String>[];
+      final paths = <String>[];
+      for (final item in picked.take(remaining)) {
+        images.add(base64Encode(await File(item.path).readAsBytes()));
+        paths.add(item.path);
+      }
+      if (!mounted) return;
+      setState(() {
+        _pendingImages.addAll(images);
+        _pendingPaths.addAll(paths);
+        _imagePurposes.addAll(List.filled(paths.length, '综合参考'));
+      });
+      if (picked.length > remaining) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('每条消息最多 10 张，已保留前 10 张')));
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('读取照片失败，请重新选择')));
+    } finally {
+      if (mounted) setState(() => _pickingImages = false);
+    }
   }
 
   Future<void> _pickTextFile() async {
@@ -189,22 +207,26 @@ class _ChatInputBarState extends State<ChatInputBar>
   void _submit() {
     final text = _controller.text.trim();
     if ((text.isEmpty &&
-            _pendingImageBase64 == null &&
+            _pendingImages.isEmpty &&
             _pendingTextAttachment == null) ||
-        widget.isSending) {
+        (widget.isSending || _pickingImages)) {
       return;
     }
     HapticFeedback.lightImpact();
     _setAttachmentMenu(false);
+    final purposes = _imagePurposes.isEmpty
+        ? ''
+        : '\n\n参考图用途：\n${List.generate(_imagePurposes.length, (i) => '图片 ${i + 1}：${_imagePurposes[i]}').join('\n')}';
     widget.onSend(
-      text,
-      imageBase64: _pendingImageBase64,
+      '$text$purposes'.trim(),
+      imageBase64s: List.of(_pendingImages),
       textAttachment: _pendingTextAttachment,
     );
     _controller.clear();
     setState(() {
-      _pendingImageBase64 = null;
-      _pendingImagePath = null;
+      _pendingImages.clear();
+      _pendingPaths.clear();
+      _imagePurposes.clear();
       _pendingTextAttachment = null;
     });
   }
@@ -212,9 +234,10 @@ class _ChatInputBarState extends State<ChatInputBar>
   @override
   Widget build(BuildContext context) {
     final canSend = (_hasText ||
-            _pendingImageBase64 != null ||
+            _pendingImages.isNotEmpty ||
             _pendingTextAttachment != null) &&
-        !widget.isSending;
+        !widget.isSending &&
+        !_pickingImages;
     final theme = Theme.of(context);
     final glass = FrostedTheme.of(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
@@ -242,9 +265,17 @@ class _ChatInputBarState extends State<ChatInputBar>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_pendingImagePath != null) _buildImagePreview(),
-                if (_pendingTextAttachment != null) _buildTextFilePreview(),
-                _buildAttachmentMenu(),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                      maxHeight:
+                          ((widget.maxHeight ?? 400) * 0.4).clamp(0, 160)),
+                  child: SingleChildScrollView(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    if (_pendingPaths.isNotEmpty) _buildImagePreview(),
+                    if (_pendingTextAttachment != null) _buildTextFilePreview(),
+                    _buildAttachmentMenu(),
+                  ])),
+                ),
                 Flexible(
                   fit: FlexFit.loose,
                   child: FrostedSurface(
@@ -341,25 +372,26 @@ class _ChatInputBarState extends State<ChatInputBar>
                                 : null,
                           ),
                           child: Semantics(
-                            label: widget.isSending ? '正在发送' : '发送消息',
+                            label: widget.isSending ? '停止回复' : '发送消息',
                             button: true,
-                            enabled: canSend,
+                            enabled: canSend || widget.onStop != null,
                             child: Material(
                               color: Colors.transparent,
                               shape: const CircleBorder(),
                               child: InkWell(
                                 customBorder: const CircleBorder(),
-                                onTap: canSend ? _submit : null,
+                                onTap: widget.isSending
+                                    ? widget.onStop
+                                    : canSend
+                                        ? _submit
+                                        : null,
                                 child: Center(
                                   child: widget.isSending
                                       ? const SizedBox(
                                           width: 18,
                                           height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation(
-                                                Colors.white),
-                                          ),
+                                          child: const Icon(Icons.stop_rounded,
+                                              size: 20, color: Colors.white),
                                         )
                                       : Icon(
                                           CupertinoIcons.arrow_up,
@@ -482,39 +514,52 @@ class _ChatInputBarState extends State<ChatInputBar>
     );
   }
 
-  Widget _buildImagePreview() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Stack(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.file(
-              File(_pendingImagePath!),
-              height: 80,
-              width: 80,
-              fit: BoxFit.cover,
-            ),
-          ),
-          Positioned(
-            top: 2,
-            right: 2,
-            child: GestureDetector(
-              onTap: _removeImage,
-              child: Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.7),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(CupertinoIcons.xmark,
-                    size: 12, color: Theme.of(context).colorScheme.onSurface),
+  Widget _buildImagePreview() => SizedBox(
+      height: 132,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _pendingPaths.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) => SizedBox(
+            width: 100,
+            child: Column(children: [
+              Stack(children: [
+                ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.file(File(_pendingPaths[index]),
+                        width: 100,
+                        height: 80,
+                        fit: BoxFit.cover,
+                        cacheWidth: 300)),
+                Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton.filledTonal(
+                        tooltip: '移除图片 ${index + 1}',
+                        iconSize: 16,
+                        constraints: const BoxConstraints.tightFor(
+                            width: 32, height: 32),
+                        onPressed: () => setState(() {
+                              _pendingImages.removeAt(index);
+                              _pendingPaths.removeAt(index);
+                              _imagePurposes.removeAt(index);
+                            }),
+                        icon: const Icon(Icons.close))),
+              ]),
+              PopupMenuButton<String>(
+                initialValue: _imagePurposes[index],
+                tooltip: '图片 ${index + 1} 的参考用途',
+                onSelected: (value) =>
+                    setState(() => _imagePurposes[index] = value),
+                itemBuilder: (_) => [
+                  for (final label in ['综合参考', '角色外观', '画风', '构图', '服饰', '配色'])
+                    PopupMenuItem(value: label, child: Text(label))
+                ],
+                child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text('${index + 1} · ${_imagePurposes[index]} ▾',
+                        style: const TextStyle(fontSize: 12))),
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+            ])),
+      ));
 }

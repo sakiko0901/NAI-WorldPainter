@@ -8,7 +8,7 @@
 
 面向 Android 的 NovelAI 创作客户端，集成图像生成、局部重绘、提示词笔记本与 AI 助手。
 
-[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.4_%C2%B7_220052-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
+[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.6_%C2%B7_220063-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/Nai-WorldPainter.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
 
 [本次更新](#本次更新) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
 
@@ -16,18 +16,18 @@
 
 ## 本次更新
 
-**1.2.4 / 220052 · 2026-10-31**
+**1.2.6 / 220063 · 2026-11-13**
 
-- **导航与页面过渡。** 三个主页统一底栏材质，选中项直接高亮；主页和文生图 / 局部重绘切换加入轻移与渐变，并保留草稿及工作区。
-- **导演工具。** 图片操作菜单可直接导入当前图片，使用统一毛玻璃页面，模型与生成页同步，结果支持滑动前后对比。
-- **图片导入与参数复用。** 支持选择需要导入的元数据，裁剪处理移到后台，并完善种子保存与自定义分辨率管理。
-- **官方订阅信息。** 工具页显示订阅到期时间，更新官方订阅查询接口，并修正包含 1024×1024 的用量估算边界。
+- **提示词助手。** 支持流式回复与停止、多图参考、历史摘要，以及编辑或重试时保留原会话的分支。
+- **对话与设置界面。** 消息滚动到顶栏和输入栏后方时渐变模糊，消息操作菜单向下展开；系统提示词与 V5 / V4.5 默认提示词统一使用折叠卡片。
+- **生成与图片。** 精简 Enhance 弹层，修正顶部横条错位，完善图片预览和提示词写入后的撤销。
+- **应用内更新。** GitHub 直连更新清单暂时不可用时，尝试 GitHub API 备用路径，并继续校验版本、下载文件和签名。
 
-[查看完整发布说明](docs/releases/2026-10-31-220052.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
+[查看完整发布说明](docs/releases/2026-11-13-1.2.6.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
 
 ## 安装与开始使用
 
-1. 下载 [最新版 app-release.apk](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk)，在 Android 上安装并打开「NAI 绘世」。
+1. 下载 [最新版 Nai-WorldPainter.apk](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/Nai-WorldPainter.apk)，在 Android 上安装并打开「NAI 绘世」。
 2. 进入 **工具 → API 配置**，在「API 与账号」页配置生成渠道和模型。官方账号与中转平台的填法见下方说明。
 3. 回到 **创作**，填写正向、负向提示词，按需添加角色提示词；通过右上角的参数按钮调整尺寸、采样和数量。
 4. 点击生成，查看结果并保存。需要修改局部时切换到 **局部重绘**，选择图片后涂抹遮罩。
@@ -37,8 +37,8 @@
 | --- | --- |
 | Android | 7.0 及以上（最低 API 24） |
 | CPU 架构 | `arm64-v8a` |
-| 版本 | `1.2.4`，Android versionCode `220052` |
-| 文件大小 | 52,691,372 字节，约 50.3 MiB |
+| 版本 | `1.2.6`，Android versionCode `220063` |
+| 文件大小 | 95,336,568 字节，约 90.9 MiB |
 | 包名 | `com.naihuishi.nai_huishi` |
 | 签名 | 沿用项目现有 Android Debug 证书，APK v2 校验通过 |
 | 校验文件 | 发布页中的 `SHA256SUMS.txt` |
@@ -160,7 +160,7 @@ flutter test --no-pub --concurrency 2 --timeout 120s
 flutter build apk --release --no-pub --split-per-abi --target-platform android-arm64
 ```
 
-ARM64 输出：`build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`。GitHub Releases 中将它命名为 `app-release.apk`。首次下载依赖后保留 `pubspec.lock`；当前 Android 工程使用 SDK 36 / NDK 28.2.13676358。
+ARM64 输出：`build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`。GitHub Releases 中将它命名为 `Nai-WorldPainter.apk`。首次下载依赖后保留 `pubspec.lock`；当前 Android 工程使用 SDK 36 / NDK 28.2.13676358。
 
 | 目录 | 内容 |
 | --- | --- |
@@ -193,6 +193,6 @@ ARM64 输出：`build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`。GitHu
 
 <div align="center">
 
-[下载最新 APK](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/app-release.apk) · [报告问题](https://github.com/sakiko0901/NAI-WorldPainter/issues) · [查看源码](https://github.com/sakiko0901/NAI-WorldPainter/tree/master/lib)
+[下载最新 APK](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/Nai-WorldPainter.apk) · [报告问题](https://github.com/sakiko0901/NAI-WorldPainter/issues) · [查看源码](https://github.com/sakiko0901/NAI-WorldPainter/tree/master/lib)
 
 </div>

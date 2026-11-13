@@ -1,3 +1,4 @@
+import 'package:nai_huishi/core/services/image_analysis_cache.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -51,6 +52,7 @@ class ChatMemoryHarness {
 
 ChatMemoryHarness createChatMemoryHarness({
   FakeLlmChatRepository? chatRepository,
+  FrontendGenerationFake? generation,
   AppUpdateInstallGuard? updateGuard,
   List<PromptMemory>? memories,
   bool memoryReadFails = false,
@@ -86,10 +88,11 @@ ChatMemoryHarness createChatMemoryHarness({
   LlmChatViewModel.toolRegistrySingleton = registry;
 
   final viewModel = LlmChatViewModel(
+    imageAnalysisCache: ImageAnalysisCache.memory(),
     manageChat: ManageLlmChatUseCase(repository),
     manageSettings: ManageSettingsUseCase(settingsRepository),
     memories: manageMemories,
-    genVm: FrontendGenerationFake(),
+    genVm: generation ?? FrontendGenerationFake(),
     analyzeImageTags: analyzeImageTags,
     promptingSkillLoader: _FakePromptingSkillLoader(),
     updateGuard: updateGuard,
@@ -156,6 +159,40 @@ class RecordingLlmApiService extends LlmApiService {
   final List<CapturedLlmCall> mainCalls = [];
   final List<CapturedLlmCall> visionCalls = [];
   int _mainResponseIndex = 0;
+  int streamRequests = 0;
+  void Function()? onMainRequest;
+
+  @override
+  Future<LlmResponse> chatCompletionsStreamWithTools({
+    required String apiKey,
+    required String baseUrl,
+    required String model,
+    required List<Map<String, dynamic>> messages,
+    required List<Map<String, dynamic>> tools,
+    required void Function(String) onText,
+    CancelToken? cancelToken,
+  }) async {
+    streamRequests++;
+    if (tools.isEmpty) {
+      final text = await chatCompletions(
+          apiKey: apiKey,
+          baseUrl: baseUrl,
+          model: model,
+          messages: messages,
+          cancelToken: cancelToken);
+      onText(text);
+      return LlmResponse(
+          content: text, toolCalls: const [], finishReason: 'stop');
+    }
+    final result = await chatCompletionsWithTools(
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        model: model,
+        messages: messages,
+        tools: tools);
+    onText(result.content);
+    return result;
+  }
 
   @override
   Future<LlmResponse> chatCompletionsWithTools({
@@ -165,7 +202,9 @@ class RecordingLlmApiService extends LlmApiService {
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
     String toolChoice = 'auto',
+    CancelToken? cancelToken,
   }) async {
+    onMainRequest?.call();
     mainCalls.add(CapturedLlmCall(
       messages: _copyMessages(messages),
       tools: _copyTools(tools),
@@ -186,6 +225,7 @@ class RecordingLlmApiService extends LlmApiService {
     required String baseUrl,
     required String model,
     required List<Map<String, dynamic>> messages,
+    CancelToken? cancelToken,
   }) async {
     visionCalls.add(CapturedLlmCall(messages: _copyMessages(messages)));
     if (visionFails) throw StateError('vision unavailable in test');
@@ -214,6 +254,23 @@ class FakeLlmChatRepository implements LlmChatRepository {
   int _messageSequence = 0;
 
   @override
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) async {
+    final source = _sessions.firstWhere((s) => s.id == sessionId);
+    final history = _messagesBySession[sessionId]!;
+    final index = history.indexWhere((m) => m.id == beforeMessageId);
+    if (index < 0) throw StateError('消息不存在');
+    final branch = await createSession(
+        initialTitle: '${source.title} · 分支',
+        contextKey: 'branch:$sessionId:$beforeMessageId',
+        promptVersion: source.promptVersion);
+    _messagesBySession[branch.id] = history
+        .take(index)
+        .map((m) => m.copyWith(sessionId: branch.id))
+        .toList();
+    return branch;
+  }
+
+  @override
   Future<List<LlmSession>> listSessions() async => List.of(_sessions);
 
   @override
@@ -239,6 +296,12 @@ class FakeLlmChatRepository implements LlmChatRepository {
   }
 
   @override
+  Future<void> deleteMessagesFrom(int messageId, String sessionId) async {
+    _messagesBySession[sessionId]?.removeWhere(
+        (message) => message.id != null && message.id! >= messageId);
+  }
+
+  @override
   Future<List<LlmMessage>> listMessages(String sessionId) async =>
       List.of(_messagesBySession[sessionId] ?? const []);
 
@@ -247,6 +310,7 @@ class FakeLlmChatRepository implements LlmChatRepository {
     required String sessionId,
     required String userText,
     String? imageBase64,
+    List<String> imageBase64s = const [],
   }) async {
     final id = ++_messageSequence;
     _messagesBySession.putIfAbsent(sessionId, () => []).add(LlmMessage(
@@ -255,6 +319,7 @@ class FakeLlmChatRepository implements LlmChatRepository {
           role: LlmMessageRole.user,
           content: userText,
           imageBase64: imageBase64,
+          imageBase64s: imageBase64s,
           createdAt: DateTime(2026, 1, 1).add(Duration(seconds: id)),
         ));
     return id;
@@ -355,7 +420,11 @@ class FakePromptMemoryRepository implements PromptMemoryRepository {
 class FakeSettingsRepository implements SettingsRepository {
   FakeSettingsRepository({required this.systemPrompt});
 
-  final String systemPrompt;
+  String systemPrompt;
+  String styleWordsV5 = '';
+  String styleWordsV45 = '';
+  String negativeWordsV5 = '';
+  String negativeWordsV45 = '';
   String? activeSessionId;
   final _provider = LlmProvider(
     id: 'test-provider',
@@ -367,7 +436,13 @@ class FakeSettingsRepository implements SettingsRepository {
   );
 
   @override
-  Future<List<LlmProvider>> getLlmProviders() async => [_provider];
+  Future<List<LlmProvider>> getLlmProviders() async =>
+      _savedProviders ?? [_provider];
+  List<LlmProvider>? _savedProviders;
+  @override
+  Future<void> saveLlmProviders(List<LlmProvider> providers) async {
+    _savedProviders = List.of(providers);
+  }
 
   @override
   Future<LlmRoleBinding> getLlmRoleBinding(LlmProfileRole role) async =>
@@ -380,16 +455,49 @@ class FakeSettingsRepository implements SettingsRepository {
       };
 
   @override
+  Future<void> setLlmRoleBinding(
+      LlmProfileRole role, LlmRoleBinding binding) async {}
+
+  @override
   Future<String> getLlmSystemPrompt() async => systemPrompt;
+
+  @override
+  Future<void> setLlmSystemPrompt(String value) async => systemPrompt = value;
 
   @override
   Future<int> getLlmContextLimit() async => 20;
 
   @override
-  Future<String> getDefaultStyleWordsV5() async => '';
+  Future<bool> getLlmMultimodal() async => _multimodal;
+  bool _multimodal = false;
+  @override
+  Future<void> setLlmMultimodal(bool value) async {
+    _multimodal = value;
+  }
 
   @override
-  Future<String> getDefaultStyleWordsV45() async => '';
+  Future<void> setDefaultNegativeWordsV5(String value) async =>
+      negativeWordsV5 = value;
+  @override
+  Future<void> setDefaultNegativeWordsV45(String value) async =>
+      negativeWordsV45 = value;
+  @override
+  Future<String> getDefaultNegativeWordsV5() async => negativeWordsV5;
+  @override
+  Future<String> getDefaultNegativeWordsV45() async => negativeWordsV45;
+  @override
+  Future<String> getDefaultStyleWordsV5() async => styleWordsV5;
+
+  @override
+  Future<void> setDefaultStyleWordsV5(String value) async =>
+      styleWordsV5 = value;
+
+  @override
+  Future<String> getDefaultStyleWordsV45() async => styleWordsV45;
+
+  @override
+  Future<void> setDefaultStyleWordsV45(String value) async =>
+      styleWordsV45 = value;
 
   @override
   Future<String?> getLlmActiveSessionId() async => activeSessionId;

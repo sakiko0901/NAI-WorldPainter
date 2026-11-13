@@ -16,9 +16,13 @@ class AppUpdatePlatform {
   Future<InstalledAppInfo> getInstalledInfo() async =>
       InstalledAppInfo.fromJson(await _map('getInstalledInfo'));
 
-  Future<AppUpdateDownload> startDownload(AppUpdateManifest manifest) async =>
-      AppUpdateDownload.fromJson(await _map(
-          'startDownload', {'manifest': manifest.validated().toJson()}));
+  Future<AppUpdateDownload> startDownload(AppUpdateManifest manifest) async {
+    final validated = manifest.validated();
+    return AppUpdateDownload.fromJson(await _map('startDownload', {
+      'manifest': validated.toJson(),
+      if (validated.githubApkAssetId case final int id) 'githubApkAssetId': id,
+    }));
+  }
 
   Future<AppUpdateDownload> getDownloadState() async =>
       AppUpdateDownload.fromJson(await _map('getDownloadState'));

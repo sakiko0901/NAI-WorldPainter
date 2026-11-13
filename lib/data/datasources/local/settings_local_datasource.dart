@@ -15,6 +15,20 @@ class SettingsLocalDatasource {
 
   SettingsLocalDatasource(this._prefs);
 
+  bool getLlmMultimodal() => _prefs.getBool('assistant_LlmMultimodal') ?? false;
+  Future<void> setLlmMultimodal(bool value) async =>
+      _prefs.setBool('assistant_LlmMultimodal', value);
+
+  String getDefaultNegativeWordsV5() =>
+      _prefs.getString('assistant_DefaultNegativeWordsV5') ?? '';
+  Future<void> setDefaultNegativeWordsV5(String value) async =>
+      _prefs.setString('assistant_DefaultNegativeWordsV5', value);
+
+  String getDefaultNegativeWordsV45() =>
+      _prefs.getString('assistant_DefaultNegativeWordsV45') ?? '';
+  Future<void> setDefaultNegativeWordsV45(String value) async =>
+      _prefs.setString('assistant_DefaultNegativeWordsV45', value);
+
   // API Key
   Future<String?> getApiKey() async => _prefs.getString(AppConstants.keyApiKey);
   Future<void> setApiKey(String key) async =>
@@ -153,6 +167,7 @@ class SettingsLocalDatasource {
       await _prefs.setInt('generation_seed_draft', value);
     }
   }
+
   Future<void> setStepsDraft(int value) async =>
       _prefs.setInt(AppConstants.keyStepsDraft, value.clamp(1, 50));
 

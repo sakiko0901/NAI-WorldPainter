@@ -84,4 +84,51 @@ void main() {
     // A generous ceiling catches accidental full catalog loading/quadratic scans.
     expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
   });
+  test('assistant fuzzy lookup recovers typos and returns only catalog tags',
+      () async {
+    final watch = Stopwatch()..start();
+    for (final query in [
+      'BLUE HAIR',
+      'bule hair',
+      'blue hari',
+      'lue hair',
+      'bluw hair',
+      'hair blue'
+    ]) {
+      final result = await catalog.searchFuzzy(query);
+      expect(result, isNotEmpty, reason: query);
+      expect(result.any((m) => m.tag.tag == 'blue_hair'), isTrue,
+          reason: query);
+      expect(result.length, lessThanOrEqualTo(15));
+      for (final match in result) {
+        expect(
+            await db
+                .rawQuery('SELECT id FROM tags WHERE name=?', [match.tag.tag]),
+            isNotEmpty);
+      }
+    }
+    final alias = (await db.rawQuery('''
+      SELECT s.term,t.name FROM terms s JOIN tags t ON t.id=s.tag_id
+      WHERE s.kind=1 AND t.category IN (0,1,3,4,5) AND length(s.term)<=64
+      AND NOT EXISTS(SELECT 1 FROM tags a WHERE a.name=s.term)
+      ORDER BY t.post_count DESC LIMIT 1
+    ''')).single;
+    final aliasMatches = await catalog.searchFuzzy(alias['term'] as String);
+    expect(aliasMatches.first.tag.tag, alias['name']);
+    expect(aliasMatches.first.kind, 'alias');
+    expect(
+        (await catalog.searchFuzzy('xahida'))
+            .any((m) => m.tag.tag.startsWith('nahida')),
+        isTrue);
+    expect((await catalog.searchFuzzy('blue hair')).first.kind, 'exact');
+    expect((await catalog.searchFuzzy('bule hair')).first.kind, 'fuzzy');
+    expect(
+        (await catalog.searchFuzzy('蓝发')).any((m) => m.tag.tag == 'blue_hair'),
+        isTrue);
+    expect(await catalog.searchFuzzy('zzzzzzzzzzzzzzzz'), isEmpty);
+    expect(await catalog.searchFuzzy("' OR 1=1 --"), isEmpty);
+    // Bounded indexed queries on the real 400k-record database.
+    expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    print('Fuzzy catalog batch: ${watch.elapsedMilliseconds} ms');
+  });
 }

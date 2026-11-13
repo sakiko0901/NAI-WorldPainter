@@ -20,6 +20,10 @@ class LlmSession extends Equatable {
     required this.updatedAt,
   });
 
+  String? get parentSessionId => contextKey?.startsWith('branch:') == true
+      ? contextKey!.split(':')[1]
+      : null;
+
   LlmSession copyWith({
     String? title,
     String? scope,

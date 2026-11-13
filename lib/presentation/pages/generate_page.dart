@@ -1259,6 +1259,7 @@ class _GeneratePageState extends State<GeneratePage> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      showDragHandle: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
@@ -1293,18 +1294,9 @@ class _GeneratePageState extends State<GeneratePage> {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '使用原图提示词（为空时取当前草稿）与当前模型设置重绘，消耗 Anlas。',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
                     const SizedBox(height: 14),
                     Text(
-                      '重绘幅度 ${(magnitude * 100).round()}%'
-                      '（低 ≈ 贴原图，高 ≈ 改得多）',
+                      '重绘幅度 ${(magnitude * 100).round()}%',
                       style: const TextStyle(fontSize: 12),
                     ),
                     Slider(
@@ -1331,13 +1323,6 @@ class _GeneratePageState extends State<GeneratePage> {
                       title: const Text(
                         'Max 放大（V5）',
                         style: TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        '服务端放大到 2× / 像素上限，Opus 也扣 Anlas',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                        ),
                       ),
                       value: useMax,
                       onChanged: (v) => setSheetState(() => useMax = v),
@@ -1835,7 +1820,7 @@ class _PremiumAccordionState extends State<_PremiumAccordion>
   @override
   void initState() {
     super.initState();
-    _isExpanded = true;
+    _isExpanded = false;
     _controller = AnimationController(
       duration: const Duration(milliseconds: 240),
       vsync: this,

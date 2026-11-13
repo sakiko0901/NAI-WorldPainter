@@ -1,3 +1,5 @@
+import 'package:nai_huishi/domain/entities/tag_search_match.dart';
+import 'package:nai_huishi/domain/services/local_tag_matching.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -129,6 +131,52 @@ class TagCompletionCatalog {
             alias: r['alias'] as String?,
             match: r['rank'] as int))
         .toList(growable: false);
+  }
+
+  /// Assistant lookup. Existing editor completion remains unchanged.
+  /// Exact/prefix hits are fetched separately so bounded fuzzy candidate scans
+  /// cannot evict an exact but unpopular tag. Uses existing B-tree indexes.
+  Future<List<TagSearchMatch>> searchFuzzy(String query,
+      {int limit = 15}) async {
+    final q = normalizeTagSearch(query);
+    if (q.isEmpty || q.length > 160) return const [];
+    limit = limit.clamp(1, 30);
+    final db = await open();
+    final chinese = RegExp(r'[\u3400-\u9fff]').hasMatch(q);
+    const category = 'AND t.category IN (0,1,3,4,5)';
+    final List<Map<String, Object?>> rows = [];
+    if (chinese) {
+      final words = q.split('_').where((w) => w.isNotEmpty).take(8).toList();
+      for (final word in words) {
+        final gram = word.length > 1 ? word.substring(0, 2) : word;
+        rows.addAll(await db.rawQuery("""
+          SELECT t.*, t.name AS term, 0 AS kind FROM zh_grams g
+          JOIN tags t ON t.id=g.tag_id WHERE g.gram=? $category
+          AND instr(t.translation,?)>0 ORDER BY t.post_count DESC,t.name LIMIT 600
+        """, [gram, word]));
+      }
+    } else {
+      rows.addAll(await db.rawQuery("""
+        SELECT t.*, s.term, s.kind FROM terms s JOIN tags t ON t.id=s.tag_id
+        WHERE s.term>=? AND s.term<? $category
+        ORDER BY CASE WHEN s.term=? THEN s.kind ELSE s.kind+3 END,
+          t.post_count DESC,t.name LIMIT 120
+      """, [q, '$q\uffff', q]));
+      if (q.length >= 4 && q.length <= 64) {
+        final prefixes = tagSearchPrefixes(q);
+        final clauses =
+            prefixes.map((_) => '(s.term>=? AND s.term<?)').join(' OR ');
+        rows.addAll(await db.rawQuery("""
+          SELECT t.*, s.term, s.kind FROM terms s JOIN tags t ON t.id=s.tag_id
+          WHERE ($clauses) $category
+          ORDER BY t.post_count DESC,t.name LIMIT 1800
+        """, [
+          for (final prefix in prefixes) ...[prefix, '$prefix\uffff']
+        ]));
+      }
+    }
+    return compute(rankLocalTagCandidates,
+        <String, Object>{'query': q, 'rows': rows, 'limit': limit});
   }
 
   Future<void> close() async {

@@ -840,7 +840,12 @@ class AppUpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _clearAutomaticPrompt(notify: false);
     }
     _download = state;
-    if (state.manifest != null) _manifest = state.manifest;
+    final nativeManifest = state.manifest;
+    if (nativeManifest != null &&
+        !(_manifest?.githubApkAssetId != null &&
+            _manifest!.sameArtifact(nativeManifest))) {
+      _manifest = nativeManifest;
+    }
     _message = null;
     _failureStage = null;
     switch (state.status) {

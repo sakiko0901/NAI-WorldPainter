@@ -77,7 +77,7 @@ class AppUpdatePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             try {
                 val value: Any? = when (call.method) {
                     "getInstalledInfo" -> installedInfo()
-                    "startDownload" -> startDownload(call.argument<Any>("manifest")).toMap()
+                    "startDownload" -> startDownload(call.argument<Any>("manifest"), call.argument<Any>("githubApkAssetId")).toMap()
                     "getDownloadState" -> refreshState().toMap()
                     "cancelDownload" -> cancelDownload().toMap()
                     "verifyDownload" -> verifyDownload().toMap()
@@ -167,8 +167,9 @@ class AppUpdatePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
         }
     }
 
-    private fun startDownload(arguments: Any?): UpdateRecord {
+    private fun startDownload(arguments: Any?, githubApkAssetId: Any?): UpdateRecord {
         val manifest = AppUpdateRules.parseManifest(arguments)
+        val downloadUrl = AppUpdateRules.downloadUrl(manifest, githubApkAssetId)
         requireEligible(manifest)
         val previous = refreshState()
         if (previous.status !in setOf("none", "failed")) {
@@ -178,7 +179,7 @@ class AppUpdatePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
         cleanup(previous)
         val file = updateFile()
         if (file.exists()) throw UpdateException("UPDATE_STORAGE_UNAVAILABLE", "无法清理旧的更新缓存。")
-        val request = DownloadManager.Request(Uri.parse(manifest.apkUrl))
+        val request = DownloadManager.Request(Uri.parse(downloadUrl))
             .setTitle("Nai-WorldPainter ${manifest.versionName}")
             .setDescription("正在下载官方更新，完成后将在应用内校验。")
             .setMimeType("application/vnd.android.package-archive")
@@ -186,6 +187,10 @@ class AppUpdatePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
             .setDestinationInExternalFilesDir(context, null, "updates/app-release.apk")
+        if (githubApkAssetId != null) {
+            request.addRequestHeader("Accept", "application/octet-stream")
+            request.addRequestHeader("User-Agent", "NAI-WorldPainter-Updater/1")
+        }
         val id = try {
             downloads.enqueue(request)
         } catch (_: Exception) {
@@ -485,6 +490,13 @@ internal object AppUpdateRules {
     private val prereleaseTag = Regex("(^|[-._])(preview|alpha|beta|rc|dev|canary|test)([-._0-9]|$)", RegexOption.IGNORE_CASE)
 
     fun isStableVersion(value: String): Boolean = value.length <= 64 && stableVersion.matches(value)
+
+    fun downloadUrl(manifest: UpdateManifest, githubApkAssetId: Any?): String {
+        if (githubApkAssetId == null) return manifest.apkUrl
+        val id = integer(githubApkAssetId)
+        if (id <= 0) invalid()
+        return "https://api.github.com/repos$RELEASE_PATH/assets/$id?download=1"
+    }
 
     fun parseManifest(argument: Any?): UpdateManifest {
         val map = argument as? Map<*, *> ?: invalid()

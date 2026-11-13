@@ -1,3 +1,4 @@
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 import 'dart:typed_data';
 import 'package:nai_huishi/domain/entities/tiled_img2img.dart';
 
@@ -8,6 +9,41 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 /// A presentation-only fixture: never configures services or sends requests.
 class FrontendGenerationFake extends ChangeNotifier
     implements GenerationViewModel {
+  @override
+  String get positive => prompt;
+  @override
+  String get negative => negativePrompt;
+  @override
+  String get inpaintPositive => inpaintPrompt;
+  @override
+  String get inpaintNegative => inpaintNegativePrompt;
+  @override
+  int version = 0;
+  @override
+  bool get isInpaintingMode => generationMode == GenerationMode.inpainting;
+  @override
+  PromptDraftSnapshot capturePromptDraft() => PromptDraftSnapshot(
+      positive: positive,
+      negative: negative,
+      inpaintPositive: inpaintPositive,
+      inpaintNegative: inpaintNegative,
+      characters: characters,
+      inpainting: isInpaintingMode,
+      version: version);
+  @override
+  Future<int> writePrompt(
+      {required String target,
+      required String content,
+      required bool append,
+      double? centerX,
+      double? centerY}) async {
+    if (target != 'positive')
+      throw UnsupportedError('fixture supports positive only');
+    await updatePrompt(
+        append && prompt.isNotEmpty ? '$prompt, $content' : content);
+    return version;
+  }
+
   @override
   int? seed;
   @override
@@ -182,6 +218,7 @@ class FrontendGenerationFake extends ChangeNotifier
     }
     notifyListeners();
   }
+
   @override
   bool get supportsPreciseReferences => false;
   @override
@@ -199,6 +236,7 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   Future<void> updatePrompt(String value) async {
     prompt = value;
+    version++;
     notifyListeners();
   }
 

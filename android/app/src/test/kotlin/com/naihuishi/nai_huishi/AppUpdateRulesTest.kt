@@ -49,6 +49,18 @@ class AppUpdateRulesTest {
         assertEquals("", AppUpdateRules.requireReleaseUrl("${AppUpdateRules.RELEASES_URL}/latest", allowIndex = true))
     }
 
+    @Test fun githubAssetIdUsesOnlyTheFixedRepositoryEndpoint() {
+        val parsed = AppUpdateRules.parseManifest(manifest())
+        assertEquals(parsed.apkUrl, AppUpdateRules.downloadUrl(parsed, null))
+        assertEquals(
+            "https://api.github.com/repos/sakiko0901/NAI-WorldPainter/releases/assets/123?download=1",
+            AppUpdateRules.downloadUrl(parsed, 123L),
+        )
+        for (bad in listOf(0, -1, "https://evil.invalid/update.apk", "123")) {
+            rejects { AppUpdateRules.downloadUrl(parsed, bad) }
+        }
+    }
+
     @Test fun rejectsUrlAuthorityAndPathBypasses() {
         val original = manifest()["releaseUrl"] as String
         val badUrls = listOf(

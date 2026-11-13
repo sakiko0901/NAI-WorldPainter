@@ -13,6 +13,25 @@ class SettingsRepositoryImpl implements SettingsRepository {
 
   SettingsRepositoryImpl(this._local);
 
+  @override
+  Future<bool> getLlmMultimodal() async => _local.getLlmMultimodal();
+  @override
+  Future<void> setLlmMultimodal(bool value) => _local.setLlmMultimodal(value);
+
+  @override
+  Future<String> getDefaultNegativeWordsV5() async =>
+      _local.getDefaultNegativeWordsV5();
+  @override
+  Future<void> setDefaultNegativeWordsV5(String value) =>
+      _local.setDefaultNegativeWordsV5(value);
+
+  @override
+  Future<String> getDefaultNegativeWordsV45() async =>
+      _local.getDefaultNegativeWordsV45();
+  @override
+  Future<void> setDefaultNegativeWordsV45(String value) =>
+      _local.setDefaultNegativeWordsV45(value);
+
   void setApiService(NovelAiApiService service) {
     _apiService = service;
   }

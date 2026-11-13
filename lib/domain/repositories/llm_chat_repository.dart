@@ -5,6 +5,7 @@ import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 
 abstract class LlmChatRepository {
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId);
   Future<List<LlmSession>> listSessions();
   Future<LlmSession> createSession({
     String? initialTitle,
@@ -26,6 +27,7 @@ abstract class LlmChatRepository {
     required String sessionId,
     required String userText,
     String? imageBase64,
+    List<String> imageBase64s = const [],
   });
 
   /// 落库 assistant 消息（含 tool_calls JSON 时间线）。

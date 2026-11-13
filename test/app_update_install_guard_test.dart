@@ -101,7 +101,7 @@ void main() {
       controller: controller,
       updateGuard: guard,
       isSending: false,
-      onSend: (_, {imageBase64, textAttachment}) {},
+      onSend: (_, {imageBase64, imageBase64s = const [], textAttachment}) {},
     ))));
     expect(guard.unsavedWarning, contains('未发送'));
     expect(guard.tryBeginInstall(), isFalse);

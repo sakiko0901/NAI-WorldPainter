@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
-import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
 import 'package:nai_huishi/presentation/pages/llm_provider_edit_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
@@ -32,16 +32,12 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('LLM 供应商管理'),
+        title: const Text('供应商'),
         actions: [
           IconButton(
             icon: const Icon(CupertinoIcons.add_circled),
             onPressed: () async {
               final newProvider = LlmProvider.create(name: '新供应商');
-              final list = List<LlmProvider>.from(vm.providers);
-              list.add(newProvider);
-              await vm.setProviders(list);
-              if (!mounted) return;
               await Navigator.push(
                 context,
                 CupertinoPageRoute(
@@ -88,46 +84,50 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
               ),
             )
           : ListView.separated(
+              padding: const EdgeInsets.all(16),
               itemCount: providers.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (context, i) {
                 final p = providers[i];
                 final isReferenced = referencedProviderIds().contains(p.id);
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor:
-                        theme.colorScheme.primary.withValues(alpha: 0.15),
-                    child: Text(
-                      p.name.isNotEmpty
-                          ? p.name.substring(0, 1).toUpperCase()
-                          : '?',
-                      style: TextStyle(color: theme.colorScheme.primary),
-                    ),
-                  ),
-                  title: Text(p.name.isEmpty ? '(未命名)' : p.name),
-                  subtitle: Text(
-                    '${p.baseUrl.isEmpty ? "(未设置 base URL)" : p.baseUrl}\n模型 ${p.models.length} 个'
-                    '${isReferenced ? "  ·  被角色绑定引用" : ""}',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  isThreeLine: true,
-                  trailing: IconButton(
-                    icon: const Icon(CupertinoIcons.delete),
-                    onPressed: () => _confirmDelete(p, isReferenced),
-                  ),
-                  onTap: () async {
-                    await Navigator.push(
-                      context,
-                      CupertinoPageRoute(
-                        builder: (_) => LlmProviderEditPage(
-                          vm: vm,
-                          providerId: p.id,
+                return FrostedSurface(
+                    blur: 0,
+                    radius: 22,
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor:
+                            theme.colorScheme.primary.withValues(alpha: 0.15),
+                        child: Text(
+                          p.name.isNotEmpty
+                              ? p.name.substring(0, 1).toUpperCase()
+                              : '?',
+                          style: TextStyle(color: theme.colorScheme.primary),
                         ),
                       ),
-                    );
-                    if (mounted) setState(() {});
-                  },
-                );
+                      title: Text(p.name.isEmpty ? '(未命名)' : p.name),
+                      subtitle: Text(
+                        '${p.baseUrl.isEmpty ? "(未设置 base URL)" : p.baseUrl}\n模型 ${p.models.length} 个'
+                        '${isReferenced ? "  ·  被角色绑定引用" : ""}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      isThreeLine: true,
+                      trailing: IconButton(
+                        icon: const Icon(CupertinoIcons.delete),
+                        onPressed: () => _confirmDelete(p, isReferenced),
+                      ),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          CupertinoPageRoute(
+                            builder: (_) => LlmProviderEditPage(
+                              vm: vm,
+                              providerId: p.id,
+                            ),
+                          ),
+                        );
+                        if (mounted) setState(() {});
+                      },
+                    ));
               },
             ),
     );

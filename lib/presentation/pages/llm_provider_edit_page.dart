@@ -1,3 +1,5 @@
+import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/model_connection_button.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
@@ -24,6 +26,7 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
   late final TextEditingController _apiKeyController;
   late final TextEditingController _baseUrlController;
   late List<TextEditingController> _modelControllers;
+  final _streaming = <TextEditingController, bool>{};
 
   @override
   void initState() {
@@ -32,9 +35,20 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
     _nameController = TextEditingController(text: p?.name ?? '');
     _apiKeyController = TextEditingController(text: p?.apiKey ?? '');
     _baseUrlController = TextEditingController(text: p?.baseUrl ?? '');
+    _apiKeyController.addListener(_refresh);
+    _baseUrlController.addListener(_refresh);
     _modelControllers = (p?.models ?? const [])
-        .map((m) => TextEditingController(text: m))
+        .map((m) => TextEditingController(text: m)..addListener(_refresh))
         .toList();
+    for (final controller in _modelControllers) {
+      _streaming[controller] = p?.streaming[controller.text] ??
+          (widget.vm.mainBinding.providerId == p?.id &&
+              widget.vm.mainBinding.model == controller.text);
+    }
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
   }
 
   LlmProvider? _findProvider() {
@@ -69,16 +83,24 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text('连接你的模型', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text('配置连接后，为每个模型检测可用性。检测会发送一条简短请求。',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 24),
             _Label('名称'),
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
                 hintText: '如 OpenAI 官方 / DeepSeek / 自建中转',
-                border: OutlineInputBorder(),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none),
+                filled: true,
                 isDense: true,
               ),
             ),
@@ -88,7 +110,10 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
               controller: _apiKeyController,
               decoration: const InputDecoration(
                 hintText: 'sk-...',
-                border: OutlineInputBorder(),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none),
+                filled: true,
                 isDense: true,
               ),
               obscureText: true,
@@ -99,7 +124,10 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
               controller: _baseUrlController,
               decoration: const InputDecoration(
                 hintText: 'https://api.example.com/v1',
-                border: OutlineInputBorder(),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none),
+                filled: true,
                 isDense: true,
               ),
             ),
@@ -113,7 +141,8 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
                 TextButton.icon(
                   onPressed: () {
                     setState(() {
-                      _modelControllers.add(TextEditingController(text: ''));
+                      _modelControllers.add(TextEditingController(text: '')
+                        ..addListener(_refresh));
                     });
                   },
                   icon: const Icon(CupertinoIcons.add, size: 16),
@@ -125,35 +154,64 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
             for (int i = 0; i < _modelControllers.length; i++)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _modelControllers[i],
-                        decoration: InputDecoration(
-                          hintText: 'gpt-4o-mini / claude-3-5-sonnet / ...',
-                          border: const OutlineInputBorder(),
-                          isDense: true,
-                          prefixText: '${i + 1}. ',
-                          prefixStyle: TextStyle(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                            fontSize: 12,
+                child: FrostedSurface(
+                    blur: 0,
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _modelControllers[i],
+                                  decoration: InputDecoration(
+                                    hintText:
+                                        'gpt-4o-mini / claude-3-5-sonnet / ...',
+                                    border: const OutlineInputBorder(
+                                        borderRadius: BorderRadius.all(
+                                            Radius.circular(14)),
+                                        borderSide: BorderSide.none),
+                                    filled: true,
+                                    isDense: true,
+                                    prefixText: '${i + 1}. ',
+                                    prefixStyle: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                icon:
+                                    const Icon(CupertinoIcons.delete, size: 18),
+                                onPressed: () {
+                                  setState(() {
+                                    _modelControllers[i].dispose();
+                                    _modelControllers.removeAt(i);
+                                  });
+                                },
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(CupertinoIcons.delete, size: 18),
-                      onPressed: () {
-                        setState(() {
-                          _modelControllers[i].dispose();
-                          _modelControllers.removeAt(i);
-                        });
-                      },
-                    ),
-                  ],
-                ),
+                          const SizedBox(height: 12),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('流式输出'),
+                            subtitle: const Text('关闭后等待完整回复'),
+                            value: _streaming[_modelControllers[i]] ?? true,
+                            onChanged: (value) => setState(
+                                () => _streaming[_modelControllers[i]] = value),
+                          ),
+                          ModelConnectionButton(
+                              streaming:
+                                  _streaming[_modelControllers[i]] ?? true,
+                              apiKey: _apiKeyController.text.trim(),
+                              baseUrl: _baseUrlController.text.trim(),
+                              model: _modelControllers[i].text.trim()),
+                        ])),
               ),
             if (_modelControllers.isEmpty)
               Container(
@@ -193,6 +251,7 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
     final models = _modelControllers
         .map((c) => c.text.trim())
         .where((s) => s.isNotEmpty)
+        .toSet()
         .toList();
 
     if (name.isEmpty) {
@@ -204,6 +263,11 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
       return;
     }
 
+    final streaming = {
+      for (final controller in _modelControllers)
+        if (controller.text.trim().isNotEmpty)
+          controller.text.trim(): _streaming[controller] ?? true,
+    };
     final list = List<LlmProvider>.from(widget.vm.providers);
     final idx = list.indexWhere((p) => p.id == widget.providerId);
     if (idx < 0) {
@@ -214,6 +278,7 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
         apiKey: apiKey,
         baseUrl: baseUrl,
         models: models,
+        streaming: streaming,
       );
       list.add(newProvider);
     } else {
@@ -224,6 +289,7 @@ class _LlmProviderEditPageState extends State<LlmProviderEditPage> {
         apiKey: apiKey,
         baseUrl: baseUrl,
         models: models,
+        streaming: streaming,
         createdAt: old.createdAt,
       );
     }

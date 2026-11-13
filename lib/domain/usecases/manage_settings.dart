@@ -10,6 +10,19 @@ class ManageSettingsUseCase {
 
   ManageSettingsUseCase(this._repo);
 
+  Future<bool> getLlmMultimodal() => _repo.getLlmMultimodal();
+  Future<void> setLlmMultimodal(bool value) => _repo.setLlmMultimodal(value);
+
+  Future<String> getDefaultNegativeWordsV5() =>
+      _repo.getDefaultNegativeWordsV5();
+  Future<void> setDefaultNegativeWordsV5(String value) =>
+      _repo.setDefaultNegativeWordsV5(value);
+
+  Future<String> getDefaultNegativeWordsV45() =>
+      _repo.getDefaultNegativeWordsV45();
+  Future<void> setDefaultNegativeWordsV45(String value) =>
+      _repo.setDefaultNegativeWordsV45(value);
+
   Future<String?> getApiKey() => _repo.getApiKey();
   Future<void> setApiKey(String key) => _repo.setApiKey(key);
   Future<void> deleteApiKey() => _repo.deleteApiKey();

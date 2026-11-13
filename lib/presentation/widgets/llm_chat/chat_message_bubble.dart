@@ -46,8 +46,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final hasImage = message.imageBase64 != null ||
-        (message.imagePath != null && File(message.imagePath!).existsSync());
+    final paths = message.allImagePaths;
+    final images = message.allImageBase64s;
+    final hasImage = paths.isNotEmpty || images.isNotEmpty;
     final hasText = message.content.trim().isNotEmpty;
     final hasTimeline = !isUser &&
         message.agentTimeline != null &&
@@ -91,35 +92,61 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                   children: [
                     if (hasImage)
                       Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: GestureDetector(
-                          onTap: () {
-                            final path = (message.imagePath != null &&
-                                    File(message.imagePath!).existsSync())
-                                ? message.imagePath
-                                : null;
-                            showFullscreenImagePreview(context,
-                                imagePath: path);
-                          },
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: message.imagePath != null &&
-                                    File(message.imagePath!).existsSync()
-                                ? Image.file(
-                                    File(message.imagePath!),
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
-                                    gaplessPlayback: true,
-                                  )
-                                : Image.memory(
-                                    base64Decode(message.imageBase64!),
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
-                                    gaplessPlayback: true,
-                                  ),
-                          ),
-                        ),
-                      ),
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Wrap(spacing: 6, runSpacing: 6, children: [
+                            for (var i = 0;
+                                i <
+                                    (paths.isNotEmpty
+                                        ? paths.length
+                                        : images.length);
+                                i++)
+                              Builder(builder: (context) {
+                                final path = paths.isNotEmpty ? paths[i] : null;
+                                final bytes = path == null
+                                    ? base64Decode(images[i])
+                                    : null;
+                                return Semantics(
+                                    label: '查看图片 ${i + 1}',
+                                    button: true,
+                                    child: GestureDetector(
+                                      onTap: () => showFullscreenImagePreview(
+                                          context,
+                                          imagePath: path,
+                                          imageBytes: bytes,
+                                          allowSave: true),
+                                      onLongPress: isUser
+                                          ? () => setState(() =>
+                                              _menuVisible = !_menuVisible)
+                                          : null,
+                                      child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          child: SizedBox(
+                                            width: (paths.length +
+                                                        images.length) ==
+                                                    1
+                                                ? 220
+                                                : 100,
+                                            height: (paths.length +
+                                                        images.length) ==
+                                                    1
+                                                ? 220
+                                                : 100,
+                                            child: path != null
+                                                ? Image.file(File(path),
+                                                    fit: BoxFit.cover,
+                                                    cacheWidth: 660,
+                                                    errorBuilder: (_, __,
+                                                            ___) =>
+                                                        const Icon(Icons
+                                                            .broken_image_outlined))
+                                                : Image.memory(bytes!,
+                                                    fit: BoxFit.cover,
+                                                    cacheWidth: 660),
+                                          )),
+                                    ));
+                              }),
+                          ])),
                     if (hasTimeline)
                       Padding(
                         padding: EdgeInsets.only(bottom: hasText ? 8 : 0),
@@ -207,10 +234,37 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
       mainAxisSize: MainAxisSize.min,
       children: [
         bubble,
-        if (_menuVisible) ...[
-          const SizedBox(height: 4),
-          _buildMenuButtons(context),
-        ],
+        TweenAnimationBuilder<double>(
+          tween: Tween(end: _menuVisible ? 1 : 0),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : Duration(milliseconds: _menuVisible ? 300 : 210),
+          curve: Curves.easeInOutCubicEmphasized,
+          builder: (context, progress, child) => ClipRect(
+            key: const ValueKey('message-actions-reveal'),
+            child: Align(
+              alignment: Alignment.topRight,
+              heightFactor: progress,
+              child: Opacity(
+                opacity: progress,
+                child: Transform.translate(
+                  offset: Offset(0, -10 * (1 - progress)),
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+          child: IgnorePointer(
+            ignoring: !_menuVisible,
+            child: ExcludeSemantics(
+              excluding: !_menuVisible,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 6),
+                child: _buildMenuButtons(context),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -344,8 +398,7 @@ class _InteractionOptionsState extends State<_InteractionOptions> {
     final buttonShape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
     );
-    const buttonPadding =
-        EdgeInsets.symmetric(horizontal: 12, vertical: 10);
+    const buttonPadding = EdgeInsets.symmetric(horizontal: 12, vertical: 10);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

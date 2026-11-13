@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'chat_stream_accumulator.dart';
 
 import 'package:dio/dio.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -26,6 +27,83 @@ class LlmApiService {
     return trimmed;
   }
 
+  Future<LlmResponse> chatCompletionsStreamWithTools({
+    required String apiKey,
+    required String baseUrl,
+    required String model,
+    required List<Map<String, dynamic>> messages,
+    required List<Map<String, dynamic>> tools,
+    required void Function(String) onText,
+    CancelToken? cancelToken,
+  }) async {
+    if (apiKey.trim().isEmpty ||
+        baseUrl.trim().isEmpty ||
+        model.trim().isEmpty) {
+      throw ApiException(message: '请完整配置模型连接');
+    }
+    final normalized = _normalizeBaseUrl(baseUrl);
+    try {
+      final response = await _dio.post<ResponseBody>(
+        '$normalized${ApiConstants.chatCompletions}',
+        data: {
+          'model': model,
+          'messages': messages,
+          'stream': true,
+          if (tools.isNotEmpty) 'tools': tools,
+          if (tools.isNotEmpty) 'tool_choice': 'auto',
+          'stream_options': {'include_usage': true}
+        },
+        cancelToken: cancelToken,
+        options: Options(
+            responseType: ResponseType.stream,
+            headers: {
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream'
+            },
+            receiveTimeout: const Duration(minutes: 2),
+            sendTimeout: const Duration(seconds: 30)),
+      );
+      final accumulator = ChatStreamAccumulator();
+      final body = response.data!;
+      if ((body.headers['content-type'] ?? [])
+          .any((v) => v.contains('application/json'))) {
+        final json = await utf8.decoder.bind(body.stream).join();
+        accumulator.add(json);
+      } else {
+        final event = <String>[];
+        void flush() {
+          if (event.isEmpty) return;
+          accumulator.add(event.join('\n'));
+          event.clear();
+          onText(accumulator.text);
+        }
+
+        await for (final line in body.stream
+            .cast<List<int>>()
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+          if (cancelToken?.isCancelled ?? false)
+            throw cancelToken!.cancelError!;
+          if (line.isEmpty) {
+            flush();
+            if (accumulator.done) break;
+          } else if (line.startsWith('data:')) {
+            event.add(line.substring(5).trimLeft());
+          }
+        }
+        flush();
+      }
+      final result = accumulator.finish();
+      onText(result.content);
+      return result;
+    } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) rethrow;
+      throw ApiException(
+          message: _handleDioError(e), statusCode: e.response?.statusCode);
+    }
+  }
+
   /// 发起一次 OpenAI 兼容的 chat completions 请求，返回 assistant 文本
   /// messages 支持纯文本格式 Map<String,String> 和 vision 格式 Map<String,dynamic>
   Future<String> chatCompletions({
@@ -33,6 +111,7 @@ class LlmApiService {
     required String baseUrl,
     required String model,
     required List<Map<String, dynamic>> messages,
+    CancelToken? cancelToken,
   }) async {
     if (apiKey.trim().isEmpty) {
       throw ApiException(message: '请先在齿轮设置中填写 LLM API Key');
@@ -49,6 +128,7 @@ class LlmApiService {
     try {
       final response = await _dio.post(
         ApiConstants.chatCompletions,
+        cancelToken: cancelToken,
         data: {
           'model': model,
           'messages': messages,
@@ -115,6 +195,7 @@ class LlmApiService {
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
     String toolChoice = 'auto',
+    CancelToken? cancelToken,
   }) async {
     if (apiKey.trim().isEmpty) {
       throw ApiException(message: '请先在齿轮设置中填写 LLM API Key');
@@ -131,6 +212,7 @@ class LlmApiService {
     try {
       final response = await _dio.post(
         ApiConstants.chatCompletions,
+        cancelToken: cancelToken,
         data: {
           'model': model,
           'messages': messages,

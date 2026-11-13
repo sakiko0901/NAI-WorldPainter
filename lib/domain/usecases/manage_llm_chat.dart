@@ -10,6 +10,8 @@ class ManageLlmChatUseCase {
 
   ManageLlmChatUseCase(this._repo);
 
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) => _repo.forkSession(sessionId, beforeMessageId);
+
   Future<List<LlmSession>> listSessions() => _repo.listSessions();
   Future<LlmSession> createSession({
     String? initialTitle,
@@ -43,11 +45,13 @@ class ManageLlmChatUseCase {
     required String sessionId,
     required String userText,
     String? imageBase64,
+    List<String> imageBase64s = const [],
   }) =>
       _repo.saveUserMessage(
         sessionId: sessionId,
         userText: userText,
         imageBase64: imageBase64,
+        imageBase64s: imageBase64s,
       );
 
   /// 落库 assistant 消息（含 tool_calls 时间线）

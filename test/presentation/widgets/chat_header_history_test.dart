@@ -52,6 +52,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
+    expect(find.textContaining('上下文'), findsNothing);
   }
 
   testWidgets('embedded header places history left and actions right',

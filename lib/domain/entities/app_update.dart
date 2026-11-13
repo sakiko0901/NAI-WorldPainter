@@ -19,6 +19,9 @@ class AppUpdateManifest {
   final Uri releaseUrl;
   final AppUpdateApk apk;
 
+  /// Download routing from GitHub's API, kept outside the manifest schema.
+  final int? githubApkAssetId;
+
   const AppUpdateManifest({
     required this.schemaVersion,
     required this.channel,
@@ -29,12 +32,17 @@ class AppUpdateManifest {
     required this.releaseNotes,
     required this.releaseUrl,
     required this.apk,
+    this.githubApkAssetId,
   });
 
   String get apkUrl => apk.url.toString();
   String get releasePageUrl => releaseUrl.toString();
 
-  factory AppUpdateManifest.fromJson(Map<Object?, Object?> json) {
+  factory AppUpdateManifest.fromJson(Map<Object?, Object?> json,
+      {int? githubApkAssetId}) {
+    if (githubApkAssetId != null && githubApkAssetId <= 0) {
+      throw const FormatException('Invalid GitHub APK asset ID');
+    }
     _keys(json, const {
       'schemaVersion',
       'channel',
@@ -91,6 +99,7 @@ class AppUpdateManifest {
       releaseNotes: notes,
       releaseUrl: releaseUrl,
       apk: apk,
+      githubApkAssetId: githubApkAssetId,
     );
   }
 
@@ -107,7 +116,8 @@ class AppUpdateManifest {
       };
 
   /// Revalidate even manually constructed models before crossing the bridge.
-  AppUpdateManifest validated() => AppUpdateManifest.fromJson(toJson());
+  AppUpdateManifest validated() =>
+      AppUpdateManifest.fromJson(toJson(), githubApkAssetId: githubApkAssetId);
 
   bool sameArtifact(AppUpdateManifest other) =>
       packageName == other.packageName &&

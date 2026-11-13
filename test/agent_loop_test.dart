@@ -126,6 +126,7 @@ class _CapturingLlmApiService extends LlmApiService {
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
     String toolChoice = 'auto',
+    CancelToken? cancelToken,
   }) async {
     requests.add(messages.map((message) => {...message}).toList());
     if (requests.length == 1) {

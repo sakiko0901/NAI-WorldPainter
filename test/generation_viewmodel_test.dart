@@ -28,6 +28,52 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+      'assistant preview matches write and undo restores roles and coordinates',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final settings = _SettingsRepository();
+    final queue =
+        GenerationQueue(_SuccessfulGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+        generateImage: GenerateImageUseCase(history),
+        manageSettings: ManageSettingsUseCase(settings),
+        saveImage: SaveImageUseCase(history),
+        queue: queue);
+    addTearDown(vm.dispose);
+    await vm.loadModels();
+    await vm.updatePrompt('red hair, blue eyes');
+    await vm.writePrompt(
+        target: 'character_1',
+        content: 'original character',
+        append: false,
+        centerX: 0.8,
+        centerY: 0.3);
+    final snapshot = vm.capturePromptDraft();
+    final preview = vm.previewAssistantWrite({
+      'target': 'positive',
+      'content': 'blue eyes, white dress',
+      'mode': 'append'
+    });
+    await vm.writePrompt(
+        target: 'positive', content: 'blue eyes, white dress', append: true);
+    expect(vm.prompt, preview['after']);
+    await vm.writePrompt(
+        target: 'character_2',
+        content: 'green hair',
+        append: false,
+        centerX: 0.2,
+        centerY: 0.7);
+    expect(await vm.restorePromptDraft(snapshot, vm.version), isTrue);
+    expect(vm.prompt, 'red hair, blue eyes');
+    expect(vm.characters, snapshot.characters);
+    expect(settings.savedCharacters, snapshot.characters);
+    final originalVersion = vm.version;
+    await vm.updatePrompt('手动编辑');
+    expect(await vm.restorePromptDraft(snapshot, originalVersion), isFalse);
+    expect(vm.prompt, '手动编辑');
+  });
 
   test(
       'generation parses the returned file seed without changing the seed draft',

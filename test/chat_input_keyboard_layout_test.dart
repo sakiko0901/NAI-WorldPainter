@@ -26,7 +26,8 @@ void main() {
             const Expanded(child: SizedBox()),
             ChatInputBar(
               isSending: isSending,
-              onSend: (_, {imageBase64, textAttachment}) {},
+              onSend: (_,
+                  {imageBase64, imageBase64s = const [], textAttachment}) {},
               onOpenStylePresets: onOpenStylePresets,
             ),
           ]),
@@ -120,7 +121,10 @@ void main() {
                 ChatInputBar(
                     includeKeyboardInset: !parentResizes,
                     isSending: false,
-                    onSend: (_, {imageBase64, textAttachment}) {}),
+                    onSend: (_,
+                        {imageBase64,
+                        imageBase64s = const [],
+                        textAttachment}) {}),
               ]))));
       await tester.enterText(find.byType(TextField), 'keep this draft');
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);

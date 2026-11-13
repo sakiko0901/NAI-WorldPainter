@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:equatable/equatable.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
@@ -16,6 +18,25 @@ class LlmMessage extends Equatable {
 
   /// 图片本地文件路径（持久化到 DB）。落库后通过此字段渲染。
   final String? imagePath;
+  final List<String> imageBase64s;
+  final List<String> imagePaths;
+
+  List<String> get allImageBase64s => imageBase64s.isNotEmpty
+      ? imageBase64s
+      : [if (imageBase64 != null) imageBase64!];
+  List<String> get allImagePaths =>
+      imagePaths.isNotEmpty ? imagePaths : decodeImagePaths(imagePath);
+
+  // Keep the existing database column, accepting legacy plain paths.
+  static List<String> decodeImagePaths(String? stored) {
+    if (stored == null || stored.isEmpty) return const [];
+    if (!stored.startsWith('[')) return [stored];
+    try {
+      return (jsonDecode(stored) as List).cast<String>();
+    } catch (_) {
+      return [stored];
+    }
+  }
 
   /// Agent 工具调用历史 JSON（持久化到 DB）。
   final String? toolCallsJson;
@@ -34,6 +55,8 @@ class LlmMessage extends Equatable {
     required this.createdAt,
     this.imageBase64,
     this.imagePath,
+    this.imageBase64s = const [],
+    this.imagePaths = const [],
     this.toolCallsJson,
     this.agentTimeline,
     this.interaction,
@@ -64,6 +87,8 @@ class LlmMessage extends Equatable {
       createdAt: createdAt ?? this.createdAt,
       imageBase64: imageBase64 ?? this.imageBase64,
       imagePath: imagePath ?? this.imagePath,
+      imagePaths: imagePaths,
+      imageBase64s: imageBase64s,
       toolCallsJson: toolCallsJson ?? this.toolCallsJson,
       agentTimeline: agentTimeline ?? this.agentTimeline,
       interaction: interaction ?? this.interaction,
@@ -71,6 +96,15 @@ class LlmMessage extends Equatable {
   }
 
   @override
-  List<Object?> get props =>
-      [id, sessionId, role, content, createdAt, imagePath, interaction];
+  List<Object?> get props => [
+        id,
+        sessionId,
+        role,
+        content,
+        createdAt,
+        imagePath,
+        imagePaths,
+        imageBase64s,
+        interaction
+      ];
 }

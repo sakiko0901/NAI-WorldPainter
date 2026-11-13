@@ -42,6 +42,26 @@ void main() {
         throwsFormatException);
   });
 
+  test('GitHub asset ID reaches Android outside the canonical manifest',
+      () async {
+    final json = manifestJson();
+    final manifest = AppUpdateManifest.fromJson(json, githubApkAssetId: 124);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'startDownload');
+      expect(call.arguments,
+          {'manifest': manifest.toJson(), 'githubApkAssetId': 124});
+      return {
+        'status': 'pending',
+        'downloadedBytes': 0,
+        'totalBytes': 100,
+        'manifest': json
+      };
+    });
+    final state =
+        await AppUpdatePlatform(channel: channel).startDownload(manifest);
+    expect(state.manifest!.apkUrl, (json['apk'] as Map)['url']);
+  });
+
   test('release page rejects arbitrary URLs without invoking native code',
       () async {
     var calls = 0;

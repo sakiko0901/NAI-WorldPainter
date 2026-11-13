@@ -11,7 +11,12 @@ class LlmResponse {
   /// 'stop' / 'tool_calls' / 'length' / ...
   final String finishReason;
 
+  final int? promptTokens;
+  final int? completionTokens;
+
   const LlmResponse({
+    this.promptTokens,
+    this.completionTokens,
     required this.content,
     required this.toolCalls,
     required this.finishReason,

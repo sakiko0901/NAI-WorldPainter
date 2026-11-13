@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +10,8 @@ Future<void> showFullscreenImagePreview(
   BuildContext context, {
   String? imagePath,
   String? imageUrl,
+  Uint8List? imageBytes,
+  bool allowSave = false,
 }) {
   return Navigator.of(context, rootNavigator: true).push(
     PageRouteBuilder<void>(
@@ -19,7 +25,10 @@ Future<void> showFullscreenImagePreview(
           : const Duration(milliseconds: 180),
       pageBuilder: (context, animation, secondaryAnimation) {
         return _FullscreenImagePreview(
-            imagePath: imagePath, imageUrl: imageUrl);
+            imagePath: imagePath,
+            imageUrl: imageUrl,
+            imageBytes: imageBytes,
+            allowSave: allowSave);
       },
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(opacity: animation, child: child);
@@ -31,8 +40,11 @@ Future<void> showFullscreenImagePreview(
 class _FullscreenImagePreview extends StatefulWidget {
   final String? imagePath;
   final String? imageUrl;
+  final Uint8List? imageBytes;
+  final bool allowSave;
 
-  const _FullscreenImagePreview({this.imagePath, this.imageUrl});
+  const _FullscreenImagePreview(
+      {this.imagePath, this.imageUrl, this.imageBytes, this.allowSave = false});
 
   @override
   State<_FullscreenImagePreview> createState() =>
@@ -45,6 +57,38 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
   late final AnimationController _zoomAnimationController;
   Animation<Matrix4>? _zoomAnimation;
   bool _zoomed = false;
+  bool _saving = false;
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    Directory? temporary;
+    try {
+      var path = widget.imagePath;
+      if (path == null && widget.imageBytes != null) {
+        temporary =
+            await (await getTemporaryDirectory()).createTemp('chat_export_');
+        final bytes = widget.imageBytes!;
+        final extension = bytes.length > 3 && bytes[0] == 0x89
+            ? 'png'
+            : bytes.length > 3 && bytes[0] == 0x52
+                ? 'webp'
+                : 'jpg';
+        path = '${temporary.path}/reference.$extension';
+        await File(path).writeAsBytes(bytes);
+      }
+      if (path == null) throw StateError('图片不可用');
+      final result = await ImageGallerySaverPlus.saveFile(path);
+      final success = result is Map &&
+          (result['isSuccess'] == true || result['success'] == true);
+      if (mounted)
+        showFloatingToast(context, success ? '已保存到相册' : '保存失败，请检查相册权限');
+    } catch (_) {
+      if (mounted) showFloatingToast(context, '保存失败，请检查图片和相册权限');
+    } finally {
+      if (temporary != null) await temporary.delete(recursive: true);
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   void initState() {
@@ -111,6 +155,8 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
     Widget child;
     if (widget.imagePath != null && File(widget.imagePath!).existsSync()) {
       child = Image.file(File(widget.imagePath!), fit: BoxFit.contain);
+    } else if (widget.imageBytes != null) {
+      child = Image.memory(widget.imageBytes!, fit: BoxFit.contain);
     } else if (widget.imageUrl != null) {
       child = Image.network(widget.imageUrl!, fit: BoxFit.contain);
     } else {
@@ -148,6 +194,18 @@ class _FullscreenImagePreviewState extends State<_FullscreenImagePreview>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (widget.allowSave)
+                      IconButton(
+                          tooltip: '保存图片',
+                          onPressed: _saving ? null : _save,
+                          icon: _saving
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(CupertinoIcons.arrow_down_to_line,
+                                  color: Colors.white)),
                     IconButton(
                       tooltip: _zoomed ? '重置缩放' : '适应窗口',
                       onPressed: _resetZoom,

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
@@ -25,6 +26,51 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
   })  : _local = local,
         _api = api,
         _dio = dio ?? Dio();
+
+  @override
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) async {
+    final source = await _local.getSession(sessionId);
+    if (source == null) throw StateError('原会话不存在');
+    final history = await _local.listMessages(sessionId);
+    final index = history.indexWhere((m) => m.id == beforeMessageId);
+    if (index < 0) throw StateError('分支起点不存在');
+    final branch = await createSession(
+        initialTitle: '${source.title} · 分支',
+        scope: source.scope,
+        contextKey: 'branch:$sessionId:$beforeMessageId',
+        promptVersion: source.promptVersion);
+    try {
+      for (final message in history.take(index)) {
+        final paths = <String>[];
+        try {
+          final dir = await ImageUtils.getImageDirectory();
+          for (final path in message.allImagePaths) {
+            final extension = path.split('.').last;
+            final copied =
+                await File(path).copy('${dir.path}/${_uuid.v4()}.$extension');
+            paths.add(copied.path);
+          }
+          await _local.insertMessage(LlmMessage(
+              sessionId: branch.id,
+              role: message.role,
+              content: message.content,
+              createdAt: message.createdAt,
+              imagePaths: paths,
+              toolCallsJson: message.toolCallsJson,
+              interaction: message.interaction));
+        } catch (_) {
+          for (final path in paths) {
+            await ImageUtils.deleteImage(path);
+          }
+          rethrow;
+        }
+      }
+      return branch;
+    } catch (_) {
+      await _local.deleteSession(branch.id);
+      rethrow;
+    }
+  }
 
   @override
   Future<List<LlmSession>> listSessions() => _local.listSessions();
@@ -93,16 +139,32 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
     required String sessionId,
     required String userText,
     String? imageBase64,
+    List<String> imageBase64s = const [],
   }) async {
     final now = DateTime.now();
     final storeContent = userText.trim().isNotEmpty ? userText : '[图片]';
-    String? userImagePath;
-    if (imageBase64 != null) {
-      try {
-        final filename = ImageUtils.generateFilename();
-        userImagePath = await ImageUtils.saveBase64Image(imageBase64, filename);
-      } catch (_) {/* 忽略 */}
+    final images = imageBase64s.isNotEmpty
+        ? imageBase64s
+        : [if (imageBase64 != null) imageBase64];
+    if (images.length > 10) throw ArgumentError('每条消息最多 10 张图片');
+    final paths = <String>[];
+    try {
+      for (final image in images) {
+        final extension = image.startsWith('iVBOR')
+            ? 'png'
+            : image.startsWith('UklGR')
+                ? 'webp'
+                : 'jpg';
+        paths.add(await ImageUtils.saveBase64Image(
+            image, '${_uuid.v4()}.$extension'));
+      }
+    } catch (_) {
+      for (final path in paths) {
+        await ImageUtils.deleteImage(path);
+      }
+      rethrow;
     }
+    final userImagePath = paths.isEmpty ? null : jsonEncode(paths);
     final userMessage = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.user,
@@ -119,7 +181,8 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       final preview = storeContent.replaceAll(RegExp(r'\s+'), ' ').trim();
       final title = preview.length > 20 ? preview.substring(0, 20) : preview;
       await _local.updateSession(existingSession.copyWith(
-        title: title.isEmpty ? '新对话' : title,
+        title:
+            '${title.isEmpty ? '新对话' : title}${existingSession.parentSessionId == null ? '' : ' · 分支'}',
         updatedAt: now,
       ));
     } else if (existingSession != null) {
@@ -249,7 +312,8 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       final preview = storeContent.replaceAll(RegExp(r'\s+'), ' ').trim();
       final title = preview.length > 20 ? preview.substring(0, 20) : preview;
       await _local.updateSession(existingSession.copyWith(
-        title: title.isEmpty ? '新对话' : title,
+        title:
+            '${title.isEmpty ? '新对话' : title}${existingSession.parentSessionId == null ? '' : ' · 分支'}',
         updatedAt: now,
       ));
     } else if (existingSession != null) {

@@ -1,3 +1,4 @@
+import 'package:nai_huishi/core/services/tag_completion_service.dart';
 import 'package:get_it/get_it.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:dio/dio.dart';
@@ -372,7 +373,8 @@ Future<void> configureDependencies() async {
     ..register(RemoveCharacterTool(sl<GenerationViewModel>()))
     ..register(ClearCharactersTool(sl<GenerationViewModel>()))
     ..register(AskUserTool())
-    ..register(SearchDanbooruTool(sl<DanbooruApiService>()))
+    ..register(SearchDanbooruTool(sl<DanbooruApiService>(),
+        catalog: TagCompletionService.instance.catalog))
     ..register(GenerateImageTool(sl<GenerationViewModel>()))
     ..register(UpscaleImageTool(sl<UpscaleImageUseCase>()))
     ..register(SaveImageTool(sl<SaveImageUseCase>(), sl<HistoryRepository>()))

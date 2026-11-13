@@ -5,6 +5,15 @@ import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 
 abstract class SettingsRepository {
+  Future<bool> getLlmMultimodal();
+  Future<void> setLlmMultimodal(bool value);
+
+  Future<String> getDefaultNegativeWordsV5();
+  Future<void> setDefaultNegativeWordsV5(String value);
+
+  Future<String> getDefaultNegativeWordsV45();
+  Future<void> setDefaultNegativeWordsV45(String value);
+
   Future<String?> getApiKey();
   Future<void> setApiKey(String key);
   Future<void> deleteApiKey();
