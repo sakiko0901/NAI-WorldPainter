@@ -5,11 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/navigation/app_destination.dart';
+import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_scroll_surface.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
+import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
 
 import 'support/chat_memory_fake.dart';
 
@@ -193,13 +198,73 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('integrated chat keeps messages behind glass $brightness',
+        (tester) async {
+      screen(tester);
+      tester.view.padding = const FakeViewPadding(top: 28, bottom: 16);
+      addTearDown(tester.view.resetPadding);
+      final h = (await tester.runAsync(() async {
+        final h = createChatMemoryHarness();
+        final session = await h.chatRepository.createSession();
+        for (var i = 0; i < 8; i++) {
+          await h.chatRepository.saveUserMessage(
+              sessionId: session.id, userText: '想画黄昏的海边，风吹起头发，光线自然一点。');
+          await h.chatRepository.saveAgentRunResult(
+            sessionId: session.id,
+            assistantText: '可以先确定人物和光线，再补充环境细节。\n\n'
+                'soft backlighting, windswept hair, warm sunset, '
+                'ocean, gentle waves, cinematic lighting\n\n'
+                '让夕阳从人物侧后方照过来，头发边缘留一点柔和的轮廓光。'
+                '背景保持开阔，海面只保留少量细碎反光，避免抢走人物的注意力。\n\n'
+                '如果想让画面更安静，可以降低对比度，让天空和海面自然衔接。',
+          );
+        }
+        await h.viewModel.ensureInitialized();
+        return h;
+      }))!;
+      addTearDown(() async {
+        await sl.reset();
+        h.dispose();
+      });
+      sl.registerSingleton<LlmChatViewModel>(h.viewModel);
+      final key = GlobalKey();
+      await tester.pumpWidget(MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: theme(brightness),
+        home: RepaintBoundary(
+          key: key,
+          child: Scaffold(
+            extendBody: true,
+            body: ChatDrawer(embedded: true, onClose: () {}),
+            bottomNavigationBar: StudioNavigationBar(
+              selected: AppDestination.assistant,
+              onSelected: (_) {},
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byType(ListView).first;
+      await tester.drag(list, const Offset(0, 250));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(list).dy, 0);
+      expect(tester.getBottomRight(list).dy, 844);
+      expect(tester.getBottomRight(find.byType(TextField)).dy,
+          lessThan(tester.getTopLeft(find.byType(StudioNavigationBar)).dy));
+      await capture(tester, key, 'chat-integrated-${brightness.name}');
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets(
         'prompt cards preserve drafts and save independently $brightness',
         (tester) async {
       screen(tester);
-      final h = createChatMemoryHarness();
+      final h = (await tester.runAsync(() async {
+        final h = createChatMemoryHarness();
+        await h.viewModel.ensureInitialized();
+        return h;
+      }))!;
       addTearDown(h.dispose);
-      await tester.runAsync(h.viewModel.ensureInitialized);
       final key = GlobalKey();
       await tester.pumpWidget(RepaintBoundary(
         key: key,

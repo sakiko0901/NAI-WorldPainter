@@ -211,6 +211,7 @@ class DatabaseHelper {
         scope TEXT NOT NULL DEFAULT 'general',
         context_key TEXT,
         prompt_version TEXT NOT NULL DEFAULT 'v5',
+        pinned_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -434,6 +435,9 @@ class DatabaseHelper {
     if (oldVersion < 22) {
       await _createDailyStatsTable(db);
     }
+    if (oldVersion < 23) {
+      await _ensureLlmSessionColumns(db);
+    }
   }
 
   Future<void> _onOpen(Database db) async {
@@ -468,6 +472,9 @@ class DatabaseHelper {
     }
     if (!columns.contains('context_key')) {
       await db.execute('ALTER TABLE llm_sessions ADD COLUMN context_key TEXT');
+    }
+    if (!columns.contains('pinned_at')) {
+      await db.execute('ALTER TABLE llm_sessions ADD COLUMN pinned_at INTEGER');
     }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_llm_sessions_context ON llm_sessions(context_key)',

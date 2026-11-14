@@ -16,6 +16,7 @@ import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
@@ -271,7 +272,54 @@ class FakeLlmChatRepository implements LlmChatRepository {
   }
 
   @override
-  Future<List<LlmSession>> listSessions() async => List.of(_sessions);
+  Future<List<LlmSession>> listSessions() async => List.of(_sessions)
+    ..sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      final updated = b.updatedAt.compareTo(a.updatedAt);
+      return updated != 0 ? updated : a.id.compareTo(b.id);
+    });
+
+  @override
+  Future<List<LlmSessionSearchResult>> searchSessions(String query) async {
+    final keyword = query.trim().toLowerCase();
+    final results = <LlmSessionSearchResult>[];
+    for (final session in await listSessions()) {
+      String? snippet;
+      if (keyword.isNotEmpty) {
+        final messages = List<LlmMessage>.of(
+            _messagesBySession[session.id] ?? const [])
+          ..sort((a, b) {
+            final created = b.createdAt.compareTo(a.createdAt);
+            return created != 0 ? created : (b.id ?? 0).compareTo(a.id ?? 0);
+          });
+        for (final message in messages) {
+          final match = message.content.toLowerCase().indexOf(keyword);
+          if (match < 0) continue;
+          final position = message.content.substring(0, match).runes.length;
+          snippet = String.fromCharCodes(message.content.runes
+              .skip(position > 40 ? position - 40 : 0)
+              .take(160));
+          break;
+        }
+        if (snippet == null && !session.title.toLowerCase().contains(keyword)) {
+          continue;
+        }
+      }
+      results.add(LlmSessionSearchResult(session: session, snippet: snippet));
+    }
+    return results;
+  }
+
+  @override
+  Future<void> setSessionPinned(String id, bool pinned) async {
+    final index = _sessions.indexWhere((session) => session.id == id);
+    if (index < 0) return;
+    final session = _sessions[index];
+    _sessions[index] = session.copyWith(
+      pinnedAt: pinned ? (session.pinnedAt ?? DateTime.now()) : null,
+      clearPinnedAt: !pinned,
+    );
+  }
 
   @override
   Future<LlmSession> createSession({

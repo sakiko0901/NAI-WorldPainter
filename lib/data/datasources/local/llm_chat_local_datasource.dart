@@ -5,11 +5,14 @@ import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 
 class LlmChatLocalDatasource {
   final Database _db;
+  static const _sessionOrder =
+      '(pinned_at IS NOT NULL) DESC, updated_at DESC, id ASC';
 
   LlmChatLocalDatasource(this._db);
 
@@ -46,9 +49,62 @@ class LlmChatLocalDatasource {
   Future<List<LlmSession>> listSessions() async {
     final rows = await _db.query(
       'llm_sessions',
-      orderBy: 'updated_at DESC',
+      orderBy: _sessionOrder,
     );
     return rows.map(_sessionFromRow).toList();
+  }
+
+  Future<List<LlmSessionSearchResult>> searchSessions(String query) async {
+    final keyword = query.trim();
+    if (keyword.isEmpty) {
+      return (await listSessions())
+          .map((session) => LlmSessionSearchResult(session: session))
+          .toList();
+    }
+    final escaped = keyword
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+    final pattern = '%$escaped%';
+    // 用索引按会话找最新命中的消息，正文只在 SQLite 中处理。
+    // LOWER 与 LIKE 均支持 ASCII 忽略大小写，中文按原文匹配。
+    final rows = await _db.rawQuery(r'''
+      SELECT s.*,
+        substr(m.content,
+          max(1, instr(lower(m.content), lower(?)) - 40), 160) AS snippet
+      FROM llm_sessions AS s
+      LEFT JOIN llm_messages AS m ON m.id = (
+        SELECT matched.id FROM llm_messages AS matched
+        WHERE matched.session_id = s.id
+          AND matched.content LIKE ? ESCAPE '\'
+        ORDER BY matched.created_at DESC, matched.id DESC
+        LIMIT 1
+      )
+      WHERE s.title LIKE ? ESCAPE '\' OR m.id IS NOT NULL
+      ORDER BY (s.pinned_at IS NOT NULL) DESC, s.updated_at DESC, s.id ASC
+    ''', [keyword, pattern, pattern]);
+    return rows
+        .map((row) => LlmSessionSearchResult(
+              session: _sessionFromRow(row),
+              snippet: row['snippet'] as String?,
+            ))
+        .toList();
+  }
+
+  Future<void> setSessionPinned(String id, bool pinned) async {
+    if (pinned) {
+      await _db.rawUpdate(
+        'UPDATE llm_sessions SET pinned_at = COALESCE(pinned_at, ?) WHERE id = ?',
+        [DateTime.now().millisecondsSinceEpoch, id],
+      );
+    } else {
+      await _db.update(
+        'llm_sessions',
+        {'pinned_at': null},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
   }
 
   Future<LlmSession?> getSession(String id) async {
@@ -82,10 +138,12 @@ class LlmChatLocalDatasource {
       'prompt_version': session.promptVersion.value,
       'created_at': session.createdAt.millisecondsSinceEpoch,
       'updated_at': session.updatedAt.millisecondsSinceEpoch,
+      'pinned_at': session.pinnedAt?.millisecondsSinceEpoch,
     });
   }
 
   Future<void> updateSession(LlmSession session) async {
+    // 置顶由 setSessionPinned 独立更新，避免并发的消息/标题更新覆盖置顶状态。
     await _db.update(
       'llm_sessions',
       {
@@ -252,6 +310,9 @@ class LlmChatLocalDatasource {
           NaiPromptVersion.fromValue(row['prompt_version'] as String?),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+      pinnedAt: row['pinned_at'] == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row['pinned_at'] as int),
     );
   }
 

@@ -8,7 +8,7 @@
 
 面向 Android 的 NovelAI 创作客户端，集成图像生成、局部重绘、提示词笔记本与 AI 助手。
 
-[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.6_%C2%B7_220063-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/Nai-WorldPainter.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
+[![下载 APK](https://img.shields.io/badge/下载_APK-1.2.7_%C2%B7_220064-ADC3D3?style=for-the-badge&labelColor=29313B)](https://github.com/sakiko0901/NAI-WorldPainter/releases/latest/download/Nai-WorldPainter.apk) [![Android](https://img.shields.io/badge/Android-7.0%2B_%C2%B7_ARM64-29313B?style=for-the-badge&logo=android&logoColor=ADC3D3)](#安装与开始使用)
 
 [本次更新](#本次更新) · [功能说明](#功能说明) · [API 配置](#api-配置) · [开发与构建](#开发与构建)
 
@@ -16,14 +16,14 @@
 
 ## 本次更新
 
-**1.2.6 / 220063 · 2026-11-13**
+**1.2.7 / 220064 · 2026-11-14**
 
-- **提示词助手。** 支持流式回复与停止、多图参考、历史摘要，以及编辑或重试时保留原会话的分支。
-- **对话与设置界面。** 消息滚动到顶栏和输入栏后方时渐变模糊，消息操作菜单向下展开；系统提示词与 V5 / V4.5 默认提示词统一使用折叠卡片。
-- **生成与图片。** 精简 Enhance 弹层，修正顶部横条错位，完善图片预览和提示词写入后的撤销。
-- **应用内更新。** GitHub 直连更新清单暂时不可用时，尝试 GitHub API 备用路径，并继续校验版本、下载文件和签名。
+- **聊天页质感。** 恢复与其他页面一致的灰色渐变背景和通透毛玻璃输入栏，改善顶部渐变模糊的衔接。
+- **历史搜索。** 可按关键词搜索对话标题与消息内容，显示命中摘要并高亮关键词。
+- **置顶与时间轴。** 支持置顶和取消置顶，历史记录按今天、昨天、近7天及月份分组；优化三点菜单中的重命名和删除操作。
+- **滚动与图片。** 减少流式回复时的重复构建与图片解码，改善自动跟随；上滑阅读历史时暂停跟随，可一键回到底部。
 
-[查看完整发布说明](docs/releases/2026-11-13-1.2.6.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
+[查看完整发布说明](docs/releases/2026-11-14-1.2.7.md) · [所有版本](https://github.com/sakiko0901/NAI-WorldPainter/releases)
 
 ## 安装与开始使用
 
@@ -37,8 +37,8 @@
 | --- | --- |
 | Android | 7.0 及以上（最低 API 24） |
 | CPU 架构 | `arm64-v8a` |
-| 版本 | `1.2.6`，Android versionCode `220063` |
-| 文件大小 | 95,336,568 字节，约 90.9 MiB |
+| 版本 | `1.2.7`，Android versionCode `220064` |
+| 文件大小 | 95,355,760 字节，约 90.9 MiB |
 | 包名 | `com.naihuishi.nai_huishi` |
 | 签名 | 沿用项目现有 Android Debug 证书，APK v2 校验通过 |
 | 校验文件 | 发布页中的 `SHA256SUMS.txt` |

@@ -6,7 +6,7 @@ class AppConstants {
 
   // 数据库
   static const String dbName = 'nai_huishi.db';
-  static const int dbVersion = 22;
+  static const int dbVersion = 23;
 
   // 本地存储
   static const String imagesDirName = 'generated_images';

@@ -10,13 +10,16 @@ import 'package:nai_huishi/presentation/widgets/fountain_pen_icon.dart';
 /// A continuous glass surface, without a boxed outline around the bottom bar.
 class StudioBottomSurface extends StatelessWidget {
   final Widget child;
-  const StudioBottomSurface({super.key, required this.child});
+  final Color? backgroundColor;
+  const StudioBottomSurface(
+      {super.key, required this.child, this.backgroundColor});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final glass = FrostedTheme.of(context);
     final highContrast = MediaQuery.highContrastOf(context);
+    final surface = backgroundColor ?? theme.colorScheme.surface;
     return ClipRect(
       child: BackdropFilter(
         enabled: glass.blurEnabled && !highContrast,
@@ -28,12 +31,9 @@ class StudioBottomSurface extends StatelessWidget {
               end: Alignment.bottomCenter,
               stops: const [0, .45, 1],
               colors: [
-                theme.colorScheme.surface
-                    .withValues(alpha: highContrast ? 1 : 0),
-                theme.colorScheme.surface
-                    .withValues(alpha: highContrast ? 1 : .8),
-                theme.colorScheme.surface
-                    .withValues(alpha: highContrast ? 1 : .96),
+                surface.withValues(alpha: highContrast ? 1 : 0),
+                surface.withValues(alpha: highContrast ? 1 : .8),
+                surface.withValues(alpha: highContrast ? 1 : .96),
               ],
             ),
           ),
@@ -47,9 +47,13 @@ class StudioBottomSurface extends StatelessWidget {
 class StudioNavigationBar extends StatelessWidget {
   final AppDestination selected;
   final ValueChanged<AppDestination> onSelected;
+  final Color? backgroundColor;
 
   const StudioNavigationBar(
-      {super.key, required this.selected, required this.onSelected});
+      {super.key,
+      required this.selected,
+      required this.onSelected,
+      this.backgroundColor});
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +63,7 @@ class StudioNavigationBar extends StatelessWidget {
         (MediaQuery.textScalerOf(context).scale(11) - 11).clamp(0.0, 32.0);
     final highContrast = MediaQuery.highContrastOf(context);
     return StudioBottomSurface(
+      backgroundColor: backgroundColor,
       child: SafeArea(
         top: false,
         child: SizedBox(

@@ -281,6 +281,10 @@ class _ChatInputBarState extends State<ChatInputBar>
                   child: FrostedSurface(
                     key: const ValueKey('chat-composer-surface'),
                     radius: 26,
+                    blur: 16,
+                    color: glass.blurEnabled
+                        ? glass.surface
+                        : theme.colorScheme.surface,
                     padding: const EdgeInsets.all(8),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,

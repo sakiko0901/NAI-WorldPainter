@@ -22,6 +22,7 @@ import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/services/chat_context_compressor.dart';
@@ -450,7 +451,7 @@ class LlmChatViewModel extends ChangeNotifier {
     if (isSending) return;
     final created =
         await _manageChat.createSession(promptVersion: promptVersion);
-    _sessions = [created, ..._sessions];
+    _sessions = await _manageChat.listSessions();
     contextSummary = '';
     estimatedInputTokens = 0;
     actualInputTokens = null;
@@ -485,6 +486,15 @@ class LlmChatViewModel extends ChangeNotifier {
 
   Future<void> renameSession(String id, String title) async {
     await _manageChat.renameSession(id, title);
+    _sessions = await _manageChat.listSessions();
+    notifyListeners();
+  }
+
+  Future<List<LlmSessionSearchResult>> searchSessions(String query) =>
+      _manageChat.searchSessions(query);
+
+  Future<void> setSessionPinned(String id, bool pinned) async {
+    await _manageChat.setSessionPinned(id, pinned);
     _sessions = await _manageChat.listSessions();
     notifyListeners();
   }

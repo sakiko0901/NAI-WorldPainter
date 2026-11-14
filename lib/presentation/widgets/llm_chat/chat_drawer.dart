@@ -3,15 +3,15 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/di/injection.dart';
-import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_scroll_surface.dart';
-import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_bubble.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_list.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_sessions_panel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_settings_sheet.dart';
@@ -51,18 +51,25 @@ class _ChatDrawerState extends State<ChatDrawer> {
   late final LlmChatViewModel _vm;
   late final Future<bool> Function(AgentToolConfirmRequest request)
       _confirmationHandler = _showConfirmationDialog;
-  final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   bool _ready = false;
-  bool _isAtBottom = true;
-  int _unreadCount = 0;
+  late Object _controlsState;
+
+  Object _readControlsState() => (
+        _vm.errorMessage,
+        _vm.isSending,
+        _vm.canStop,
+        _vm.canUndoPrompt,
+        _vm.activeSession?.parentSessionId,
+        _vm.runStage,
+      );
 
   @override
   void initState() {
     super.initState();
     _vm = sl<LlmChatViewModel>();
+    _controlsState = _readControlsState();
     _vm.addListener(_onVmChanged);
-    _scrollController.addListener(_onScroll);
     _init();
   }
 
@@ -81,7 +88,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
   }
 
   bool get _shouldOwnConfirmationHandler {
-    final tabIsActive = widget.active ?? TickerMode.of(context);
+    final tabIsActive = widget.active ?? TickerMode.valuesOf(context).enabled;
     final routeIsActive = ModalRoute.of(context)?.isCurrent ?? true;
     return tabIsActive && routeIsActive;
   }
@@ -110,7 +117,6 @@ class _ChatDrawerState extends State<ChatDrawer> {
     }
     if (!mounted) return;
     setState(() => _ready = true);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
   }
 
   Future<bool> _showConfirmationDialog(AgentToolConfirmRequest request) async {
@@ -188,45 +194,12 @@ class _ChatDrawerState extends State<ChatDrawer> {
     return result ?? false;
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-    final max = _scrollController.position.maxScrollExtent;
-    final cur = _scrollController.position.pixels;
-    final atBottom = (max - cur).abs() < 80;
-    if (atBottom != _isAtBottom) {
-      setState(() {
-        _isAtBottom = atBottom;
-        if (atBottom) _unreadCount = 0;
-      });
-    }
-  }
-
   void _onVmChanged() {
     if (!mounted) return;
-    if (!_isAtBottom) {
-      _unreadCount++;
-    }
+    final next = _readControlsState();
+    if (next == _controlsState) return;
+    _controlsState = next;
     setState(() {});
-    if (_isAtBottom) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
-    }
-  }
-
-  void _jumpToBottom() {
-    if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      _scrollController.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
-    );
-  }
-
-  void _scrollToBottomAndClear() {
-    _jumpToBottom();
-    setState(() {
-      _isAtBottom = true;
-      _unreadCount = 0;
-    });
   }
 
   @override
@@ -240,8 +213,6 @@ class _ChatDrawerState extends State<ChatDrawer> {
     if (widget.onCloseScope != null) {
       widget.onCloseScope!(_vm);
     }
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
     _inputController.dispose();
     super.dispose();
   }
@@ -278,12 +249,22 @@ class _ChatDrawerState extends State<ChatDrawer> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     if (widget.embedded) {
-      return ColoredBox(
-        color: theme.scaffoldBackgroundColor,
-        child: Stack(children: [
-          const Positioned.fill(child: StudioBackground()),
-          SafeArea(child: _buildChatColumn()),
-        ]),
+      final safeInsets = MediaQuery.paddingOf(context);
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+            .copyWith(statusBarColor: Colors.transparent),
+        child: ColoredBox(
+          color: theme.scaffoldBackgroundColor,
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: _buildChatColumn(
+                safeInsets: EdgeInsets.only(
+              top: safeInsets.top,
+              bottom: safeInsets.bottom,
+            )),
+          ),
+        ),
       );
     }
 
@@ -339,114 +320,124 @@ class _ChatDrawerState extends State<ChatDrawer> {
     );
   }
 
-  Widget _buildChatColumn() {
+  Widget _buildChatColumn({EdgeInsets safeInsets = EdgeInsets.zero}) {
     return LayoutBuilder(
       builder: (context, constraints) => ChatScrollSurface(
-        header: _buildTopBar(),
-        onInsetsChanged: () {
-          if (_isAtBottom) _jumpToBottom();
-        },
-        bodyBuilder: (insets) => !_ready || _vm.isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _buildMessageList(insets),
-        footer: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_vm.errorMessage != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                child: Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border:
-                        Border.all(color: Colors.red.withValues(alpha: 0.24)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        CupertinoIcons.exclamationmark_triangle,
-                        size: 16,
-                        color: Colors.redAccent,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _vm.errorMessage!,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurface,
+        background: widget.embedded ? const StudioBackground() : null,
+        footerBottomInset: safeInsets.bottom,
+        header: Padding(
+          padding: EdgeInsets.only(top: safeInsets.top),
+          child: _buildTopBar(),
+        ),
+        bodyBuilder: (insets) => ChatMessageList(
+          vm: _vm,
+          insets: insets,
+          ready: _ready,
+          active: widget.active ?? TickerMode.valuesOf(context).enabled,
+        ),
+        footer: Padding(
+          padding: EdgeInsets.only(bottom: safeInsets.bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_vm.errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: Colors.red.withValues(alpha: 0.24)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          CupertinoIcons.exclamationmark_triangle,
+                          size: 16,
+                          color: Colors.redAccent,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _vm.errorMessage!,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
                           ),
                         ),
-                      ),
-                      GestureDetector(
-                        onTap: _vm.clearError,
-                        child: Icon(
-                          CupertinoIcons.xmark,
-                          size: 14,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        GestureDetector(
+                          onTap: _vm.clearError,
+                          child: Icon(
+                            CupertinoIcons.xmark,
+                            size: 14,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
+              if (_vm.isSending ||
+                  _vm.canUndoPrompt ||
+                  _vm.activeSession?.parentSessionId != null)
+                Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(children: [
+                      Expanded(
+                          child: Text(_vm.isSending ? _vm.runStage : '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall)),
+                      if (_vm.canUndoPrompt)
+                        TextButton.icon(
+                            onPressed: _vm.undoPromptChange,
+                            icon: const Icon(Icons.undo, size: 16),
+                            label: const Text('撤销写入')),
+                      if (_vm.activeSession?.parentSessionId != null)
+                        IconButton(
+                            tooltip: '返回原会话',
+                            icon: const Icon(Icons.call_split, size: 18),
+                            onPressed: _vm.isSending
+                                ? null
+                                : () => _vm.selectSession(
+                                    _vm.activeSession!.parentSessionId!)),
+                    ])),
+              ChatInputBar(
+                updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
+                    ? sl<AppUpdateInstallGuard>()
+                    : null,
+                maxHeight: (constraints.maxHeight -
+                        safeInsets.vertical -
+                        110 -
+                        (_vm.errorMessage == null ? 0 : 90))
+                    .clamp(80, double.infinity),
+                includeKeyboardInset:
+                    !(widget.embedded || widget.parentResizesForKeyboard),
+                controller: _inputController,
+                isSending: _vm.isSending,
+                onStop: _vm.canStop ? _vm.stopSending : null,
+                onOpenStylePresets: _openStylePresets,
+                onSend: (text,
+                        {String? imageBase64,
+                        List<String> imageBase64s = const [],
+                        String? textAttachment}) =>
+                    _vm.sendUserMessage(
+                  text,
+                  imageBase64: imageBase64,
+                  imageBase64s: imageBase64s,
+                  textAttachment: textAttachment,
+                ),
               ),
-            if (_vm.isSending ||
-                _vm.canUndoPrompt ||
-                _vm.activeSession?.parentSessionId != null)
-              Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(children: [
-                    Expanded(
-                        child: Text(_vm.isSending ? _vm.runStage : '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.labelSmall)),
-                    if (_vm.canUndoPrompt)
-                      TextButton.icon(
-                          onPressed: _vm.undoPromptChange,
-                          icon: const Icon(Icons.undo, size: 16),
-                          label: const Text('撤销写入')),
-                    if (_vm.activeSession?.parentSessionId != null)
-                      IconButton(
-                          tooltip: '返回原会话',
-                          icon: const Icon(Icons.call_split, size: 18),
-                          onPressed: _vm.isSending
-                              ? null
-                              : () => _vm.selectSession(
-                                  _vm.activeSession!.parentSessionId!)),
-                  ])),
-            ChatInputBar(
-              updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
-                  ? sl<AppUpdateInstallGuard>()
-                  : null,
-              maxHeight: (constraints.maxHeight -
-                      110 -
-                      (_vm.errorMessage == null ? 0 : 90))
-                  .clamp(80, double.infinity),
-              includeKeyboardInset:
-                  !(widget.embedded || widget.parentResizesForKeyboard),
-              controller: _inputController,
-              isSending: _vm.isSending,
-              onStop: _vm.canStop ? _vm.stopSending : null,
-              onOpenStylePresets: _openStylePresets,
-              onSend: (text,
-                      {String? imageBase64,
-                      List<String> imageBase64s = const [],
-                      String? textAttachment}) =>
-                  _vm.sendUserMessage(
-                text,
-                imageBase64: imageBase64,
-                imageBase64s: imageBase64s,
-                textAttachment: textAttachment,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -496,124 +487,6 @@ class _ChatDrawerState extends State<ChatDrawer> {
             ),
         ],
       ),
-    );
-  }
-
-  Widget _buildMessageList(EdgeInsets insets) {
-    if (_vm.messages.isEmpty) {
-      return Padding(
-        padding: insets,
-        child: Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    CupertinoIcons.wand_stars,
-                    size: 34,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant
-                        .withValues(alpha: 0.5),
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    '请阐述你的梦',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 18,
-                      height: 1.6,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    final theme = Theme.of(context);
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          padding: EdgeInsets.fromLTRB(12, insets.top, 12, insets.bottom),
-          itemCount: _vm.messages.length,
-          itemBuilder: (context, index) {
-            final message = _vm.messages[index];
-            return ChatMessageBubble(
-              key: ValueKey('${message.sessionId}-${message.id ?? index}'),
-              message: message,
-              messageIndex: index,
-              onRetry: message.role == LlmMessageRole.user
-                  ? () => _vm.retryFromIndex(index)
-                  : null,
-              onEditAndResend: message.role == LlmMessageRole.user
-                  ? (newText) => _vm.editAndResend(index, newText)
-                  : null,
-              onAnswerInteraction: (optionId, customAnswer) =>
-                  _vm.answerInteraction(
-                message: message,
-                optionId: optionId,
-                customAnswer: customAnswer,
-              ),
-            );
-          },
-        ),
-        if (!_isAtBottom)
-          Positioned(
-            right: 12,
-            bottom: insets.bottom + 4,
-            child: FloatingActionButton(
-              mini: true,
-              backgroundColor: theme.colorScheme.surface.withValues(
-                alpha: 0.92,
-              ),
-              elevation: 2,
-              onPressed: _scrollToBottomAndClear,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(
-                    CupertinoIcons.arrow_down,
-                    size: 18,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  if (_unreadCount > 0)
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: Colors.redAccent,
-                          shape: BoxShape.circle,
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 14,
-                          minHeight: 14,
-                        ),
-                        child: Text(
-                          _unreadCount > 9 ? '9+' : '$_unreadCount',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 9,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-      ],
     );
   }
 }

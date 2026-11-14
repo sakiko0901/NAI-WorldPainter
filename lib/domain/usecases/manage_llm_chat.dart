@@ -1,6 +1,7 @@
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
@@ -13,6 +14,10 @@ class ManageLlmChatUseCase {
   Future<LlmSession> forkSession(String sessionId, int beforeMessageId) => _repo.forkSession(sessionId, beforeMessageId);
 
   Future<List<LlmSession>> listSessions() => _repo.listSessions();
+  Future<List<LlmSessionSearchResult>> searchSessions(String query) =>
+      _repo.searchSessions(query);
+  Future<void> setSessionPinned(String id, bool pinned) =>
+      _repo.setSessionPinned(id, pinned);
   Future<LlmSession> createSession({
     String? initialTitle,
     String scope = 'general',

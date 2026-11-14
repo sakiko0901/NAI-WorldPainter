@@ -212,6 +212,42 @@ void main() {
       }
     }
   });
+
+  testWidgets('assistant keeps the tools ambient background through its footer',
+      (tester) async {
+    viewport(tester);
+    final key = GlobalKey();
+    await tester.pumpWidget(host(captureKey: key));
+    await tester.pumpAndSettle();
+    Future<ByteData> capturePixels(String destination) async {
+      await tester.tap(nav(destination));
+      await tester.pumpAndSettle();
+      return (await tester.runAsync(() async {
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = await boundary.toImage();
+        final pixels =
+            await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        image.dispose();
+        return pixels;
+      }))!;
+    }
+
+    final tools = await capturePixels('tools');
+    final assistant = await capturePixels('assistant');
+    // Compare the actual destinations where neither has foreground controls.
+    // Covers the page and both sides of the composer's background reveal.
+    for (final y in [180, 320, 500, 680, 720, 750]) {
+      for (final x in [2, 390]) {
+        for (var channel = 0; channel < 3; channel++) {
+          final offset = (y * 393 + x) * 4 + channel;
+          expect(assistant.getUint8(offset), closeTo(tools.getUint8(offset), 1),
+              reason: 'same ambient colour at ($x, $y), channel $channel');
+        }
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _SettingsFake extends ChangeNotifier implements SettingsViewModel {

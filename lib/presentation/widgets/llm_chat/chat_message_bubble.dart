@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
@@ -34,6 +35,25 @@ class ChatMessageBubble extends StatefulWidget {
 
 class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   bool _menuVisible = false;
+  List<String> _imageSources = const [];
+  final Map<int, Uint8List> _decodedImages = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _imageSources = message.allImageBase64s;
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatMessageBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final sources = message.allImageBase64s;
+    if (message.allImagePaths.isNotEmpty ||
+        !listEquals(_imageSources, sources)) {
+      _decodedImages.clear();
+    }
+    _imageSources = sources;
+  }
 
   LlmMessage get message => widget.message;
   bool get isUser => message.role == LlmMessageRole.user;
@@ -103,7 +123,8 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                               Builder(builder: (context) {
                                 final path = paths.isNotEmpty ? paths[i] : null;
                                 final bytes = path == null
-                                    ? base64Decode(images[i])
+                                    ? _decodedImages.putIfAbsent(
+                                        i, () => base64Decode(images[i]))
                                     : null;
                                 return Semantics(
                                     label: '查看图片 ${i + 1}',

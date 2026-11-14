@@ -8,13 +8,15 @@ class FrostedSurface extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final double radius;
   final double blur;
+  final Color? color;
 
   const FrostedSurface(
       {super.key,
       required this.child,
       this.padding = EdgeInsets.zero,
       this.radius = 18,
-      this.blur = 18});
+      this.blur = 18,
+      this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +26,7 @@ class FrostedSurface extends StatelessWidget {
       decoration: BoxDecoration(
         color: highContrast
             ? Theme.of(context).colorScheme.surface
-            : glass.surface,
+            : color ?? glass.surface,
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: glass.border),
       ),

@@ -10,6 +10,7 @@ import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
+import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
 
@@ -74,6 +75,14 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
 
   @override
   Future<List<LlmSession>> listSessions() => _local.listSessions();
+
+  @override
+  Future<List<LlmSessionSearchResult>> searchSessions(String query) =>
+      _local.searchSessions(query);
+
+  @override
+  Future<void> setSessionPinned(String id, bool pinned) =>
+      _local.setSessionPinned(id, pinned);
 
   @override
   Future<LlmSession> createSession({

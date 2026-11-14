@@ -9,6 +9,7 @@ class LlmSession extends Equatable {
   final NaiPromptVersion promptVersion;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final DateTime? pinnedAt;
 
   const LlmSession({
     required this.id,
@@ -18,7 +19,10 @@ class LlmSession extends Equatable {
     this.promptVersion = NaiPromptVersion.v45,
     required this.createdAt,
     required this.updatedAt,
+    this.pinnedAt,
   });
+
+  bool get isPinned => pinnedAt != null;
 
   String? get parentSessionId => contextKey?.startsWith('branch:') == true
       ? contextKey!.split(':')[1]
@@ -31,6 +35,8 @@ class LlmSession extends Equatable {
     bool clearContextKey = false,
     NaiPromptVersion? promptVersion,
     DateTime? updatedAt,
+    DateTime? pinnedAt,
+    bool clearPinnedAt = false,
   }) {
     return LlmSession(
       id: id,
@@ -40,10 +46,19 @@ class LlmSession extends Equatable {
       promptVersion: promptVersion ?? this.promptVersion,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      pinnedAt: clearPinnedAt ? null : (pinnedAt ?? this.pinnedAt),
     );
   }
 
   @override
-  List<Object?> get props =>
-      [id, title, scope, contextKey, promptVersion, createdAt, updatedAt];
+  List<Object?> get props => [
+        id,
+        title,
+        scope,
+        contextKey,
+        promptVersion,
+        createdAt,
+        updatedAt,
+        pinnedAt
+      ];
 }

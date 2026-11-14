@@ -20,7 +20,7 @@ void main() {
     final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     try {
       await db.execute(
-          'CREATE TABLE llm_sessions (id TEXT PRIMARY KEY, title TEXT, scope TEXT, context_key TEXT, prompt_version TEXT, created_at INTEGER, updated_at INTEGER)');
+          'CREATE TABLE llm_sessions (id TEXT PRIMARY KEY, title TEXT, scope TEXT, context_key TEXT, prompt_version TEXT, created_at INTEGER, updated_at INTEGER, pinned_at INTEGER)');
       await db.execute(
           'CREATE TABLE llm_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, image_path TEXT, tool_calls TEXT, interaction_json TEXT, created_at INTEGER)');
       final local = LlmChatLocalDatasource(db);
