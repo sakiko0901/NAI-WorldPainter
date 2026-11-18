@@ -277,6 +277,9 @@ class _ImageTagPageState extends State<ImageTagPage> {
                     color: isDark
                         ? Colors.white.withValues(alpha: 0.07)
                         : Colors.black.withValues(alpha: 0.07)),
+                _modeTile(TagAnalysisMode.sdMetadata, 'SD 原图分析',
+                    '读取 SD WebUI 的提示词与生成参数（PNG、JPEG、WebP）', isDark),
+                const Divider(height: 1, indent: 16),
                 _modeTile(TagAnalysisMode.wdTagger, 'WD-Tagger 识别',
                     '本地 AI 模型识别图片标签，无需网络', isDark),
               ],
@@ -544,28 +547,34 @@ class _ImageTagPageState extends State<ImageTagPage> {
           ),
           const SizedBox(height: 10),
           for (final e in entries)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 90,
-                    child: Text(_metadataLabels[e.key] ?? e.key,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: isDark ? Colors.white60 : Colors.black54,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                  Expanded(
-                    child: SelectableText(
-                      e.value.toString(),
-                      style: const TextStyle(fontSize: 12),
+            if (r.source == TagSource.sdMetadata && e.key == '完整生成信息')
+              ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text('完整生成信息'),
+                  children: [SelectableText(e.value.toString())])
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 90,
+                      child: Text(_metadataLabels[e.key] ?? e.key,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? Colors.white60 : Colors.black54,
+                              fontWeight: FontWeight.w600)),
                     ),
-                  ),
-                ],
+                    Expanded(
+                      child: SelectableText(
+                        e.value.toString(),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
         ],
       ),
     );

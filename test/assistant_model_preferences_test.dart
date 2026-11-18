@@ -7,6 +7,7 @@ import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'support/chat_memory_fake.dart';
 import 'support/frontend_generation_fake.dart';
@@ -123,4 +124,45 @@ void main() {
     expect(h.viewModel.canUndoPrompt, isFalse);
     expect(h.api.mainCalls[1].messages[1]['content'], contains('manual tags'));
   });
+
+  test('undo stays on the writing reply and only in its original session',
+      () async {
+    final generation = _UndoGenerationFake()..prompt = 'original tags';
+    final h = createChatMemoryHarness(
+        generation: generation, scriptedMainResponses: [write]);
+    addTearDown(h.dispose);
+    LlmChatViewModel.toolRegistrySingleton = ToolRegistry()
+      ..register(WritePromptTool(generation));
+    await h.viewModel.ensureInitialized();
+    await h.viewModel.sendUserMessage('replace');
+    final owner = h.viewModel.messages.last;
+    expect(h.viewModel.undoPromptMessage?.id, owner.id);
+    await h.viewModel.sendUserMessage('explain');
+    expect(h.viewModel.undoPromptMessage?.id, owner.id);
+    await h.viewModel.createNewSession();
+    expect(h.viewModel.undoPromptMessage, isNull);
+    await h.viewModel.selectSession(owner.sessionId);
+    expect(h.viewModel.undoPromptMessage?.id, owner.id);
+    await h.viewModel.undoPromptChange();
+    expect(generation.prompt, 'original tags');
+    expect(h.viewModel.undoPromptMessage, isNull);
+  });
+}
+
+class _UndoGenerationFake extends FrontendGenerationFake {
+  @override
+  Future<bool> restorePromptDraft(
+      PromptDraftSnapshot snapshot, int expectedVersion) async {
+    if (version != expectedVersion || isInpaintingMode != snapshot.inpainting) {
+      return false;
+    }
+    prompt = snapshot.positive;
+    negativePrompt = snapshot.negative;
+    inpaintPrompt = snapshot.inpaintPositive;
+    inpaintNegativePrompt = snapshot.inpaintNegative;
+    characters = List.of(snapshot.characters);
+    version++;
+    notifyListeners();
+    return true;
+  }
 }

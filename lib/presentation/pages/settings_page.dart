@@ -1,3 +1,6 @@
+import '../widgets/studio_scroll_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_animated_icon.dart';
+import 'package:nai_huishi/presentation/widgets/studio_entrance.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:nai_huishi/presentation/pages/watermark_page.dart';
 import 'package:flutter/material.dart';
@@ -146,195 +149,195 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Stack(children: [
-        const Positioned.fill(child: StudioBackground()),
-        SafeArea(
-          top: true,
-          child: BackdropGroup(
-              child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
-            children: [
-              _SettingsGroup(
-                title: 'API 配置',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.cube_box,
-                    title: 'API 配置',
-                    subtitle: 'NovelAI / GPT / Nano Banana 中转站与模型',
-                    onTap: () => Navigator.of(context)
-                        .push(
-                          MaterialPageRoute(
-                            builder: (_) => const ApiConfigPage(),
-                          ),
-                        )
-                        .then((_) => _loadV5Usage()),
-                  ),
-                ],
-              ),
-              if (!_isCustomNovelAiChannel && _v5TokenConfigured) ...[
-                const SizedBox(height: 18),
-                _buildV5UsageCard(),
-              ],
-              const SizedBox(height: 18),
-              _SettingsGroup(
-                title: '创作扩展',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.video_camera_solid,
-                    title: '导演工具',
-                    subtitle: '去杂物、背景移除、线稿、草图、上色与表情',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const DirectorToolsPage(),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.tag,
-                    title: '图片解析',
-                    subtitle: 'NAI 元数据提取 / WD-Tagger 智能识别',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => ImageTagPage(
-                          onNavigateToGenerate: widget.onNavigateToGenerate,
+      body: StudioScrollSurface(
+        initialHeaderHeight: MediaQuery.paddingOf(context).top,
+        background: const StudioBackground(),
+        header: SizedBox(height: MediaQuery.paddingOf(context).top),
+        bodyBuilder: (insets) => BackdropGroup(
+            child: ListView(
+          padding: EdgeInsets.fromLTRB(
+              16, insets.top, 16, 32 + MediaQuery.paddingOf(context).bottom),
+          children: [
+            _SettingsGroup(
+              title: 'API 配置',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.cube_box,
+                  title: 'API 配置',
+                  subtitle: 'NovelAI / GPT / Nano Banana 中转站与模型',
+                  onTap: () => Navigator.of(context)
+                      .push(
+                        MaterialPageRoute(
+                          builder: (_) => const ApiConfigPage(),
                         ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              _SettingsGroup(
-                title: '素材与提示词',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.text_cursor,
-                    title: '标签补全',
-                    subtitle: '完整离线词库、中文释义与在线补充',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                          builder: (_) => const TagCompletionSettingsPage()),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.photo_on_rectangle,
-                    title: '在线图库',
-                    subtitle: '浏览公开作品与提示词，可复用到创作草稿',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => OnlineGalleryScreen(
-                          onNavigateToGenerate: widget.onNavigateToGenerate,
-                        ),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.search,
-                    title: 'Danbooru 查词',
-                    subtitle: '直接搜索真实 Danbooru 标签',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const DanbooruTagSearchPage(),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.person_2_square_stack,
-                    title: '画师串管理',
-                    subtitle: '分类管理画师、调权重并生成 NAI 画师串',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const ArtistPromptManagerPage(),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.waveform,
-                    title: 'Vibe 编码库',
-                    subtitle: '管理已保存的氛围编码，复用时跳过重复编码',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const VibeEncodingLibraryPage(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              _SettingsGroup(
-                title: '图像处理',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.arrow_up_right_square,
-                    title: 'Upscale',
-                    subtitle: 'NovelAI 官方 2× / 4× 放大',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const OfficialUpscalePage(),
-                      ),
-                    ),
-                  ),
-                  _SettingsTile(
-                    icon: CupertinoIcons.square_stack_3d_up,
-                    title: '添加水印',
-                    subtitle: '图片水印图层、自由调整与常用水印库',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(builder: (_) => const WatermarkPage()),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              _SettingsGroup(
-                title: '主题与外观',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.paintbrush_fill,
-                    title: '主题与外观',
-                    subtitle: '亮色、暗色与毛玻璃效果',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => ThemeAppearancePage(
-                          appearanceMode: widget.appearanceMode,
-                          onAppearanceChanged: widget.onAppearanceChanged,
-                          frostedGlassEnabled: widget.frostedGlassEnabled,
-                          onFrostedGlassChanged: widget.onFrostedGlassChanged,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              _SettingsGroup(
-                title: '更多',
-                children: [
-                  _SettingsTile(
-                    icon: CupertinoIcons.rectangle_3_offgrid,
-                    title: '漫画生成',
-                    subtitle: '分镜项目、候选主图与本地对白后期',
-                    onTap: () => Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (_) => const ComicProjectsPage(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (sl.isRegistered<AppUpdateService>()) ...[
-                const SizedBox(height: 18),
-                _SettingsGroup(
-                  title: '应用',
-                  children: [
-                    _AppUpdateEntry(service: sl<AppUpdateService>()),
-                  ],
+                      )
+                      .then((_) => _loadV5Usage()),
                 ),
               ],
+            ),
+            if (!_isCustomNovelAiChannel && _v5TokenConfigured) ...[
               const SizedBox(height: 18),
+              _buildV5UsageCard(),
             ],
-          )),
-        ),
-      ]),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              title: '创作扩展',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.video_camera_solid,
+                  title: '导演工具',
+                  subtitle: '去杂物、背景移除、线稿、草图、上色与表情',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const DirectorToolsPage(),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.tag,
+                  title: '图片解析',
+                  subtitle: 'NAI / SD 原图参数与 WD-Tagger 标签识别',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => ImageTagPage(
+                        onNavigateToGenerate: widget.onNavigateToGenerate,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              title: '素材与提示词',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.text_cursor,
+                  title: '标签补全',
+                  subtitle: '完整离线词库、中文释义与在线补充',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                        builder: (_) => const TagCompletionSettingsPage()),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.photo_on_rectangle,
+                  title: '在线图库',
+                  subtitle: '浏览公开作品与提示词，可复用到创作草稿',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => OnlineGalleryScreen(
+                        onNavigateToGenerate: widget.onNavigateToGenerate,
+                      ),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.search,
+                  title: 'Danbooru 查词',
+                  subtitle: '直接搜索真实 Danbooru 标签',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const DanbooruTagSearchPage(),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.person_2_square_stack,
+                  title: '画师串管理',
+                  subtitle: '分类管理画师、调权重并生成 NAI 画师串',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const ArtistPromptManagerPage(),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.waveform,
+                  title: 'Vibe 编码库',
+                  subtitle: '管理已保存的氛围编码，复用时跳过重复编码',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const VibeEncodingLibraryPage(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              title: '图像处理',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.arrow_up_right_square,
+                  title: 'Upscale',
+                  subtitle: 'NovelAI 官方 2× / 4× 放大',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const OfficialUpscalePage(),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.square_stack_3d_up,
+                  title: '添加水印',
+                  subtitle: '图片水印图层、自由调整与常用水印库',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => const WatermarkPage()),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              title: '主题与外观',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.paintbrush_fill,
+                  title: '主题与外观',
+                  subtitle: '亮色、暗色与毛玻璃效果',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => ThemeAppearancePage(
+                        appearanceMode: widget.appearanceMode,
+                        onAppearanceChanged: widget.onAppearanceChanged,
+                        frostedGlassEnabled: widget.frostedGlassEnabled,
+                        onFrostedGlassChanged: widget.onFrostedGlassChanged,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              title: '更多',
+              children: [
+                _SettingsTile(
+                  icon: CupertinoIcons.rectangle_3_offgrid,
+                  title: '漫画生成',
+                  subtitle: '分镜项目、候选主图与本地对白后期',
+                  onTap: () => Navigator.of(context).push(
+                    CupertinoPageRoute(
+                      builder: (_) => const ComicProjectsPage(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (sl.isRegistered<AppUpdateService>()) ...[
+              const SizedBox(height: 18),
+              _SettingsGroup(
+                title: '应用',
+                children: [
+                  _AppUpdateEntry(service: sl<AppUpdateService>()),
+                ],
+              ),
+            ],
+            const SizedBox(height: 18),
+          ],
+        )),
+      ),
     );
   }
 
@@ -442,12 +445,15 @@ class _SettingsGroup extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 8),
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
+          child: StudioEntrance(
+            role: StudioEntranceRole.heading,
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
           ),
         ),
         FrostedSurface(
@@ -455,14 +461,17 @@ class _SettingsGroup extends StatelessWidget {
           child: Column(
             children: [
               for (var i = 0; i < children.length; i++) ...[
-                children[i],
+                StudioEntranceGroup(order: i, child: children[i]),
                 if (i != children.length - 1)
                   Padding(
                     padding: const EdgeInsets.only(left: 57),
-                    child: Divider(
-                      height: 1,
-                      thickness: 0.7,
-                      color: dividerColor,
+                    child: StudioEntrance(
+                      role: StudioEntranceRole.rule,
+                      child: Divider(
+                        height: 1,
+                        thickness: 0.7,
+                        color: dividerColor,
+                      ),
                     ),
                   ),
               ],
@@ -499,11 +508,13 @@ class _SettingsTile extends StatelessWidget {
               width: 30,
               height: 30,
               child: Center(
-                child: Icon(
-                  icon,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                child: StudioEntrance(
+                    role: StudioEntranceRole.icon,
+                    child: StudioAnimatedIcon(
+                      icon,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                    )),
               ),
             ),
             const SizedBox(width: 12),
@@ -511,37 +522,43 @@ class _SettingsTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
+                  StudioEntrance(
+                      role: StudioEntranceRole.content,
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      )),
                   const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                  StudioEntrance(
+                      role: StudioEntranceRole.detail,
+                      child: Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      )),
                 ],
               ),
             ),
             if (onTap != null)
               Padding(
                 padding: const EdgeInsets.only(left: 8),
-                child: Icon(
-                  CupertinoIcons.chevron_right,
-                  size: 18,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant
-                      .withValues(alpha: 0.58),
-                ),
+                child: StudioEntrance(
+                    role: StudioEntranceRole.action,
+                    child: StudioAnimatedIcon(
+                      CupertinoIcons.chevron_right,
+                      size: 18,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: 0.58),
+                    )),
               ),
           ],
         ),

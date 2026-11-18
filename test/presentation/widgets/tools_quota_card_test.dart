@@ -9,6 +9,28 @@ Widget _host(Widget child) => MaterialApp(
     );
 
 void main() {
+  testWidgets('query result animates from empty to the reported percentage',
+      (tester) async {
+    Widget card(double? percent) => _host(ToolsQuotaCard(
+        tokenConfigured: true,
+        isLoading: percent == null,
+        hasError: false,
+        staminaPercent: percent,
+        isNegative: false,
+        tier: 3,
+        anlas: 100));
+    await tester.pumpWidget(card(null));
+    await tester.pumpWidget(card(72));
+    double fill() => tester
+        .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+        .value!;
+    expect(fill(), 0);
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(fill(), inExclusiveRange(0, .72));
+    await tester.pumpAndSettle();
+    expect(fill(), .72);
+  });
+
   testWidgets('unconfigured account shows unavailable quota values', (
     tester,
   ) async {
@@ -29,7 +51,7 @@ void main() {
     expect(find.text('官方 Token 未配置'), findsOneWidget);
     expect(find.text('V5 体力'), findsOneWidget);
     expect(find.text('预计剩余 —'), findsOneWidget);
-    expect(find.text('订阅到期时间'), findsOneWidget);
+    expect(find.text('订阅到期时间（北京）'), findsOneWidget);
     expect(find.text('—'), findsNWidgets(2));
   });
 
@@ -162,13 +184,13 @@ void main() {
           isNegative: false,
           tier: 3,
           anlas: 5168,
-          expiresAt: DateTime(2026, 11, 30, 8, 50).toUtc(),
+          expiresAt: DateTime.utc(2026, 11, 30, 16, 50),
         ),
       )));
-      expect(find.text('2026-11-30 08:50'), findsOneWidget);
-      expect(tester.getTopLeft(find.text('订阅到期时间')).dx,
+      expect(find.text('2026-12-01 00:50'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('订阅到期时间（北京）')).dx,
           greaterThan(tester.getTopLeft(find.text('Opus V5 体力')).dx));
-      expect(tester.getTopLeft(find.text('订阅到期时间')).dy,
+      expect(tester.getTopLeft(find.text('订阅到期时间（北京）')).dy,
           tester.getTopLeft(find.text('Opus V5 体力')).dy);
     });
   }
@@ -183,9 +205,9 @@ void main() {
       isNegative: false,
       tier: 1,
       anlas: 1000,
-      expiresAt: DateTime(2026, 11, 30, 8, 50),
+      expiresAt: DateTime.utc(2026, 11, 30, 16, 50),
     )));
-    expect(find.text('2026-11-30 08:50'), findsOneWidget);
+    expect(find.text('2026-12-01 00:50'), findsOneWidget);
     expect(find.text('—'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

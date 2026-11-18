@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
+import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
@@ -34,7 +35,24 @@ class _ChatVm extends ChangeNotifier implements LlmChatViewModel {
   @override
   bool canStop = false;
   @override
+  LlmRoleBinding get mainBinding => const LlmRoleBinding();
+  @override
   bool canUndoPrompt = false;
+  @override
+  LlmMessage? undoPromptMessage;
+  String? parentSessionId;
+  int undoCalls = 0;
+  final selectedSessions = <String>[];
+  @override
+  Future<void> undoPromptChange() async {
+    undoCalls++;
+    undoPromptMessage = null;
+    canUndoPrompt = false;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> selectSession(String id) async => selectedSessions.add(id);
   @override
   String? errorMessage;
   @override
@@ -44,6 +62,7 @@ class _ChatVm extends ChangeNotifier implements LlmChatViewModel {
   @override
   LlmSession get activeSession => LlmSession(
       id: activeSessionId!,
+      contextKey: parentSessionId == null ? null : 'branch:$parentSessionId:1',
       title: 'Test',
       createdAt: DateTime(2026),
       updatedAt: DateTime(2026));
@@ -125,6 +144,53 @@ void main() {
     await tester.pumpWidget(_host(vm, child: child, onScroll: onScroll));
     await _settle(tester);
   }
+
+  testWidgets(
+      'assistant actions reveal on tap and refresh without new messages',
+      (tester) async {
+    final reply = _message(2, text: 'Agent reply');
+    final vm = _ChatVm([_message(1, text: 'Earlier reply'), reply])
+      ..canUndoPrompt = true
+      ..undoPromptMessage = reply
+      ..parentSessionId = 'parent';
+    await pump(tester, vm);
+    final bubble = _bubble(2);
+    final reveal = find.descendant(
+        of: bubble,
+        matching: find.byKey(const ValueKey('message-actions-reveal')));
+    final text =
+        find.descendant(of: bubble, matching: find.byType(SelectableText));
+    expect(find.byTooltip('撤销写入').hitTestable(), findsNothing);
+    expect(find.byTooltip('返回原会话').hitTestable(), findsNothing);
+    final top = tester.getTopLeft(text).dy;
+    await tester.tap(text);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final partial = tester.getSize(reveal).height;
+    expect(partial, greaterThan(0));
+    expect(tester.getTopLeft(text).dy, top);
+    await _settle(tester);
+    expect(tester.getSize(reveal).height, greaterThan(partial));
+    expect(find.byTooltip('撤销写入').hitTestable(), findsOneWidget);
+    await tester.tap(find.byTooltip('撤销写入').hitTestable());
+    await _settle(tester);
+    expect(vm.undoCalls, 1);
+    expect(tester.getSize(reveal).height, 0);
+    expect(find.byTooltip('撤销写入'), findsNothing);
+
+    await tester.tap(text);
+    await _settle(tester);
+    vm.isSending = true;
+    vm.notifyListeners();
+    await _settle(tester);
+    expect(find.byTooltip('返回原会话'), findsNothing);
+    vm.isSending = false;
+    vm.notifyListeners();
+    await _settle(tester);
+    await tester.tap(find.byTooltip('返回原会话').hitTestable());
+    await _settle(tester);
+    expect(vm.selectedSessions, ['parent']);
+  });
 
   testWidgets('stream only rebuilds changed bubble; snapshots are read once',
       (tester) async {

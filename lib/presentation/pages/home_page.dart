@@ -9,7 +9,7 @@ import 'package:nai_huishi/presentation/pages/history_page.dart';
 import 'package:nai_huishi/presentation/pages/settings_page.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
-import 'package:nai_huishi/presentation/widgets/studio_tab_view.dart';
+import 'package:nai_huishi/presentation/widgets/studio_destination_view.dart';
 
 class HomePage extends StatefulWidget {
   static const initialIndex = 0;
@@ -106,7 +106,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       extendBody: true,
       resizeToAvoidBottomInset: true,
-      body: StudioTabView(
+      body: StudioDestinationView(
         key: const ValueKey('home-destinations'),
         index: _destination.index,
         children: [

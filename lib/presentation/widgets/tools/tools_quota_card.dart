@@ -50,7 +50,9 @@ class ToolsQuotaCard extends StatelessWidget {
     final staminaBarColor =
         percent == null ? colors.primary : staminaColor(percent, colors);
     final estimate = percent == null ? null : estimateImages(percent);
-    final expiry = tokenConfigured ? expiresAt?.toLocal() : null;
+    final expiry = tokenConfigured
+        ? expiresAt?.toUtc().add(const Duration(hours: 8))
+        : null;
     String twoDigits(int value) => value.toString().padLeft(2, '0');
     final expiryValue = expiry == null
         ? '—'
@@ -74,7 +76,7 @@ class ToolsQuotaCard extends StatelessWidget {
     }
 
     return FrostedSurface(
-      padding: const EdgeInsets.fromLTRB(16, 14, 14, 12),
+      padding: const EdgeInsets.fromLTRB(16, 7, 14, 7),
       radius: 18,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -117,7 +119,7 @@ class ToolsQuotaCard extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 4),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -135,7 +137,7 @@ class ToolsQuotaCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '订阅到期时间',
+                      '订阅到期时间（北京）',
                       textAlign: TextAlign.end,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: colors.onSurfaceVariant,
@@ -156,7 +158,7 @@ class ToolsQuotaCard extends StatelessWidget {
             ],
           ),
           if (hasStamina) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 4),
             // Anlas 显示在体力条右上角（与体力百分比同字号）
             FittedBox(
               fit: BoxFit.scaleDown,
@@ -187,17 +189,27 @@ class ToolsQuotaCard extends StatelessWidget {
             const SizedBox(height: 4),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: percent! / 100,
-                minHeight: 5,
-                backgroundColor: colors.onSurface.withValues(alpha: 0.08),
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  isNegative ? colors.error : staminaBarColor,
-                ),
-              ),
+              child: TweenAnimationBuilder<double>(
+                  key: ValueKey(isLoading),
+                  tween: Tween(
+                      begin: isLoading ? percent! / 100 : 0.0,
+                      end: percent! / 100),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 480),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, _) => LinearProgressIndicator(
+                        value: value,
+                        minHeight: 5,
+                        backgroundColor:
+                            colors.onSurface.withValues(alpha: 0.08),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isNegative ? colors.error : staminaBarColor,
+                        ),
+                      )),
             ),
           ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 4),
           Wrap(
             alignment: WrapAlignment.spaceBetween,
             spacing: 8,

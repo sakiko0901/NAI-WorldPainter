@@ -191,6 +191,12 @@ class LlmChatViewModel extends ChangeNotifier {
 
   PromptDraftSnapshot? _undoSnapshot;
   int? _undoVersion;
+  LlmMessage? _undoMessage;
+  // A write belongs to its reply, even after another turn or session switch.
+  LlmMessage? get undoPromptMessage =>
+      canUndoPrompt && _undoMessage?.sessionId == activeSessionId
+          ? _undoMessage
+          : null;
   bool get canUndoPrompt =>
       _undoSnapshot != null &&
       !isSending &&
@@ -214,6 +220,7 @@ class LlmChatViewModel extends ChangeNotifier {
     if (restored) {
       _undoSnapshot = null;
       _undoVersion = null;
+      _undoMessage = null;
     }
     notifyListeners();
   }
@@ -973,6 +980,7 @@ class LlmChatViewModel extends ChangeNotifier {
             pendingSnapshot != null) {
           _undoSnapshot = pendingSnapshot;
           _undoVersion = _genVm.version;
+          _undoMessage = placeholder;
           readSnapshot = _genVm.capturePromptDraft();
           pendingSnapshot = null;
         }
@@ -1063,6 +1071,10 @@ class LlmChatViewModel extends ChangeNotifier {
         agentTimeline: timeline,
         interaction: result.pendingInteraction,
       );
+      if (_undoMessage?.createdAt == placeholderCreatedAt &&
+          _undoMessage?.sessionId == sessionId) {
+        _undoMessage = saved;
+      }
 
       _messages = await _manageChat.listMessages(sessionId);
       // 给真消息打上 agent timeline
@@ -1092,10 +1104,14 @@ class LlmChatViewModel extends ChangeNotifier {
           : '${placeholder.content}\nAgent 失败：$e'.trim();
       updatePlaceholder(placeholder.copyWith(content: message));
       try {
-        await _manageChat.saveAgentRunResult(
+        final saved = await _manageChat.saveAgentRunResult(
             sessionId: sessionId,
             assistantText: message,
             agentTimeline: placeholder.agentTimeline);
+        if (_undoMessage?.createdAt == placeholderCreatedAt &&
+            _undoMessage?.sessionId == sessionId) {
+          _undoMessage = saved;
+        }
         _messages = await _manageChat.listMessages(sessionId);
       } catch (_) {/* Keep the visible partial response if storage failed. */}
       if (!control.isStopped)

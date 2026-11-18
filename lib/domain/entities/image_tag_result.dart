@@ -2,7 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 
 /// 标签来源
-enum TagSource { naiMetadata, wdTagger }
+enum TagSource { naiMetadata, wdTagger, sdMetadata }
 
 /// 单个标签条目
 class TagEntry extends Equatable {

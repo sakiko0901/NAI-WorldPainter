@@ -10,7 +10,7 @@ import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/prompt_memory_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_session_timeline.dart';
-import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/chat_scroll_surface.dart';
 
 Future<void> showChatSessionsPanel(
   BuildContext context, {
@@ -96,11 +96,6 @@ class _SessionsPanelState extends State<_SessionsPanel> {
   void _showActionError(String message) {
     if (!mounted) return;
     setState(() => _actionError = message);
-    // A failed action on an older row must not leave its feedback offscreen.
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(0,
-          duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
-    }
   }
 
   void _onQueryChanged() {
@@ -227,14 +222,6 @@ class _SessionsPanelState extends State<_SessionsPanel> {
         requiresIdle: true, closePanel: true);
   }
 
-  Future<void> _newSession() async {
-    final version = await showPromptVersionDialog(context);
-    if (!mounted || version == null) return;
-    await _runAction(
-        '新建会话', () => widget.vm.createNewSession(promptVersion: version),
-        requiresIdle: true, closePanel: true);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -268,158 +255,87 @@ class _SessionsPanelState extends State<_SessionsPanel> {
                       highContrast ? theme.colorScheme.surface : glass.raised,
                   child: SafeArea(
                     top: false,
-                    child: CustomScrollView(
-                      key: const ValueKey('session-history-list'),
-                      controller: _scrollController,
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                            child: Column(
-                              children: [
-                                Center(
-                                  child: Container(
-                                    width: 28,
-                                    height: 3,
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    decoration: BoxDecoration(
-                                      color: theme.colorScheme.onSurface
-                                          .withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                ),
-                                _buildHeader(),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  key: const ValueKey('session-history-search'),
-                                  controller: _searchController,
-                                  textInputAction: TextInputAction.search,
-                                  onSubmitted: (_) {
-                                    FocusScope.of(context).unfocus();
-                                    _scheduleSearch(immediate: true);
-                                  },
-                                  decoration: InputDecoration(
-                                    hintText: '搜索标题或聊天内容',
-                                    prefixIcon: const Icon(
-                                        CupertinoIcons.search,
-                                        size: 19),
-                                    suffixIcon: _searchController.text.isEmpty
-                                        ? null
-                                        : IconButton(
-                                            tooltip: '清除搜索',
-                                            onPressed: _searchController.clear,
-                                            icon: const Icon(
-                                                CupertinoIcons
-                                                    .xmark_circle_fill,
-                                                size: 18),
-                                          ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 12),
-                                  ),
-                                ),
-                                if (_busy) ...[
-                                  const SizedBox(height: 8),
-                                  const LinearProgressIndicator(
-                                      semanticsLabel: '正在处理会话'),
-                                ],
-                                if (error != null) ...[
-                                  const SizedBox(height: 8),
-                                  Semantics(
-                                    liveRegion: true,
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.error_outline,
-                                            color: _dangerColor(context),
-                                            size: 18),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                            child: Text(error,
-                                                style: TextStyle(
-                                                    color: _dangerColor(
-                                                        context)))),
-                                        IconButton(
-                                          tooltip: '关闭错误提示',
-                                          onPressed: () {
-                                            setState(() => _actionError = null);
-                                            widget.vm.clearError();
-                                          },
-                                          icon:
-                                              const Icon(Icons.close, size: 18),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (_searching)
-                          const SliverToBoxAdapter(
-                              child: _HistoryState(
-                            icon: CupertinoIcons.search,
-                            title: '正在搜索…',
-                            progress: true,
-                          ))
-                        else if (_searchError != null)
+                    child: ChatScrollSurface(
+                      header: _buildFixedHeader(error),
+                      bodyBuilder: (insets) => CustomScrollView(
+                        key: const ValueKey('session-history-list'),
+                        controller: _scrollController,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        slivers: [
                           SliverToBoxAdapter(
-                              child: _HistoryState(
-                            icon: CupertinoIcons.exclamationmark_circle,
-                            title: _searchError!,
-                            action: TextButton.icon(
-                              onPressed: () => _scheduleSearch(immediate: true),
-                              icon: const Icon(CupertinoIcons.arrow_clockwise,
-                                  size: 16),
-                              label: const Text('重试搜索'),
+                              child: SizedBox(height: insets.top)),
+                          if (_searching)
+                            const SliverToBoxAdapter(
+                                child: _HistoryState(
+                              icon: CupertinoIcons.search,
+                              title: '正在搜索…',
+                              progress: true,
+                            ))
+                          else if (_searchError != null)
+                            SliverToBoxAdapter(
+                                child: _HistoryState(
+                              icon: CupertinoIcons.exclamationmark_circle,
+                              title: _searchError!,
+                              action: TextButton.icon(
+                                onPressed: () =>
+                                    _scheduleSearch(immediate: true),
+                                icon: const Icon(CupertinoIcons.arrow_clockwise,
+                                    size: 16),
+                                label: const Text('重试搜索'),
+                              ),
+                            ))
+                          else if (rows.isEmpty)
+                            SliverToBoxAdapter(
+                                child: _HistoryState(
+                              icon: _query.isEmpty
+                                  ? CupertinoIcons.chat_bubble_2
+                                  : CupertinoIcons.search,
+                              title: _query.isEmpty ? '还没有会话' : '未找到匹配的会话',
+                              subtitle: _query.isEmpty
+                                  ? '新建对话后，会在这里留下记录。'
+                                  : '试试其他关键词，或清除搜索查看全部历史。',
+                            ))
+                          else
+                            SliverPadding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              sliver: SliverList.builder(
+                                itemCount: rows.length,
+                                itemBuilder: (context, index) {
+                                  final row = rows[index];
+                                  if (row is String) {
+                                    return _buildGroupLabel(row);
+                                  }
+                                  return _buildSession(
+                                      row as LlmSessionSearchResult, now);
+                                },
+                              ),
                             ),
-                          ))
-                        else if (rows.isEmpty)
                           SliverToBoxAdapter(
-                              child: _HistoryState(
-                            icon: _query.isEmpty
-                                ? CupertinoIcons.chat_bubble_2
-                                : CupertinoIcons.search,
-                            title: _query.isEmpty ? '还没有会话' : '未找到匹配的会话',
-                            subtitle: _query.isEmpty
-                                ? '新建对话后，会在这里留下记录。'
-                                : '试试其他关键词，或清除搜索查看全部历史。',
-                          ))
-                        else
-                          SliverPadding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            sliver: SliverList.builder(
-                              itemCount: rows.length,
-                              itemBuilder: (context, index) {
-                                final row = rows[index];
-                                if (row is String) return _buildGroupLabel(row);
-                                return _buildSession(
-                                    row as LlmSessionSearchResult, now);
-                              },
-                            ),
-                          ),
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
-                            child: Center(
-                              child: TextButton.icon(
-                                key: const ValueKey('clear-session-history'),
-                                onPressed: widget.vm.sessions.isEmpty || _busy
-                                    ? null
-                                    : _deleteAll,
-                                style: TextButton.styleFrom(
-                                    foregroundColor: _dangerColor(context)),
-                                icon:
-                                    const Icon(CupertinoIcons.trash, size: 15),
-                                label: const Text('清空历史',
-                                    style: TextStyle(fontSize: 12)),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(20, 24, 20, 16),
+                              child: Center(
+                                child: TextButton.icon(
+                                  key: const ValueKey('clear-session-history'),
+                                  onPressed: widget.vm.sessions.isEmpty || _busy
+                                      ? null
+                                      : _deleteAll,
+                                  style: TextButton.styleFrom(
+                                      foregroundColor: _dangerColor(context)),
+                                  icon: const Icon(CupertinoIcons.trash,
+                                      size: 15),
+                                  label: const Text('清空历史',
+                                      style: TextStyle(fontSize: 12)),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                          SliverToBoxAdapter(
+                              child: SizedBox(height: insets.bottom)),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -431,8 +347,83 @@ class _SessionsPanelState extends State<_SessionsPanel> {
     );
   }
 
+  Widget _buildFixedHeader(String? error) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Column(
+        children: [
+          Center(
+            child: Container(
+              width: 28,
+              height: 3,
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          _buildHeader(),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('session-history-search'),
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) {
+              FocusScope.of(context).unfocus();
+              _scheduleSearch(immediate: true);
+            },
+            decoration: InputDecoration(
+              hintText: '搜索标题或聊天内容',
+              prefixIcon: const Icon(CupertinoIcons.search, size: 19),
+              suffixIcon: _searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清除搜索',
+                      onPressed: _searchController.clear,
+                      icon: const Icon(CupertinoIcons.xmark_circle_fill,
+                          size: 18),
+                    ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(semanticsLabel: '正在处理会话'),
+          ],
+          if (error != null) ...[
+            const SizedBox(height: 8),
+            Semantics(
+              liveRegion: true,
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline,
+                      color: _dangerColor(context), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text(error,
+                          style: TextStyle(color: _dangerColor(context)))),
+                  IconButton(
+                    tooltip: '关闭错误提示',
+                    onPressed: () {
+                      setState(() => _actionError = null);
+                      widget.vm.clearError();
+                    },
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader() {
-    const heading = Text('会话历史',
+    const heading = Text('旧日的倒影',
         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700));
     final actions = Row(mainAxisSize: MainAxisSize.min, children: [
       TextButton.icon(
@@ -443,11 +434,6 @@ class _SessionsPanelState extends State<_SessionsPanel> {
             padding: const EdgeInsets.symmetric(horizontal: 8)),
         icon: const Icon(CupertinoIcons.book, size: 17),
         label: const Text('学习记忆'),
-      ),
-      IconButton(
-        tooltip: '新对话',
-        onPressed: _busy ? null : _newSession,
-        icon: const Icon(CupertinoIcons.square_pencil, size: 21),
       ),
     ]);
     return LayoutBuilder(builder: (context, constraints) {

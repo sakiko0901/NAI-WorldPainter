@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
-import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/presentation/pages/llm_provider_manage_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
@@ -311,17 +310,11 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
       await _manageProviders();
       return;
     }
-    final selected = await showModalBottomSheet<LlmRoleBinding>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-      builder: (_) => ModelSelectionSheet(
-          providers: widget.vm.providers,
-          selected: widget.vm.getBinding(role),
-          title: role == LlmProfileRole.main ? '选择主模型' : '选择识图模型'),
+    final selected = await showModelSelectionSheet(
+      context,
+      providers: widget.vm.providers,
+      selected: widget.vm.getBinding(role),
+      title: role == LlmProfileRole.main ? '选择主模型' : '选择识图模型',
     );
     if (selected != null) await widget.vm.setRoleBinding(role, selected);
     if (mounted) setState(() {});

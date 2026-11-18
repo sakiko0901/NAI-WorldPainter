@@ -75,10 +75,10 @@ void main() {
     await tester.tap(find.byTooltip('会话历史'));
     await tester.pumpAndSettle();
 
-    expect(find.text('会话历史'), findsOneWidget);
+    expect(find.text('旧日的倒影'), findsOneWidget);
     expect(find.text('学习记忆'), findsOneWidget);
-    expect(find.byTooltip('新对话'), findsOneWidget);
-    final heading = tester.getRect(find.text('会话历史'));
+    expect(find.byTooltip('新对话'), findsNothing);
+    final heading = tester.getRect(find.text('旧日的倒影'));
     final memories = tester.getRect(find.text('学习记忆'));
     expect(memories.left, greaterThan(heading.right));
     expect((memories.center.dy - heading.center.dy).abs(), lessThan(8));
@@ -92,7 +92,7 @@ void main() {
 
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.text('会话历史'), findsOneWidget);
+    expect(find.text('旧日的倒影'), findsOneWidget);
     expect(find.text('学习记忆'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

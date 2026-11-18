@@ -70,62 +70,72 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  testWidgets('message actions unfold downward and reverse without jumping',
-      (tester) async {
-    screen(tester);
-    var retried = false;
-    final key = GlobalKey();
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: theme(Brightness.dark),
-      home: Scaffold(
-        body: RepaintBoundary(
-          key: key,
-          child: ColoredBox(
-            color: const Color(0xFF15181C),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ChatMessageBubble(
-                message: LlmMessage(
-                  sessionId: 'preview',
-                  role: LlmMessageRole.user,
-                  content: '想要温柔的逆光，头发边缘有淡淡的光晕。',
-                  createdAt: DateTime(2026),
+  for (final role in LlmMessageRole.values) {
+    testWidgets(
+        'message actions unfold downward and reverse without jumping ${role.name}',
+        (tester) async {
+      screen(tester);
+      var retried = false;
+      final key = GlobalKey();
+      await tester.pumpWidget(MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: theme(Brightness.dark),
+        home: Scaffold(
+          body: RepaintBoundary(
+            key: key,
+            child: ColoredBox(
+              color: const Color(0xFF15181C),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ChatMessageBubble(
+                  message: LlmMessage(
+                    sessionId: 'preview',
+                    role: role,
+                    content: '想要温柔的逆光，头发边缘有淡淡的光晕。',
+                    createdAt: DateTime(2026),
+                  ),
+                  messageIndex: 0,
+                  onRetry:
+                      role == LlmMessageRole.user ? () => retried = true : null,
+                  onUndoPrompt: role == LlmMessageRole.assistant
+                      ? () => retried = true
+                      : null,
+                  onReturnToParent:
+                      role == LlmMessageRole.assistant ? () {} : null,
+                  onEditAndResend: role == LlmMessageRole.user ? (_) {} : null,
                 ),
-                messageIndex: 0,
-                onRetry: () => retried = true,
-                onEditAndResend: (_) {},
               ),
             ),
           ),
         ),
-      ),
-    ));
-    final message = find.byType(SelectableText);
-    final reveal = find.byKey(const ValueKey('message-actions-reveal'));
-    final originalTop = tester.getTopLeft(message).dy;
-    expect(tester.getSize(reveal).height, 0);
-    await tester.tap(message);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    final partialHeight = tester.getSize(reveal).height;
-    expect(partialHeight, greaterThan(0));
-    expect(tester.getTopLeft(message).dy, originalTop);
-    await tester.pumpAndSettle();
-    expect(tester.getSize(reveal).height, greaterThan(partialHeight));
-    await capture(tester, key, 'message-actions');
-    await tester.tapAt(tester.getTopLeft(message) + const Offset(15, 10));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(tester.getSize(reveal).height, greaterThan(0));
-    await tester.tapAt(tester.getTopRight(message) + const Offset(-15, 10));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('重试'));
-    await tester.pumpAndSettle();
-    expect(retried, isTrue);
-    expect(tester.getSize(reveal).height, 0);
-    expect(tester.takeException(), isNull);
-  });
+      ));
+      final message = find.byType(SelectableText);
+      final reveal = find.byKey(const ValueKey('message-actions-reveal'));
+      final originalTop = tester.getTopLeft(message).dy;
+      expect(tester.getSize(reveal).height, 0);
+      await tester.tap(message);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final partialHeight = tester.getSize(reveal).height;
+      expect(partialHeight, greaterThan(0));
+      expect(tester.getTopLeft(message).dy, originalTop);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(reveal).height, greaterThan(partialHeight));
+      await capture(tester, key, 'message-actions-${role.name}');
+      await tester.tapAt(tester.getTopLeft(message) + const Offset(15, 10));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(tester.getSize(reveal).height, greaterThan(0));
+      await tester.tapAt(tester.getTopRight(message) + const Offset(-15, 10));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byTooltip(role == LlmMessageRole.user ? '重试' : '撤销写入'));
+      await tester.pumpAndSettle();
+      expect(retried, isTrue);
+      expect(tester.getSize(reveal).height, 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets(
       'conversation scrolls behind controls and keeps its ends reachable',

@@ -22,6 +22,8 @@ class ChatInputBar extends StatefulWidget {
   final VoidCallback? onOpenStylePresets;
   final double? maxHeight;
   final AppUpdateInstallGuard? updateGuard;
+  final String modelName;
+  final Future<void> Function()? onSelectModel;
 
   const ChatInputBar({
     super.key,
@@ -33,6 +35,8 @@ class ChatInputBar extends StatefulWidget {
     this.onOpenStylePresets,
     this.maxHeight,
     this.updateGuard,
+    this.modelName = '',
+    this.onSelectModel,
   });
 
   @override
@@ -52,6 +56,7 @@ class _ChatInputBarState extends State<ChatInputBar>
   final List<String> _pendingPaths = [];
   final List<String> _imagePurposes = [];
   bool _pickingImages = false;
+  bool _selectingModel = false;
   String? _pendingTextAttachment;
 
   @override
@@ -162,9 +167,10 @@ class _ChatInputBarState extends State<ChatInputBar>
             const SnackBar(content: Text('每条消息最多 10 张，已保留前 10 张')));
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('读取照片失败，请重新选择')));
+      }
     } finally {
       if (mounted) setState(() => _pickingImages = false);
     }
@@ -204,6 +210,24 @@ class _ChatInputBarState extends State<ChatInputBar>
 
   void _removeTextFile() => setState(() => _pendingTextAttachment = null);
 
+  Future<void> _selectModel() async {
+    if (_selectingModel || widget.isSending || widget.onSelectModel == null) {
+      return;
+    }
+    final restoreFocus = _focusNode.hasFocus;
+    _setAttachmentMenu(false);
+    setState(() => _selectingModel = true);
+    _focusNode.unfocus();
+    try {
+      await widget.onSelectModel!();
+    } finally {
+      if (mounted) {
+        setState(() => _selectingModel = false);
+        if (restoreFocus) _focusNode.requestFocus();
+      }
+    }
+  }
+
   void _submit() {
     final text = _controller.text.trim();
     if ((text.isEmpty &&
@@ -233,189 +257,297 @@ class _ChatInputBarState extends State<ChatInputBar>
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final glass = FrostedTheme.of(context);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final expanded = _focusNode.hasFocus ||
+        _hasText ||
+        _selectingModel ||
+        _pendingImages.isNotEmpty ||
+        _pendingTextAttachment != null;
+    final horizontalInset = expanded ? 12.0 : 24.0;
+    final duration =
+        reduceMotion ? Duration.zero : const Duration(milliseconds: 240);
+    return ConstrainedBox(
+      constraints:
+          BoxConstraints(maxHeight: widget.maxHeight ?? double.infinity),
+      child: AnimatedPadding(
+        duration: duration,
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.fromLTRB(
+            horizontalInset,
+            8,
+            horizontalInset,
+            12 +
+                (widget.includeKeyboardInset
+                    ? MediaQuery.viewInsetsOf(context).bottom
+                    : 0)),
+        child: TextFieldTapRegion(
+          child: TapRegion(
+            onTapOutside: (_) => _setAttachmentMenu(false),
+            child: LayoutBuilder(
+                builder: (context, available) =>
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                            maxHeight:
+                                (available.maxHeight - 116).clamp(0, 160)),
+                        child: SingleChildScrollView(
+                            child: _buildAttachmentMenu(
+                                compact: available.maxHeight < 240)),
+                      ),
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: FrostedSurface(
+                          key: const ValueKey('chat-composer-surface'),
+                          radius: 28,
+                          blur: 16,
+                          color: glass.blurEnabled
+                              ? glass.surface
+                              : theme.colorScheme.surface,
+                          padding: const EdgeInsets.all(4),
+                          child: LayoutBuilder(
+                              builder: (context, composer) =>
+                                  _animateComposerSize(
+                                    child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (_pendingPaths.isNotEmpty ||
+                                              _pendingTextAttachment != null)
+                                            ConstrainedBox(
+                                              constraints: BoxConstraints(
+                                                  maxHeight:
+                                                      (composer.maxHeight - 100)
+                                                          .clamp(0, 160)),
+                                              child: SingleChildScrollView(
+                                                padding:
+                                                    const EdgeInsets.fromLTRB(
+                                                        8, 8, 8, 0),
+                                                child: Column(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      if (_pendingPaths
+                                                          .isNotEmpty)
+                                                        _buildImagePreview(),
+                                                      if (_pendingTextAttachment !=
+                                                          null)
+                                                        _buildTextFilePreview(),
+                                                    ]),
+                                              ),
+                                            ),
+                                          Flexible(
+                                            fit: FlexFit.loose,
+                                            child: Stack(children: [
+                                              Padding(
+                                                padding: EdgeInsets.fromLTRB(
+                                                    expanded ? 12 : 48,
+                                                    expanded ? 4 : 0,
+                                                    expanded ? 12 : 52,
+                                                    expanded ? 48 : 0),
+                                                child: TextField(
+                                                  key: const ValueKey(
+                                                      'chat-composer-input'),
+                                                  controller: _controller,
+                                                  focusNode: _focusNode,
+                                                  onTap: () =>
+                                                      _setAttachmentMenu(false),
+                                                  onTapOutside: (_) =>
+                                                      _focusNode.unfocus(),
+                                                  minLines: expanded ? 2 : 1,
+                                                  maxLines: expanded ? 5 : 1,
+                                                  textAlignVertical:
+                                                      TextAlignVertical.top,
+                                                  textInputAction:
+                                                      TextInputAction.newline,
+                                                  style: TextStyle(
+                                                      fontSize: 14,
+                                                      height: 1.5,
+                                                      color: theme.colorScheme
+                                                          .onSurface),
+                                                  decoration: InputDecoration(
+                                                    isDense: true,
+                                                    hintText: '描述你想画的画面...',
+                                                    hintStyle: TextStyle(
+                                                        color: theme.colorScheme
+                                                            .onSurfaceVariant
+                                                            .withValues(
+                                                                alpha: .5),
+                                                        fontSize: 14),
+                                                    border: InputBorder.none,
+                                                    enabledBorder:
+                                                        InputBorder.none,
+                                                    focusedBorder:
+                                                        InputBorder.none,
+                                                    filled: false,
+                                                    contentPadding:
+                                                        const EdgeInsets
+                                                            .symmetric(
+                                                            vertical: 13.5),
+                                                  ),
+                                                ),
+                                              ),
+                                              Positioned(
+                                                  left: 0,
+                                                  bottom: 0,
+                                                  child: _buildAddButton()),
+                                              if (expanded &&
+                                                  widget.onSelectModel != null)
+                                                Positioned(
+                                                  left: 52,
+                                                  right: 52,
+                                                  bottom: 0,
+                                                  child: Align(
+                                                      alignment:
+                                                          Alignment.centerRight,
+                                                      child:
+                                                          _buildModelButton()),
+                                                ),
+                                              Positioned(
+                                                  right: 0,
+                                                  bottom: 0,
+                                                  child: _buildSendButton()),
+                                            ]),
+                                          ),
+                                        ]),
+                                  )),
+                        ),
+                      ),
+                    ])),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModelButton() {
+    final label = widget.modelName.isEmpty ? '选择模型' : widget.modelName;
+    return Tooltip(
+      message: '主模型：$label',
+      child: TextButton(
+        key: const ValueKey('chat-composer-model'),
+        onPressed: widget.isSending || _selectingModel ? null : _selectModel,
+        style: TextButton.styleFrom(
+          foregroundColor: Theme.of(context).colorScheme.onSurface,
+          minimumSize: const Size(0, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Flexible(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600))),
+          const SizedBox(width: 4),
+          const Icon(CupertinoIcons.chevron_down, size: 12),
+        ]),
+      ),
+    );
+  }
+
+  Widget _animateComposerSize({required Widget child}) {
+    // Zero-duration AnimatedSize can invalidate its own layout on a resize.
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomCenter,
+      child: child,
+    );
+  }
+
+  Widget _buildAddButton() {
+    final theme = Theme.of(context);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return IconButton(
+      onPressed: widget.isSending
+          ? null
+          : () => _setAttachmentMenu(!_attachmentMenuOpen),
+      tooltip: _attachmentMenuOpen ? '收起添加菜单' : '添加附件',
+      icon: AnimatedRotation(
+        turns: _attachmentMenuOpen ? 0.125 : 0,
+        duration:
+            reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: Icon(
+          CupertinoIcons.plus,
+          size: 23,
+          color: widget.isSending
+              ? theme.disabledColor
+              : theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+    );
+  }
+
+  Widget _buildSendButton() {
+    final theme = Theme.of(context);
+    final glass = FrostedTheme.of(context);
     final canSend = (_hasText ||
             _pendingImages.isNotEmpty ||
             _pendingTextAttachment != null) &&
         !widget.isSending &&
         !_pickingImages;
-    final theme = Theme.of(context);
-    final glass = FrostedTheme.of(context);
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final horizontalInset = _focusNode.hasFocus ? 12.0 : 24.0;
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: widget.maxHeight ?? double.infinity,
+    return AnimatedContainer(
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 200),
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: canSend
+            ? LinearGradient(
+                colors: [glass.selection, glass.selection],
+              )
+            : LinearGradient(
+                colors: [
+                  theme.colorScheme.onSurface.withValues(alpha: 0.14),
+                  theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                ],
+              ),
+        boxShadow: canSend
+            ? [
+                BoxShadow(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
       ),
-      child: AnimatedPadding(
-        duration:
-            reduceMotion ? Duration.zero : const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-        padding: EdgeInsets.fromLTRB(
-          horizontalInset,
-          8,
-          horizontalInset,
-          12 +
-              (widget.includeKeyboardInset
-                  ? MediaQuery.viewInsetsOf(context).bottom
-                  : 0),
-        ),
-        child: TextFieldTapRegion(
-          child: TapRegion(
-            onTapOutside: (_) => _setAttachmentMenu(false),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                      maxHeight:
-                          ((widget.maxHeight ?? 400) * 0.4).clamp(0, 160)),
-                  child: SingleChildScrollView(
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    if (_pendingPaths.isNotEmpty) _buildImagePreview(),
-                    if (_pendingTextAttachment != null) _buildTextFilePreview(),
-                    _buildAttachmentMenu(),
-                  ])),
-                ),
-                Flexible(
-                  fit: FlexFit.loose,
-                  child: FrostedSurface(
-                    key: const ValueKey('chat-composer-surface'),
-                    radius: 26,
-                    blur: 16,
-                    color: glass.blurEnabled
-                        ? glass.surface
-                        : theme.colorScheme.surface,
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        IconButton(
-                          onPressed: widget.isSending
-                              ? null
-                              : () => _setAttachmentMenu(!_attachmentMenuOpen),
-                          tooltip: _attachmentMenuOpen ? '收起添加菜单' : '添加附件',
-                          icon: AnimatedRotation(
-                            turns: _attachmentMenuOpen ? 0.125 : 0,
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
-                            child: Icon(
-                              CupertinoIcons.plus,
-                              size: 23,
-                              color: widget.isSending
-                                  ? theme.disabledColor
-                                  : theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          padding: EdgeInsets.zero,
-                          constraints:
-                              const BoxConstraints(minWidth: 48, minHeight: 48),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: _controller,
-                            focusNode: _focusNode,
-                            onTap: () => _setAttachmentMenu(false),
-                            onTapOutside: (_) => _focusNode.unfocus(),
-                            minLines: 1,
-                            maxLines: 5,
-                            textInputAction: TextInputAction.newline,
-                            style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: Theme.of(context).colorScheme.onSurface),
-                            decoration: InputDecoration(
-                              isDense: true,
-                              hintText: '描述你想画的画面...',
-                              hintStyle: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.5),
-                                  fontSize: 14),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              filled: false,
-                              contentPadding:
-                                  const EdgeInsets.symmetric(vertical: 13.5),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        AnimatedContainer(
-                          duration: MediaQuery.disableAnimationsOf(context)
-                              ? Duration.zero
-                              : const Duration(milliseconds: 200),
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: canSend
-                                ? LinearGradient(
-                                    colors: [glass.selection, glass.selection],
-                                  )
-                                : LinearGradient(
-                                    colors: [
-                                      theme.colorScheme.onSurface
-                                          .withValues(alpha: 0.14),
-                                      theme.colorScheme.onSurface
-                                          .withValues(alpha: 0.08),
-                                    ],
-                                  ),
-                            boxShadow: canSend
-                                ? [
-                                    BoxShadow(
-                                      color: theme.colorScheme.primary
-                                          .withValues(alpha: 0.12),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                          child: Semantics(
-                            label: widget.isSending ? '停止回复' : '发送消息',
-                            button: true,
-                            enabled: canSend || widget.onStop != null,
-                            child: Material(
-                              color: Colors.transparent,
-                              shape: const CircleBorder(),
-                              child: InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: widget.isSending
-                                    ? widget.onStop
-                                    : canSend
-                                        ? _submit
-                                        : null,
-                                child: Center(
-                                  child: widget.isSending
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: const Icon(Icons.stop_rounded,
-                                              size: 20, color: Colors.white),
-                                        )
-                                      : Icon(
-                                          CupertinoIcons.arrow_up,
-                                          size: 20,
-                                          color: canSend
-                                              ? glass.onSelection
-                                              : theme
-                                                  .colorScheme.onSurfaceVariant,
-                                        ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 2),
-                      ],
+      child: Semantics(
+        label: widget.isSending ? '停止回复' : '发送消息',
+        button: true,
+        enabled: canSend || widget.onStop != null,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: widget.isSending
+                ? widget.onStop
+                : canSend
+                    ? _submit
+                    : null,
+            child: Center(
+              child: widget.isSending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: Icon(Icons.stop_rounded,
+                          size: 20, color: Colors.white),
+                    )
+                  : Icon(
+                      CupertinoIcons.arrow_up,
+                      size: 20,
+                      color: canSend
+                          ? glass.onSelection
+                          : theme.colorScheme.onSurfaceVariant,
                     ),
-                  ),
-                ),
-              ],
             ),
           ),
         ),
@@ -423,7 +555,7 @@ class _ChatInputBarState extends State<ChatInputBar>
     );
   }
 
-  Widget _buildAttachmentMenu() {
+  Widget _buildAttachmentMenu({bool compact = false}) {
     return SizeTransition(
       sizeFactor: _attachmentCurve,
       axisAlignment: 1,
@@ -439,24 +571,27 @@ class _ChatInputBarState extends State<ChatInputBar>
             child: ExcludeSemantics(
               excluding: !_attachmentMenuOpen,
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+                padding: EdgeInsets.only(bottom: compact ? 6 : 10),
                 child: FrostedSurface(
                   radius: 22,
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(compact ? 4 : 8),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildAttachmentAction(
+                        compact: compact,
                         icon: CupertinoIcons.photo,
                         label: '添加照片',
                         onTap: _pickImage,
                       ),
                       _buildAttachmentAction(
+                        compact: compact,
                         icon: CupertinoIcons.doc_text,
                         label: '添加文档',
                         onTap: _pickTextFile,
                       ),
                       _buildAttachmentAction(
+                        compact: compact,
                         icon: CupertinoIcons.square_grid_2x2,
                         label: '画风收藏',
                         onTap: widget.onOpenStylePresets,
@@ -473,6 +608,7 @@ class _ChatInputBarState extends State<ChatInputBar>
   }
 
   Widget _buildAttachmentAction({
+    bool compact = false,
     required IconData icon,
     required String label,
     required VoidCallback? onTap,
@@ -488,12 +624,13 @@ class _ChatInputBarState extends State<ChatInputBar>
           onTap: onTap == null ? null : () => _chooseAttachment(onTap),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+            padding:
+                EdgeInsets.symmetric(horizontal: 4, vertical: compact ? 4 : 14),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 24, color: color),
-                const SizedBox(height: 9),
+                Icon(icon, size: compact ? 18 : 24, color: color),
+                SizedBox(height: compact ? 3 : 9),
                 Text(label,
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: color)),
@@ -562,6 +699,8 @@ class _ChatInputBarState extends State<ChatInputBar>
                 child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Text('${index + 1} · ${_imagePurposes[index]} ▾',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12))),
               ),
             ])),

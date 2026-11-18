@@ -1,3 +1,5 @@
+import 'package:nai_huishi/presentation/widgets/studio_animated_icon.dart';
+import 'package:nai_huishi/presentation/widgets/studio_entrance.dart';
 import 'dart:convert';
 import 'dart:ui';
 
@@ -6,10 +8,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/model_selection_sheet.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_scroll_surface.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_list.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
@@ -62,6 +66,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
         _vm.canUndoPrompt,
         _vm.activeSession?.parentSessionId,
         _vm.runStage,
+        _vm.mainBinding,
       );
 
   @override
@@ -221,6 +226,22 @@ class _ChatDrawerState extends State<ChatDrawer> {
     await showChatSessionsPanel(context, vm: _vm);
   }
 
+  Future<void> _selectMainModel() async {
+    if (_vm.isSending) return;
+    if (_vm.providers.isEmpty) {
+      await showChatSettingsSheet(context, _vm);
+      return;
+    }
+    final selected = await showModelSelectionSheet(
+      context,
+      providers: _vm.providers,
+      selected: _vm.mainBinding,
+      title: '选择主模型',
+    );
+    if (!mounted || selected == null || _vm.isSending) return;
+    await _vm.setRoleBinding(LlmProfileRole.main, selected);
+  }
+
   Future<void> _createNewSession() async {
     final version = await showPromptVersionDialog(context);
     if (version == null) return;
@@ -325,6 +346,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
       builder: (context, constraints) => ChatScrollSurface(
         background: widget.embedded ? const StudioBackground() : null,
         footerBottomInset: safeInsets.bottom,
+        initialHeaderHeight: safeInsets.top + 62,
         header: Padding(
           padding: EdgeInsets.only(top: safeInsets.top),
           child: _buildTopBar(),
@@ -355,7 +377,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(
+                        const StudioAnimatedIcon(
                           CupertinoIcons.exclamationmark_triangle,
                           size: 16,
                           color: Colors.redAccent,
@@ -374,7 +396,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                         ),
                         GestureDetector(
                           onTap: _vm.clearError,
-                          child: Icon(
+                          child: StudioAnimatedIcon(
                             CupertinoIcons.xmark,
                             size: 14,
                             color:
@@ -385,57 +407,47 @@ class _ChatDrawerState extends State<ChatDrawer> {
                     ),
                   ),
                 ),
-              if (_vm.isSending ||
-                  _vm.canUndoPrompt ||
-                  _vm.activeSession?.parentSessionId != null)
+              if (_vm.isSending)
                 Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(children: [
-                      Expanded(
-                          child: Text(_vm.isSending ? _vm.runStage : '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall)),
-                      if (_vm.canUndoPrompt)
-                        TextButton.icon(
-                            onPressed: _vm.undoPromptChange,
-                            icon: const Icon(Icons.undo, size: 16),
-                            label: const Text('撤销写入')),
-                      if (_vm.activeSession?.parentSessionId != null)
-                        IconButton(
-                            tooltip: '返回原会话',
-                            icon: const Icon(Icons.call_split, size: 18),
-                            onPressed: _vm.isSending
-                                ? null
-                                : () => _vm.selectSession(
-                                    _vm.activeSession!.parentSessionId!)),
-                    ])),
-              ChatInputBar(
-                updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
-                    ? sl<AppUpdateInstallGuard>()
-                    : null,
-                maxHeight: (constraints.maxHeight -
-                        safeInsets.vertical -
-                        110 -
-                        (_vm.errorMessage == null ? 0 : 90))
-                    .clamp(80, double.infinity),
-                includeKeyboardInset:
-                    !(widget.embedded || widget.parentResizesForKeyboard),
-                controller: _inputController,
-                isSending: _vm.isSending,
-                onStop: _vm.canStop ? _vm.stopSending : null,
-                onOpenStylePresets: _openStylePresets,
-                onSend: (text,
-                        {String? imageBase64,
-                        List<String> imageBase64s = const [],
-                        String? textAttachment}) =>
-                    _vm.sendUserMessage(
-                  text,
-                  imageBase64: imageBase64,
-                  imageBase64s: imageBase64s,
-                  textAttachment: textAttachment,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(_vm.runStage,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall),
+                  ),
                 ),
-              ),
+              StudioEntrance(
+                  role: StudioEntranceRole.content,
+                  child: ChatInputBar(
+                    modelName: _vm.mainBinding.model,
+                    onSelectModel: _selectMainModel,
+                    updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
+                        ? sl<AppUpdateInstallGuard>()
+                        : null,
+                    maxHeight: (constraints.maxHeight -
+                            safeInsets.vertical -
+                            110 -
+                            (_vm.errorMessage == null ? 0 : 90))
+                        .clamp(80, double.infinity),
+                    includeKeyboardInset:
+                        !(widget.embedded || widget.parentResizesForKeyboard),
+                    controller: _inputController,
+                    isSending: _vm.isSending,
+                    onStop: _vm.canStop ? _vm.stopSending : null,
+                    onOpenStylePresets: _openStylePresets,
+                    onSend: (text,
+                            {String? imageBase64,
+                            List<String> imageBase64s = const [],
+                            String? textAttachment}) =>
+                        _vm.sendUserMessage(
+                      text,
+                      imageBase64: imageBase64,
+                      imageBase64s: imageBase64s,
+                      textAttachment: textAttachment,
+                    ),
+                  )),
             ],
           ),
         ),
@@ -450,11 +462,14 @@ class _ChatDrawerState extends State<ChatDrawer> {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: Row(
         children: [
-          IconButton(
-            onPressed: _openSessions,
-            tooltip: '会话历史',
-            icon: Icon(CupertinoIcons.list_bullet, color: iconColor),
-          ),
+          StudioEntrance(
+              role: StudioEntranceRole.icon,
+              child: IconButton(
+                onPressed: _openSessions,
+                tooltip: '会话历史',
+                icon: StudioAnimatedIcon(CupertinoIcons.list_bullet,
+                    color: iconColor),
+              )),
           if (title != null)
             Expanded(
               child: Text(
@@ -469,21 +484,28 @@ class _ChatDrawerState extends State<ChatDrawer> {
             )
           else
             const Spacer(),
-          IconButton(
-            onPressed: _createNewSession,
-            tooltip: '新建会话',
-            icon: Icon(CupertinoIcons.square_pencil, color: iconColor),
-          ),
-          IconButton(
-            onPressed: () => showChatSettingsSheet(context, _vm),
-            tooltip: '设置',
-            icon: Icon(CupertinoIcons.gear_alt, color: iconColor),
-          ),
+          StudioEntrance(
+              role: StudioEntranceRole.detail,
+              child: IconButton(
+                onPressed: _createNewSession,
+                tooltip: '新建会话',
+                icon: StudioAnimatedIcon(CupertinoIcons.square_pencil,
+                    color: iconColor),
+              )),
+          StudioEntrance(
+              role: StudioEntranceRole.action,
+              child: IconButton(
+                onPressed: () => showChatSettingsSheet(context, _vm),
+                tooltip: '设置',
+                icon: StudioAnimatedIcon(CupertinoIcons.gear_alt,
+                    color: iconColor),
+              )),
           if (!widget.embedded)
             IconButton(
               onPressed: widget.onClose,
               tooltip: '关闭',
-              icon: Icon(CupertinoIcons.xmark_circle_fill, color: iconColor),
+              icon: StudioAnimatedIcon(CupertinoIcons.xmark_circle_fill,
+                  color: iconColor),
             ),
         ],
       ),

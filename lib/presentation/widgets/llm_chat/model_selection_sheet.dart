@@ -2,6 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 
+Future<LlmRoleBinding?> showModelSelectionSheet(
+  BuildContext context, {
+  required List<LlmProvider> providers,
+  required LlmRoleBinding selected,
+  required String title,
+}) =>
+    showModalBottomSheet<LlmRoleBinding>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (_) => ModelSelectionSheet(
+          providers: providers, selected: selected, title: title),
+    );
+
 /// Provider filtering and model selection share one sheet, with no nested menus.
 class ModelSelectionSheet extends StatefulWidget {
   const ModelSelectionSheet(

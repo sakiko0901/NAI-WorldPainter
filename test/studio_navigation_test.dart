@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/studio_animated_icon.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -7,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/presentation/navigation/app_destination.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/domain/entities/api_endpoint.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
@@ -78,6 +80,46 @@ void main() {
     addTearDown(tester.view.resetViewPadding);
   }
 
+  testWidgets('idle bubble fades and tapping the current tab restores it',
+      (tester) async {
+    viewport(tester);
+    await tester.pumpWidget(host());
+    final fade = find
+        .ancestor(
+            of: find.byKey(const ValueKey('navigation-selection')),
+            matching: find.byType(AnimatedOpacity))
+        .first;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(tester.widget<AnimatedOpacity>(fade).opacity, 0);
+    await tester.tap(nav('create'));
+    await tester.pump();
+    expect(tester.widget<AnimatedOpacity>(fade).opacity, 1);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(tester.widget<AnimatedOpacity>(fade).opacity, 0);
+  });
+
+  testWidgets('selecting each navigation icon runs its internal motion',
+      (tester) async {
+    viewport(tester);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    for (final name in ['assistant', 'tools', 'create']) {
+      await tester.tap(nav(name));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 130));
+      final paint = tester.widget<CustomPaint>(find.descendant(
+          of: nav(name),
+          matching: find.byWidgetPredicate(
+              (w) => w is CustomPaint && w.painter is StudioIconPainter)));
+      final clock = (paint.painter! as StudioIconPainter).clock;
+      expect(clock.value, inExclusiveRange(0, .59));
+      await tester.pumpAndSettle();
+      expect(clock.value, 1);
+    }
+  });
+
   testWidgets(
       'all destinations retain drafts and scroll; rapid switching settles',
       (tester) async {
@@ -94,16 +136,17 @@ void main() {
         tester.state<ScrollableState>(scrollFor(GeneratePage)).position.pixels;
     final selection = find.byKey(const ValueKey('navigation-selection'));
     final startLeft = tester.getTopLeft(selection).dx;
+    final startWidth = tester.getSize(selection).width;
     await tester.tap(nav('tools'));
     await tester.pump();
-    expect(tester.getTopLeft(selection).dx, greaterThan(startLeft));
-    final selectedLeft = tester.getTopLeft(selection).dx;
-    expect(tester.getCenter(selection).dx,
-        closeTo(tester.getCenter(nav('tools')).dx, .01));
+    expect(tester.getTopLeft(selection).dx, closeTo(startLeft, .01));
     await tester.pump(const Duration(milliseconds: 120));
-    expect(tester.getTopLeft(selection).dx, selectedLeft);
+    expect(tester.getTopLeft(selection).dx, greaterThan(startLeft));
+    expect(tester.getSize(selection).width, greaterThan(startWidth));
+    expect(tester.getCenter(selection).dx,
+        lessThan(tester.getCenter(nav('tools')).dx));
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(selection).dx, selectedLeft);
+    expect(tester.getSize(selection).width, closeTo(startWidth, .01));
     expect(tester.getCenter(selection).dx,
         closeTo(tester.getCenter(nav('tools')).dx, .01));
     await tester.drag(scrollFor(SettingsPage), const Offset(0, -240));
@@ -169,6 +212,51 @@ void main() {
     });
   }
 
+  testWidgets('navigation retargets continuously and respects reduced motion',
+      (tester) async {
+    viewport(tester);
+    var destination = AppDestination.create;
+    var reduceMotion = false;
+    late StateSetter update;
+    await tester.pumpWidget(MaterialApp(
+      theme: buildNaiHuishiTheme(Brightness.dark),
+      home: StatefulBuilder(builder: (context, setState) {
+        update = setState;
+        return MediaQuery(
+          data:
+              MediaQuery.of(context).copyWith(disableAnimations: reduceMotion),
+          child: Scaffold(
+            bottomNavigationBar: StudioNavigationBar(
+              selected: destination,
+              onSelected: (next) => setState(() => destination = next),
+            ),
+          ),
+        );
+      }),
+    ));
+    final selection = find.byKey(const ValueKey('navigation-selection'));
+    final initialWidth = tester.getSize(selection).width;
+    await tester.tap(nav('tools'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+    final moving = tester.getRect(selection);
+    await tester.tap(nav('create'));
+    await tester.pump();
+    expect(tester.getRect(selection), moving);
+    await tester.pumpAndSettle();
+    expect(tester.getCenter(selection).dx,
+        closeTo(tester.getCenter(nav('create')).dx, .01));
+    expect(tester.getSize(selection).width, closeTo(initialWidth, .01));
+    update(() => reduceMotion = true);
+    await tester.pumpAndSettle();
+    await tester.tap(nav('assistant'));
+    await tester.pump();
+    expect(tester.getCenter(selection).dx,
+        closeTo(tester.getCenter(nav('assistant')).dx, .01));
+    expect(tester.getSize(selection).width, closeTo(initialWidth, .01));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('capture navigation on all three destinations', (tester) async {
     if (!const bool.fromEnvironment('NAVIGATION_CAPTURE')) return;
     await tester.runAsync(() async {
@@ -191,24 +279,34 @@ void main() {
     });
     viewport(tester);
     final key = GlobalKey();
+    Future<void> captureFrame(String name) async {
+      await tester.runAsync(() async {
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 2);
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        final file = File('build/navigation-preview/$name.png');
+        file.parent.createSync(recursive: true);
+        file.writeAsBytesSync(data!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
+
     for (final brightness in Brightness.values) {
       await tester.pumpWidget(host(brightness: brightness, captureKey: key));
       await tester.pumpAndSettle();
-      for (final name in ['create', 'assistant', 'tools']) {
+      for (final name in ['assistant', 'tools', 'create']) {
         await tester.tap(nav(name));
+        await tester.pump();
+        for (var frame = 0; frame <= 44; frame++) {
+          if (frame > 0) await tester.pump(const Duration(milliseconds: 20));
+          await captureFrame(
+              '$name-${brightness.name}-entrance-${frame.toString().padLeft(2, '0')}');
+        }
+        await captureFrame('$name-${brightness.name}-moving');
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.runAsync(() async {
-          final boundary =
-              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-          final image = await boundary.toImage(pixelRatio: 2);
-          final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          final file =
-              File('build/navigation-preview/$name-${brightness.name}.png');
-          file.parent.createSync(recursive: true);
-          file.writeAsBytesSync(data!.buffer.asUint8List());
-          image.dispose();
-        });
+        await captureFrame('$name-${brightness.name}');
       }
     }
   });

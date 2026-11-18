@@ -16,6 +16,8 @@ class ChatMessageBubble extends StatefulWidget {
   final LlmMessage message;
   final int messageIndex;
   final VoidCallback? onRetry;
+  final VoidCallback? onUndoPrompt;
+  final VoidCallback? onReturnToParent;
   final void Function(String newText)? onEditAndResend;
   final void Function(String? optionId, String? customAnswer)?
       onAnswerInteraction;
@@ -25,6 +27,8 @@ class ChatMessageBubble extends StatefulWidget {
     required this.message,
     required this.messageIndex,
     this.onRetry,
+    this.onUndoPrompt,
+    this.onReturnToParent,
     this.onEditAndResend,
     this.onAnswerInteraction,
   });
@@ -175,34 +179,23 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                             timeline: message.agentTimeline!),
                       ),
                     if (hasText)
-                      isUser
-                          ? _TapDetector(
-                              onTap: () =>
-                                  setState(() => _menuVisible = !_menuVisible),
-                              child: SelectableText(
-                                message.content.trim(),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  height: 1.5,
-                                  color: theme.colorScheme.onSurface,
-                                ),
-                                contextMenuBuilder:
-                                    (context, editableTextState) {
-                                  return AdaptiveTextSelectionToolbar
-                                      .editableText(
-                                    editableTextState: editableTextState,
-                                  );
-                                },
-                              ),
-                            )
-                          : SelectableText(
-                              message.content.trim(),
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: theme.colorScheme.onSurface,
-                              ),
-                            ),
+                      _TapDetector(
+                        onTap: () =>
+                            setState(() => _menuVisible = !_menuVisible),
+                        child: SelectableText(
+                          message.content.trim(),
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.5,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                          contextMenuBuilder: (context, editableTextState) {
+                            return AdaptiveTextSelectionToolbar.editableText(
+                              editableTextState: editableTextState,
+                            );
+                          },
+                        ),
+                      ),
                     if (!isUser && message.interaction != null)
                       Padding(
                         padding: EdgeInsets.only(top: hasText ? 10 : 0),
@@ -244,8 +237,8 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
       ),
     );
 
-    if (!(isUser &&
-        (widget.onRetry != null || widget.onEditAndResend != null))) {
+    if (isPlaceholder ||
+        (isUser && widget.onRetry == null && widget.onEditAndResend == null)) {
       return bubble;
     }
 
@@ -264,7 +257,7 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
           builder: (context, progress, child) => ClipRect(
             key: const ValueKey('message-actions-reveal'),
             child: Align(
-              alignment: Alignment.topRight,
+              alignment: isUser ? Alignment.topRight : Alignment.topLeft,
               heightFactor: progress,
               child: Opacity(
                 opacity: progress,
@@ -295,6 +288,30 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (!isUser && widget.onUndoPrompt != null) ...[
+          _MenuIconButton(
+            icon: Icons.undo,
+            tooltip: '撤销写入',
+            color: theme.colorScheme.primary,
+            onTap: () {
+              setState(() => _menuVisible = false);
+              widget.onUndoPrompt!();
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (!isUser && widget.onReturnToParent != null) ...[
+          _MenuIconButton(
+            icon: Icons.call_split,
+            tooltip: '返回原会话',
+            color: theme.colorScheme.primary,
+            onTap: () {
+              setState(() => _menuVisible = false);
+              widget.onReturnToParent!();
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
         if (widget.onEditAndResend != null) ...[
           _MenuIconButton(
             icon: CupertinoIcons.pencil,

@@ -1,3 +1,6 @@
+import '../widgets/studio_scroll_surface.dart';
+import 'package:nai_huishi/presentation/widgets/studio_animated_icon.dart';
+import 'package:nai_huishi/presentation/widgets/studio_entrance.dart';
 import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
 import 'dart:io';
 import 'package:nai_huishi/presentation/widgets/prompt_tag_field.dart';
@@ -237,111 +240,139 @@ class _GeneratePageState extends State<GeneratePage> {
         Scaffold(
           backgroundColor: Colors.transparent,
           resizeToAvoidBottomInset: true,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            leadingWidth: 100,
-            leading: widget.onNavigate == null
-                ? null
-                : TextButton.icon(
-                    onPressed: () => widget.onNavigate!(0),
-                    icon: const Icon(Icons.photo_library_outlined, size: 20),
-                    label: const Text('画廊', style: TextStyle(fontSize: 14)),
-                  ),
-            actions: [
-              IconButton(
-                tooltip: '生成参数',
-                icon: const Icon(Icons.tune),
-                onPressed:
-                    _isImageOperationBusy ? null : _openGenerationSettings,
-              ),
-            ],
-          ),
           bottomNavigationBar: _isChatDrawerOpen || keyboardOpen
               ? null
               : _buildFloatingBottomBar(),
-          body: LayoutBuilder(builder: (context, constraints) {
-            final textExtra =
-                ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
-                    .clamp(0.0, 72.0);
-            final thumbnails = _vm.sessionResults.length > 1 ? 48.0 : 0.0;
-            final workspaceHeight =
-                (constraints.maxHeight - 210 - textExtra - thumbnails)
-                    .clamp(220.0, 536.0)
-                    .toDouble();
-            final displayedImage = _vm.selectedResult ?? _vm.lastCompletedTask;
-            final imageHeight = displayedImage != null &&
-                    displayedImage.width > 0 &&
-                    displayedImage.height > 0
-                ? ((constraints.maxWidth - 48) *
-                        displayedImage.height /
-                        displayedImage.width)
-                    .clamp(160.0, MediaQuery.sizeOf(context).height * 0.85)
-                    .toDouble()
-                : workspaceHeight;
-            return Stack(
-              children: [
-                BackdropGroup(
-                    child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    if (_vm.isGenerating &&
-                        notification is UserScrollNotification &&
-                        notification.direction != ScrollDirection.idle) {
-                      _userScrolledDuringGeneration = true;
-                    }
-                    return false;
-                  },
-                  child: ListView(
-                    key: const PageStorageKey('creation-scroll'),
-                    controller: _scrollController,
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    physics: _characterPositionLocked ||
-                            (_vm.generationMode == GenerationMode.inpainting &&
-                                (_inpaintWorkspaceLocked ||
-                                    InpaintWorkspaceCard.gestureActive.value))
-                        ? const NeverScrollableScrollPhysics()
-                        : null,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    children: [
-                      _buildModeSection(),
-                      const SizedBox(height: 12),
-                      StudioTabView(
-                        key: const ValueKey('creation-mode-transition'),
-                        index: _vm.generationMode == GenerationMode.inpainting
-                            ? 1
-                            : 0,
-                        expand: false,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+          body: StudioScrollSurface(
+              initialHeaderHeight:
+                  MediaQuery.paddingOf(context).top + kToolbarHeight,
+              header: Padding(
+                  padding:
+                      EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
+                  child: SizedBox(
+                      height: kToolbarHeight,
+                      child: AppBar(
+                        primary: false,
+                        backgroundColor: Colors.transparent,
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 0,
+                        scrolledUnderElevation: 0,
+                        leadingWidth: 100,
+                        leading: widget.onNavigate == null
+                            ? null
+                            : StudioEntrance(
+                                role: StudioEntranceRole.heading,
+                                child: TextButton.icon(
+                                  onPressed: () => widget.onNavigate!(0),
+                                  icon: const StudioAnimatedIcon(
+                                      Icons.photo_library_outlined,
+                                      size: 20),
+                                  label: const Text('画廊',
+                                      style: TextStyle(fontSize: 14)),
+                                )),
+                        actions: [
+                          StudioEntrance(
+                              role: StudioEntranceRole.icon,
+                              child: IconButton(
+                                tooltip: '生成参数',
+                                icon: const StudioAnimatedIcon(Icons.tune),
+                                onPressed: _isImageOperationBusy
+                                    ? null
+                                    : _openGenerationSettings,
+                              )),
+                        ],
+                      ))),
+              bodyBuilder: (insets) =>
+                  LayoutBuilder(builder: (context, constraints) {
+                    final textExtra =
+                        ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
+                            .clamp(0.0, 72.0);
+                    final thumbnails =
+                        _vm.sessionResults.length > 1 ? 48.0 : 0.0;
+                    final workspaceHeight = (constraints.maxHeight -
+                            insets.top -
+                            210 -
+                            textExtra -
+                            thumbnails)
+                        .clamp(220.0, 536.0)
+                        .toDouble();
+                    final displayedImage =
+                        _vm.selectedResult ?? _vm.lastCompletedTask;
+                    final imageHeight = displayedImage != null &&
+                            displayedImage.width > 0 &&
+                            displayedImage.height > 0
+                        ? ((constraints.maxWidth - 48) *
+                                displayedImage.height /
+                                displayedImage.width)
+                            .clamp(
+                                160.0, MediaQuery.sizeOf(context).height * 0.85)
+                            .toDouble()
+                        : workspaceHeight;
+                    return Stack(
+                      children: [
+                        BackdropGroup(
+                            child: NotificationListener<ScrollNotification>(
+                          onNotification: (notification) {
+                            if (_vm.isGenerating &&
+                                notification is UserScrollNotification &&
+                                notification.direction !=
+                                    ScrollDirection.idle) {
+                              _userScrolledDuringGeneration = true;
+                            }
+                            return false;
+                          },
+                          child: ListView(
+                            key: const PageStorageKey('creation-scroll'),
+                            controller: _scrollController,
+                            keyboardDismissBehavior:
+                                ScrollViewKeyboardDismissBehavior.onDrag,
+                            physics: _characterPositionLocked ||
+                                    (_vm.generationMode ==
+                                            GenerationMode.inpainting &&
+                                        (_inpaintWorkspaceLocked ||
+                                            InpaintWorkspaceCard
+                                                .gestureActive.value))
+                                ? const NeverScrollableScrollPhysics()
+                                : null,
+                            padding:
+                                EdgeInsets.fromLTRB(12, insets.top, 12, 10),
                             children: [
-                              _buildResultSection(workspaceHeight: imageHeight),
+                              _buildModeSection(),
                               const SizedBox(height: 12),
-                              _buildPromptWorkspace(),
+                              StudioTabView(
+                                key: const ValueKey('creation-mode-transition'),
+                                index: _vm.generationMode ==
+                                        GenerationMode.inpainting
+                                    ? 1
+                                    : 0,
+                                expand: false,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _buildResultSection(
+                                          workspaceHeight: imageHeight),
+                                      const SizedBox(height: 12),
+                                      _buildPromptWorkspace(),
+                                    ],
+                                  ),
+                                  _hasOpenedInpaint
+                                      ? _buildInpaintingSection()
+                                      : const SizedBox.shrink(),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
                             ],
                           ),
-                          _hasOpenedInpaint
-                              ? _buildInpaintingSection()
-                              : const SizedBox.shrink(),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                  ),
-                )),
-                if (_isChatDrawerOpen)
-                  ChatDrawer(
-                      onClose: _closeChatDrawer,
-                      parentResizesForKeyboard: true),
-              ],
-            );
-          }),
+                        )),
+                        if (_isChatDrawerOpen)
+                          ChatDrawer(
+                              onClose: _closeChatDrawer,
+                              parentResizesForKeyboard: true),
+                      ],
+                    );
+                  })),
         ),
       ],
     );
@@ -780,21 +811,29 @@ class _GeneratePageState extends State<GeneratePage> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (negative)
-              Text('负向提示词', style: theme.textTheme.titleSmall)
+              StudioEntrance(
+                  role: StudioEntranceRole.heading,
+                  child: Text('负向提示词', style: theme.textTheme.titleSmall))
             else
-              _positivePromptHeading(),
+              StudioEntrance(
+                  role: StudioEntranceRole.heading,
+                  child: _positivePromptHeading()),
             const SizedBox(height: 12),
-            _buildPromptField(
-              showExpandButton: negative,
-              controller: negative ? _negativeController : _promptController,
-              focusNode: negative ? _negativeFocusNode : _promptFocusNode,
-              hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',
-              onChanged: negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
-              textColor: theme.colorScheme.onSurface,
-              editorTitle: negative ? '负向提示词' : '正向提示词',
-              onExpandedSubmit:
-                  negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
-            ),
+            StudioEntrance(
+                role: StudioEntranceRole.content,
+                child: _buildPromptField(
+                  showExpandButton: negative,
+                  controller:
+                      negative ? _negativeController : _promptController,
+                  focusNode: negative ? _negativeFocusNode : _promptFocusNode,
+                  hintText: negative ? '不希望出现的内容' : '描述画面、风格与构图',
+                  onChanged:
+                      negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
+                  textColor: theme.colorScheme.onSurface,
+                  editorTitle: negative ? '负向提示词' : '正向提示词',
+                  onExpandedSubmit:
+                      negative ? _vm.updateNegativePrompt : _vm.updatePrompt,
+                )),
           ]),
         );
     return FrostedSurface(
@@ -802,7 +841,9 @@ class _GeneratePageState extends State<GeneratePage> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         editor(negative: false),
         if (!_vm.isNonNovelAiProvider) ...[
-          const Divider(height: 1, indent: 16, endIndent: 16),
+          const StudioEntrance(
+              role: StudioEntranceRole.rule,
+              child: Divider(height: 1, indent: 16, endIndent: 16)),
           editor(negative: true),
         ],
       ]),
@@ -1623,68 +1664,72 @@ class _GeneratePageState extends State<GeneratePage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              FilledButton.icon(
-                key: const ValueKey('generate-primary-button'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-                onPressed: cancelling ||
-                        _isImportingWorkspaceImage ||
-                        _vm.isProcessingImage
-                    ? null
-                    : () {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        if (_vm.isGenerating) {
-                          _vm.isTiledImg2Img
-                              ? _vm.cancelTiledImg2Img()
-                              : _vm.cancelBatch();
-                        } else {
-                          _vm.generate();
-                        }
-                      },
-                icon: _vm.isProcessingImage
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: RepaintBoundary(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : Icon(
-                        _vm.isGenerating
-                            ? Icons.stop_circle_outlined
-                            : Icons.auto_awesome,
+              StudioEntrance(
+                  role: StudioEntranceRole.action,
+                  child: FilledButton.icon(
+                    key: const ValueKey('generate-primary-button'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
                       ),
-                label: Text(
-                  _isImportingWorkspaceImage
-                      ? '正在导入图片…'
-                      : _vm.isProcessingImage
-                          ? '正在处理图片…'
-                          : _vm.isGenerating
-                              ? (cancelling
-                                  ? '正在停止后续任务…'
-                                  : '停止后续生成 · $progress')
-                              : (_vm.batchCount > 1
-                                  ? '生成 ${_vm.batchCount} 张图片'
-                                  : '生成图片'),
-                  textAlign: TextAlign.center,
-                ),
-              ),
+                    ),
+                    onPressed: cancelling ||
+                            _isImportingWorkspaceImage ||
+                            _vm.isProcessingImage
+                        ? null
+                        : () {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            if (_vm.isGenerating) {
+                              _vm.isTiledImg2Img
+                                  ? _vm.cancelTiledImg2Img()
+                                  : _vm.cancelBatch();
+                            } else {
+                              _vm.generate();
+                            }
+                          },
+                    icon: _vm.isProcessingImage
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: RepaintBoundary(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : Icon(
+                            _vm.isGenerating
+                                ? Icons.stop_circle_outlined
+                                : Icons.auto_awesome,
+                          ),
+                    label: Text(
+                      _isImportingWorkspaceImage
+                          ? '正在导入图片…'
+                          : _vm.isProcessingImage
+                              ? '正在处理图片…'
+                              : _vm.isGenerating
+                                  ? (cancelling
+                                      ? '正在停止后续任务…'
+                                      : '停止后续生成 · $progress')
+                                  : (_vm.batchCount > 1
+                                      ? '生成 ${_vm.batchCount} 张图片'
+                                      : '生成图片'),
+                      textAlign: TextAlign.center,
+                    ),
+                  )),
               const SizedBox(height: 5),
-              Text(
-                '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
-                '${cost == null ? ' · 预计 —' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
-                key: const ValueKey('generation-summary'),
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: 11,
-                  height: 1.35,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
+              StudioEntrance(
+                  role: StudioEntranceRole.detail,
+                  child: Text(
+                    '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
+                    '${cost == null ? ' · 预计 —' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
+                    key: const ValueKey('generation-summary'),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 11,
+                      height: 1.35,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  )),
             ],
           ),
         ),

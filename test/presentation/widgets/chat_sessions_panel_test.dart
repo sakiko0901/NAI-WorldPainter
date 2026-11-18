@@ -293,6 +293,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final brightness in Brightness.values) {
+    testWidgets('history scrolls behind the fixed search and title $brightness',
+        (tester) async {
+      final now = DateTime.now();
+      final vm = SessionHistoryFake(List.generate(
+          40,
+          (i) => historySession('$i',
+              title: '海边的柔和逆光 · 第 $i 次构思',
+              updatedAt: now.subtract(Duration(minutes: i + 1)))));
+      final key = await _open(tester, vm,
+          brightness: brightness, size: const Size(390, 844));
+      final heading = find.text('旧日的倒影');
+      final titleRect = tester.getRect(heading);
+      final searchRect = tester.getRect(_search);
+      final memoryRect = tester.getRect(find.text('学习记忆'));
+      expect(find.byTooltip('新对话'), findsNothing);
+      expect(tester.getRect(_row('0')).top, greaterThan(searchRect.bottom));
+      final controller = tester.widget<CustomScrollView>(_list).controller!;
+      await tester.dragFrom(
+          Offset(190, searchRect.bottom + 160), const Offset(0, -220));
+      await tester.pumpAndSettle();
+      expect(controller.offset, greaterThan(100));
+      expect(tester.getRect(heading), titleRect);
+      expect(tester.getRect(_search), searchRect);
+      expect(tester.getRect(find.text('学习记忆')), memoryRect);
+      expect(tester.getRect(_list).top, lessThan(searchRect.top));
+      await _capture(tester, key, 'history-fixed-${brightness.name}');
+      await tester.enterText(_search, '第 2');
+      await tester.pumpAndSettle();
+      expect(vm.searchQueries, ['第 2']);
+      expect(controller.offset, 0);
+      expect(tester.getRect(heading), titleRect);
+      expect(_row('2').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('anchored menu pins and unpins without changing updatedAt',
       (tester) async {
     final old = historySession('old', updatedAt: DateTime(2025));
@@ -393,7 +430,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
     expect(_row('base'), findsNothing);
-    expect(find.text('会话历史'), findsOneWidget);
+    expect(find.text('旧日的倒影'), findsOneWidget);
   });
 
   testWidgets(
@@ -418,7 +455,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '清空'));
     await tester.pumpAndSettle();
-    expect(find.text('会话历史'), findsNothing);
+    expect(find.text('旧日的倒影'), findsNothing);
     expect(vm.data, isEmpty);
   });
 
@@ -443,7 +480,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('会话 base'));
     await tester.pumpAndSettle();
-    expect(find.text('会话历史'), findsNothing);
+    expect(find.text('旧日的倒影'), findsNothing);
     expect(vm.activeSessionId, 'base');
   });
 
@@ -491,11 +528,11 @@ void main() {
         ..activeSessionId = 'today';
       final key = await _open(tester, vm,
           brightness: brightness, size: const Size(320, 760));
-      final heading = tester.getRect(find.text('会话历史'));
+      final heading = tester.getRect(find.text('旧日的倒影'));
       final memory = tester.getRect(find.text('学习记忆'));
       expect(memory.left, greaterThan(heading.right));
       expect((heading.center.dy - memory.center.dy).abs(), lessThan(8));
-      expect(find.byTooltip('新对话'), findsOneWidget);
+      expect(find.byTooltip('新对话'), findsNothing);
       final theme = Theme.of(tester.element(_row('today')));
       final glass = FrostedTheme.of(tester.element(_row('today')));
       final selection = tester

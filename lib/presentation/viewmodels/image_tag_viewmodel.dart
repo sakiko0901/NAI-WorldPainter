@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../data/datasources/local/sd_metadata_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
@@ -11,7 +12,7 @@ import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 
 /// 分析模式
-enum TagAnalysisMode { naiMetadata, wdTagger }
+enum TagAnalysisMode { naiMetadata, wdTagger, sdMetadata }
 
 class ImageTagViewModel extends ChangeNotifier {
   final AnalyzeImageTagsUseCase _useCase;
@@ -39,8 +40,9 @@ class ImageTagViewModel extends ChangeNotifier {
     final prefs = sl<SharedPreferences>();
     imagePath = prefs.getString(AppConstants.keyImageTagImagePath);
     final modeIndex = prefs.getInt(AppConstants.keyImageTagMode) ?? 0;
-    mode =
-        modeIndex == 1 ? TagAnalysisMode.wdTagger : TagAnalysisMode.naiMetadata;
+    mode = modeIndex >= 0 && modeIndex < TagAnalysisMode.values.length
+        ? TagAnalysisMode.values[modeIndex]
+        : TagAnalysisMode.naiMetadata;
     generalThreshold =
         prefs.getDouble(AppConstants.keyImageTagGeneralThreshold) ?? 0.35;
     characterThreshold =
@@ -106,6 +108,10 @@ class ImageTagViewModel extends ChangeNotifier {
         if (result == null) {
           error = '未检测到 NAI 元数据，该图片可能不是 NovelAI 生成的';
         }
+      } else if (mode == TagAnalysisMode.sdMetadata) {
+        result = await SdMetadataParser.parse(imagePath!);
+        if (result == null)
+          error = "未找到 SD WebUI 生成参数，请选择保留元数据的 PNG、JPEG 或 WebP 原图";
       } else {
         // WD-Tagger：在线分析
         final wdResult = await _useCase.analyze(
@@ -306,8 +312,7 @@ class ImageTagViewModel extends ChangeNotifier {
     if (imagePath != null) {
       await prefs.setString(AppConstants.keyImageTagImagePath, imagePath!);
     }
-    await prefs.setInt(
-        AppConstants.keyImageTagMode, mode == TagAnalysisMode.wdTagger ? 1 : 0);
+    await prefs.setInt(AppConstants.keyImageTagMode, mode.index);
     if (result != null) {
       await prefs.setString(
           AppConstants.keyImageTagResultJson, jsonEncode(result!.toJson()));

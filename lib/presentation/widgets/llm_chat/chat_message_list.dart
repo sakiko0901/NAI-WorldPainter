@@ -1,3 +1,5 @@
+import 'package:nai_huishi/presentation/widgets/studio_animated_icon.dart';
+import 'package:nai_huishi/presentation/widgets/studio_entrance.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -29,6 +31,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
   late List<LlmMessage> _messages;
   String? _sessionId;
   bool _loading = false;
+  LlmMessage? _undoMessage;
+  String? _parentSessionId;
   bool _following = true;
   bool _manualScroll = false;
   bool _followScheduled = false;
@@ -48,6 +52,13 @@ class _ChatMessageListState extends State<ChatMessageList> {
     _messages = widget.vm.messages;
     _sessionId = widget.vm.activeSessionId;
     _loading = widget.vm.isLoading;
+    _readActions();
+  }
+
+  void _readActions() {
+    _undoMessage = widget.vm.undoPromptMessage;
+    _parentSessionId =
+        widget.vm.isSending ? null : widget.vm.activeSession?.parentSessionId;
   }
 
   @override
@@ -82,10 +93,20 @@ class _ChatMessageListState extends State<ChatMessageList> {
     final sessionId = widget.vm.activeSessionId;
     final loading = widget.vm.isLoading;
     final sessionChanged = sessionId != _sessionId;
+    final previousUndo = _undoMessage;
+    final previousParent = _parentSessionId;
+    _readActions();
+    final actionsChanged = !identical(previousUndo, _undoMessage) ||
+        previousParent != _parentSessionId;
     final messagesChanged = next.length != _messages.length ||
         Iterable<int>.generate(next.length)
             .any((i) => !identical(next[i], _messages[i]));
-    if (!sessionChanged && !messagesChanged && loading == _loading) return;
+    if (!sessionChanged &&
+        !messagesChanged &&
+        !actionsChanged &&
+        loading == _loading) {
+      return;
+    }
 
     if (sessionChanged) {
       _resetFollowing();
@@ -198,21 +219,25 @@ class _ChatMessageListState extends State<ChatMessageList> {
               child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(CupertinoIcons.wand_stars,
-                        size: 34,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.5)),
-                    const SizedBox(height: 12),
-                    Text('请阐述你的梦',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 18,
-                            height: 1.6,
+                    StudioEntrance(
+                        role: StudioEntranceRole.icon,
+                        child: StudioAnimatedIcon(CupertinoIcons.moon_stars,
+                            size: 38,
                             color: Theme.of(context)
                                 .colorScheme
-                                .onSurfaceVariant)),
+                                .onSurfaceVariant
+                                .withValues(alpha: .76))),
+                    const SizedBox(height: 12),
+                    StudioEntrance(
+                        role: StudioEntranceRole.detail,
+                        child: Text('请阐述你的梦',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 18,
+                                height: 1.6,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant))),
                   ]),
             ),
           ),
@@ -246,6 +271,15 @@ class _ChatMessageListState extends State<ChatMessageList> {
                 vm: widget.vm,
                 message: message,
                 index: index,
+                canUndo: _undoMessage != null &&
+                    message.role == LlmMessageRole.assistant &&
+                    message.sessionId == _undoMessage!.sessionId &&
+                    (message.id != null
+                        ? message.id == _undoMessage!.id
+                        : message.createdAt == _undoMessage!.createdAt),
+                parentSessionId: message.role == LlmMessageRole.assistant
+                    ? _parentSessionId
+                    : null,
               );
             },
           ),
@@ -271,7 +305,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(CupertinoIcons.arrow_down,
+                  StudioAnimatedIcon(CupertinoIcons.arrow_down,
                       size: 18, color: theme.colorScheme.onSurface),
                   if (_unreadCount > 0)
                     Positioned(
@@ -305,12 +339,16 @@ class _MessageItem extends StatefulWidget {
   final LlmChatViewModel vm;
   final LlmMessage message;
   final int index;
+  final bool canUndo;
+  final String? parentSessionId;
 
   const _MessageItem(
       {super.key,
       required this.vm,
       required this.message,
-      required this.index});
+      required this.index,
+      required this.canUndo,
+      required this.parentSessionId});
 
   @override
   State<_MessageItem> createState() => _MessageItemState();
@@ -330,7 +368,9 @@ class _MessageItemState extends State<_MessageItem> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.vm, widget.vm) ||
         !identical(oldWidget.message, widget.message) ||
-        oldWidget.index != widget.index) {
+        oldWidget.index != widget.index ||
+        oldWidget.canUndo != widget.canUndo ||
+        oldWidget.parentSessionId != widget.parentSessionId) {
       _createBubble();
     }
   }
@@ -339,6 +379,7 @@ class _MessageItemState extends State<_MessageItem> {
     final vm = widget.vm;
     final message = widget.message;
     final index = widget.index;
+    final parentSessionId = widget.parentSessionId;
     bool isCurrent() {
       if (!mounted || vm.activeSessionId != message.sessionId) return false;
       final messages = vm.messages;
@@ -348,6 +389,28 @@ class _MessageItemState extends State<_MessageItem> {
     _bubble = ChatMessageBubble(
       message: message,
       messageIndex: index,
+      onUndoPrompt: widget.canUndo
+          ? () {
+              final owner = vm.undoPromptMessage;
+              if (isCurrent() &&
+                  owner != null &&
+                  owner.sessionId == message.sessionId &&
+                  (message.id != null
+                      ? owner.id == message.id
+                      : owner.createdAt == message.createdAt)) {
+                vm.undoPromptChange();
+              }
+            }
+          : null,
+      onReturnToParent: parentSessionId != null
+          ? () {
+              if (isCurrent() &&
+                  !vm.isSending &&
+                  vm.activeSession?.parentSessionId == parentSessionId) {
+                vm.selectSession(parentSessionId);
+              }
+            }
+          : null,
       onRetry: message.role == LlmMessageRole.user
           ? () {
               if (isCurrent()) vm.retryFromIndex(index);

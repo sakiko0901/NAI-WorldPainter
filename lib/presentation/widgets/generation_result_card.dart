@@ -1,3 +1,4 @@
+import 'package:nai_huishi/presentation/widgets/studio_entrance.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -146,7 +147,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeader(context, theme, current),
+          StudioEntrance(
+              role: StudioEntranceRole.heading,
+              child: _buildHeader(context, theme, current)),
           if (widget.error != null && widget.error!.isNotEmpty) ...[
             const SizedBox(height: 8),
             _buildError(theme),
@@ -180,7 +183,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
               isPlaceholder: isPlaceholder,
             ),
             const SizedBox(height: 4),
-            _buildImageMetadata(context, theme, current),
+            StudioEntrance(
+                role: StudioEntranceRole.detail,
+                child: _buildImageMetadata(context, theme, current)),
             if (widget.results.length > 1) ...[
               const SizedBox(height: 6),
               _buildThumbnails(context, theme, current),
@@ -189,7 +194,9 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           ],
           if (widget.batchControl != null) widget.batchControl!,
           if (current != null && !(isPlaceholder && widget.generating))
-            _buildActions(context, current),
+            StudioEntrance(
+                role: StudioEntranceRole.action,
+                child: _buildActions(context, current)),
         ],
       ),
     );

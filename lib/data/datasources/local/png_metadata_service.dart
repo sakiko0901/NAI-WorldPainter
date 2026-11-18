@@ -79,6 +79,9 @@ class PngMetadataService {
     return value & 0xffffffff;
   }, growable: false);
 
+  static Map<String, String> readText(Uint8List bytes) =>
+      _readTextChunks(_PngFile.parse(bytes));
+
   /// Read tEXt, zTXt, iTXt and known alpha/RGB stealth metadata.
   ///
   /// Text chunks take precedence. Missing text fields and missing Comment
