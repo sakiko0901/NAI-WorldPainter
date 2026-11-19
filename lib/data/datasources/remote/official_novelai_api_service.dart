@@ -421,8 +421,7 @@ class OfficialNovelAiApiService {
   }
 
   /// 官方超分：POST image.novelai.net/ai/upscale。
-  /// 固定使用官方专用超分模型，每次请求放大 2 倍；4 倍时迭代两遍。
-  /// 输入总像素超过 3MP 时会先等比缩小到限制内，返回的文件路径附带实际输出尺寸。
+  /// 4 倍时连续请求两遍，每遍上传当前图片原始字节，以服务返回的尺寸为准。
   Future<String> upscaleImage({
     required String imagePath,
     required String token,
@@ -435,32 +434,13 @@ class OfficialNovelAiApiService {
     final file = File(imagePath);
     if (!await file.exists()) throw ApiException(message: '请选择有效图片');
     try {
-      final bytes = await file.readAsBytes();
-      final decoded = img.decodeImage(bytes);
+      var passInput = await file.readAsBytes();
+      final decoded = img.decodeImage(passInput);
       if (decoded == null) throw ApiException(message: '无法读取待超分图片');
-      var payloadBytes = bytes;
-
-      const maxInputPixels = 3 * 1024 * 1024;
-      var inputWidth = decoded.width;
-      var inputHeight = decoded.height;
-      if (inputWidth * inputHeight > maxInputPixels) {
-        final shrink = math.sqrt(maxInputPixels / (inputWidth * inputHeight));
-        inputWidth = (inputWidth * shrink).floor().clamp(1, decoded.width);
-        inputHeight = (inputHeight * shrink).floor().clamp(1, decoded.height);
-        onStatus?.call('原图超过超分输入上限，先缩放至 $inputWidth×$inputHeight');
-        final resized = img.copyResize(
-          decoded,
-          width: inputWidth,
-          height: inputHeight,
-          interpolation: img.Interpolation.cubic,
-        );
-        payloadBytes = Uint8List.fromList(img.encodePng(resized));
-      }
 
       final passes = scale == 4 ? 2 : 1;
-      var passInput = payloadBytes;
-      var currentWidth = inputWidth;
-      var currentHeight = inputHeight;
+      var currentWidth = decoded.width;
+      var currentHeight = decoded.height;
       for (var pass = 0; pass < passes; pass++) {
         onStatus?.call(
             '超分第 ${pass + 1}/$passes 遍（当前 $currentWidth×$currentHeight）');
@@ -475,18 +455,12 @@ class OfficialNovelAiApiService {
         );
         final out = _extractImageBytes(response.data, '官方超分');
         final outDecoded = img.decodeImage(out);
-        if (outDecoded == null) throw ApiException(message: '官方超分返回的图片无法读取');
-        final expectedWidth = currentWidth * 2;
-        final expectedHeight = currentHeight * 2;
-        if (outDecoded.width != expectedWidth ||
-            outDecoded.height != expectedHeight) {
-          throw ApiException(
-              message:
-                  '超分返回尺寸 ${outDecoded.width}×${outDecoded.height} 与预期 $expectedWidth×$expectedHeight 不符');
+        if (outDecoded == null) {
+          throw ApiException(message: '官方超分返回的图片无法读取');
         }
         passInput = out;
-        currentWidth = expectedWidth;
-        currentHeight = expectedHeight;
+        currentWidth = outDecoded.width;
+        currentHeight = outDecoded.height;
       }
 
       final directory = await ImageUtils.getImageDirectory();
