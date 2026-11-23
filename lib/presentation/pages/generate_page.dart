@@ -1747,7 +1747,8 @@ class _GeneratePageState extends State<GeneratePage> {
         routeSettings: const RouteSettings(name: '/generation-settings'),
         barrierDismissible: true,
         barrierLabel: '关闭生成参数',
-        barrierColor: Colors.black54,
+        barrierColor:
+            Theme.of(context).colorScheme.scrim.withValues(alpha: 0.72),
         transitionDuration: MediaQuery.disableAnimationsOf(context)
             ? Duration.zero
             : const Duration(milliseconds: 320),
@@ -1796,6 +1797,13 @@ class _GenerationSettingsPage extends StatelessWidget {
       key: const ValueKey('generation-settings-page'),
       color: colors.surface,
       elevation: 24,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(20),
+          bottomLeft: Radius.circular(20),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: SafeArea(
         child: Column(children: [
           Padding(

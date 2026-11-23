@@ -358,10 +358,16 @@ void main() {
       }
 
       await capture('creation');
-      await tester.tap(find.byTooltip('生成参数'));
-      await tester.pumpAndSettle();
-      await capture('settings');
-      await tester.pageBack();
+      final disableShadows = debugDisableShadows;
+      debugDisableShadows = false;
+      try {
+        await tester.tap(find.byTooltip('生成参数'));
+        await tester.pumpAndSettle();
+        await capture('settings');
+      } finally {
+        debugDisableShadows = disableShadows;
+      }
+      await tester.tap(find.byTooltip('关闭生成参数'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.text('正向提示词'), 240,
           scrollable: find.byType(Scrollable).first);
