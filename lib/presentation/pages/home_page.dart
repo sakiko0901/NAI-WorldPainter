@@ -99,10 +99,22 @@ class _HomePageState extends State<HomePage> {
     _selectDestination(AppDestination.create);
   }
 
+  Widget? _bottomNavigation(BuildContext context) {
+    if (MediaQuery.viewInsetsOf(context).bottom == 0) {
+      return StudioNavigationBar(
+          selected: _destination, onSelected: _selectDestination);
+    }
+    if (_destination != AppDestination.assistant) return null;
+    // Scaffold uses the taller of the keyboard and the bottom navigation slot.
+    // Keep the composer anchored while the keyboard crosses the hidden bar.
+    return SizedBox(
+      height: StudioNavigationBar.contentHeightOf(context) +
+          MediaQuery.viewPaddingOf(context).bottom,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-
     return Scaffold(
       extendBody: true,
       resizeToAvoidBottomInset: true,
@@ -135,12 +147,7 @@ class _HomePageState extends State<HomePage> {
               : const SizedBox.shrink(),
         ],
       ),
-      bottomNavigationBar: keyboardOpen
-          ? null
-          : StudioNavigationBar(
-              selected: _destination,
-              onSelected: _selectDestination,
-            ),
+      bottomNavigationBar: _bottomNavigation(context),
     );
   }
 }

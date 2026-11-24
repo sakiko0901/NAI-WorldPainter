@@ -70,6 +70,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
       _readInitialState();
       _resetFollowing();
     }
+    if (oldWidget.active != widget.active) _readActions();
     if (oldWidget.insets != widget.insets ||
         oldWidget.ready != widget.ready ||
         oldWidget.active != widget.active ||
@@ -313,16 +314,17 @@ class _ChatMessageListState extends State<ChatMessageList> {
                         top: -2,
                         child: Container(
                           padding: const EdgeInsets.all(3),
-                          decoration: const BoxDecoration(
-                              color: Colors.redAccent, shape: BoxShape.circle),
+                          decoration: BoxDecoration(
+                              color: theme.colorScheme.error,
+                              shape: BoxShape.circle),
                           constraints:
                               const BoxConstraints(minWidth: 14, minHeight: 14),
                           child: Text(_unreadCount > 9 ? '9+' : '$_unreadCount',
                               key: const ValueKey('chat-unread-count'),
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 9,
-                                  color: Colors.white,
+                                  color: theme.colorScheme.onError,
                                   fontWeight: FontWeight.w600)),
                         )),
                 ]),
@@ -389,6 +391,27 @@ class _MessageItemState extends State<_MessageItem> {
     _bubble = ChatMessageBubble(
       message: message,
       messageIndex: index,
+      operationUpdates: message.id == null ? vm : null,
+      readOperations: message.id == null
+          ? () {
+              if (vm.activeSessionId != message.sessionId) return null;
+              final messages = vm.messages;
+              if (index >= messages.length) return null;
+              final latest = messages[index];
+              if (latest.role != LlmMessageRole.assistant) return null;
+              final events = latest.agentTimeline;
+              if (latest.createdAt == message.createdAt) return events;
+              // Saving the reply replaces its placeholder and timestamp.
+              final first = message.agentTimeline?.firstOrNull;
+              final latestFirst = events?.firstOrNull;
+              return first != null &&
+                      latestFirst != null &&
+                      first.toolCallId == latestFirst.toolCallId &&
+                      first.createdAt == latestFirst.createdAt
+                  ? events
+                  : null;
+            }
+          : null,
       onUndoPrompt: widget.canUndo
           ? () {
               final owner = vm.undoPromptMessage;
@@ -411,9 +434,14 @@ class _MessageItemState extends State<_MessageItem> {
               }
             }
           : null,
-      onRetry: message.role == LlmMessageRole.user
+      onBranch: message.role == LlmMessageRole.assistant && message.id != null
           ? () {
-              if (isCurrent()) vm.retryFromIndex(index);
+              if (isCurrent() && !vm.isSending) vm.branchFromReply(index);
+            }
+          : null,
+      onRetry: message.role == LlmMessageRole.user || message.id != null
+          ? () {
+              if (isCurrent() && !vm.isSending) vm.retryFromIndex(index);
             }
           : null,
       onEditAndResend: message.role == LlmMessageRole.user

@@ -1,4 +1,5 @@
 import 'package:nai_huishi/core/services/tag_completion_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:dio/dio.dart';
@@ -8,9 +9,9 @@ import 'package:nai_huishi/core/services/app_update_service.dart';
 import 'package:nai_huishi/data/datasources/app_update_platform.dart';
 import 'package:nai_huishi/data/datasources/remote/app_update_source.dart';
 
-import 'package:nai_huishi/data/datasources/local/asset_prompting_skill_loader.dart';
 import 'package:nai_huishi/data/datasources/local/database_helper.dart';
 import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
+import 'package:nai_huishi/data/datasources/local/generated_image_cleanup.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/local/official_novelai_token_store.dart';
 import 'package:nai_huishi/data/datasources/local/settings_local_datasource.dart';
@@ -62,7 +63,6 @@ import 'package:nai_huishi/domain/usecases/manage_artist_prompts.dart';
 import 'package:nai_huishi/domain/usecases/manage_comic_projects.dart';
 import 'package:nai_huishi/domain/usecases/generate_image.dart';
 import 'package:nai_huishi/domain/services/comic_generation_coordinator.dart';
-import 'package:nai_huishi/domain/services/prompting_skill_loader.dart';
 import 'package:nai_huishi/domain/services/comic_rasterizer.dart';
 import 'package:nai_huishi/domain/services/comic_task_builder.dart';
 import 'package:nai_huishi/domain/services/tiled_img2img_service.dart';
@@ -143,6 +143,11 @@ Future<void> configureDependencies() async {
   );
 
   final db = await DatabaseHelper.instance.database;
+  try {
+    await GeneratedImageCleanup(db, prefs).runIfDue();
+  } catch (error) {
+    debugPrint('[Storage] Image cleanup deferred: ${error.runtimeType}');
+  }
   sl.registerSingleton<Database>(db);
   sl.registerSingleton<DailyStatsLocalDatasource>(
       DailyStatsLocalDatasource(db));
@@ -363,8 +368,6 @@ Future<void> configureDependencies() async {
       ));
 
   // ── Agent 工具与循环 ──
-  sl.registerLazySingleton<PromptingSkillLoader>(
-      () => AssetPromptingSkillLoader());
   final toolRegistry = ToolRegistry()
     ..register(GetMemoriesTool(sl<ManagePromptMemoriesUseCase>()))
     ..register(SaveMemoryTool(sl<ManagePromptMemoriesUseCase>()))
@@ -397,7 +400,6 @@ Future<void> configureDependencies() async {
       memories: sl<ManagePromptMemoriesUseCase>(),
       genVm: sl<GenerationViewModel>(),
       analyzeImageTags: sl<AnalyzeImageTagsUseCase>(),
-      promptingSkillLoader: sl<PromptingSkillLoader>(),
       updateGuard: sl<AppUpdateInstallGuard>(),
     );
   });

@@ -29,7 +29,8 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
         _dio = dio ?? Dio();
 
   @override
-  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) async {
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId,
+      {bool includeMessage = false}) async {
     final source = await _local.getSession(sessionId);
     if (source == null) throw StateError('原会话不存在');
     final history = await _local.listMessages(sessionId);
@@ -41,7 +42,7 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
         contextKey: 'branch:$sessionId:$beforeMessageId',
         promptVersion: source.promptVersion);
     try {
-      for (final message in history.take(index)) {
+      for (final message in history.take(index + (includeMessage ? 1 : 0))) {
         final paths = <String>[];
         try {
           final dir = await ImageUtils.getImageDirectory();
@@ -57,7 +58,9 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
               content: message.content,
               createdAt: message.createdAt,
               imagePaths: paths,
-              toolCallsJson: message.toolCallsJson,
+              toolCallsJson: message.promptDraftChange == null
+                  ? message.toolCallsJson
+                  : AgentEvent.toJsonList(message.agentTimeline ?? const []),
               interaction: message.interaction));
         } catch (_) {
           for (final path in paths) {
@@ -207,14 +210,19 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
     LlmInteraction? interaction,
+    int? replaceReplyId,
+    DateTime? replyPosition,
+    bool keepReplyContent = false,
   }) async {
     final replyTime = DateTime.now();
-    final processed = await _tryExtractAndDownloadAssistantImage(assistantText);
+    final processed = keepReplyContent
+        ? _AssistantImageResult(assistantText, null)
+        : await _tryExtractAndDownloadAssistantImage(assistantText);
     final assistantMessage = LlmMessage(
       sessionId: sessionId,
       role: LlmMessageRole.assistant,
       content: processed.cleanedText,
-      createdAt: replyTime,
+      createdAt: replyPosition ?? replyTime,
       imagePath: processed.imagePath,
       toolCallsJson: toolCallsJson ??
           (agentTimeline != null && agentTimeline.isNotEmpty
@@ -223,6 +231,10 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       agentTimeline: agentTimeline,
       interaction: interaction,
     );
+    if (replaceReplyId != null) {
+      return _local.replaceAssistantReply(replaceReplyId, assistantMessage,
+          keepReplyContent: keepReplyContent);
+    }
     final assistantId = await _local.insertMessage(assistantMessage);
     await _local.touchSession(sessionId, replyTime);
     return LlmMessage(
@@ -230,7 +242,7 @@ class LlmChatRepositoryImpl implements LlmChatRepository {
       sessionId: sessionId,
       role: LlmMessageRole.assistant,
       content: processed.cleanedText,
-      createdAt: replyTime,
+      createdAt: assistantMessage.createdAt,
       imagePath: processed.imagePath,
       toolCallsJson: toolCallsJson,
       agentTimeline: agentTimeline ?? const [],

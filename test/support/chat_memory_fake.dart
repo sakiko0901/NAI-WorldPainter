@@ -24,7 +24,6 @@ import 'package:nai_huishi/domain/repositories/llm_chat_repository.dart';
 import 'package:nai_huishi/domain/repositories/prompt_memory_repository.dart';
 import 'package:nai_huishi/domain/repositories/settings_repository.dart';
 import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
-import 'package:nai_huishi/domain/services/prompting_skill_loader.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
@@ -95,7 +94,6 @@ ChatMemoryHarness createChatMemoryHarness({
     memories: manageMemories,
     genVm: generation ?? FrontendGenerationFake(),
     analyzeImageTags: analyzeImageTags,
-    promptingSkillLoader: _FakePromptingSkillLoader(),
     updateGuard: updateGuard,
   );
 
@@ -255,18 +253,24 @@ class FakeLlmChatRepository implements LlmChatRepository {
   int _messageSequence = 0;
 
   @override
-  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) async {
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId,
+      {bool includeMessage = false}) async {
     final source = _sessions.firstWhere((s) => s.id == sessionId);
     final history = _messagesBySession[sessionId]!;
     final index = history.indexWhere((m) => m.id == beforeMessageId);
     if (index < 0) throw StateError('消息不存在');
     final branch = await createSession(
         initialTitle: '${source.title} · 分支',
+        scope: source.scope,
         contextKey: 'branch:$sessionId:$beforeMessageId',
         promptVersion: source.promptVersion);
     _messagesBySession[branch.id] = history
-        .take(index)
-        .map((m) => m.copyWith(sessionId: branch.id))
+        .take(index + (includeMessage ? 1 : 0))
+        .map((m) => m.copyWith(
+            sessionId: branch.id,
+            toolCallsJson: m.promptDraftChange == null
+                ? m.toolCallsJson
+                : AgentEvent.toJsonList(m.agentTimeline ?? const [])))
         .toList();
     return branch;
   }
@@ -286,12 +290,14 @@ class FakeLlmChatRepository implements LlmChatRepository {
     for (final session in await listSessions()) {
       String? snippet;
       if (keyword.isNotEmpty) {
-        final messages = List<LlmMessage>.of(
-            _messagesBySession[session.id] ?? const [])
-          ..sort((a, b) {
-            final created = b.createdAt.compareTo(a.createdAt);
-            return created != 0 ? created : (b.id ?? 0).compareTo(a.id ?? 0);
-          });
+        final messages =
+            List<LlmMessage>.of(_messagesBySession[session.id] ?? const [])
+              ..sort((a, b) {
+                final created = b.createdAt.compareTo(a.createdAt);
+                return created != 0
+                    ? created
+                    : (b.id ?? 0).compareTo(a.id ?? 0);
+              });
         for (final message in messages) {
           final match = message.content.toLowerCase().indexOf(keyword);
           if (match < 0) continue;
@@ -380,18 +386,41 @@ class FakeLlmChatRepository implements LlmChatRepository {
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
     LlmInteraction? interaction,
+    int? replaceReplyId,
+    DateTime? replyPosition,
+    bool keepReplyContent = false,
   }) async {
-    final message = LlmMessage(
-      id: ++_messageSequence,
-      sessionId: sessionId,
-      role: LlmMessageRole.assistant,
-      content: assistantText,
-      toolCallsJson: toolCallsJson,
-      agentTimeline: agentTimeline,
-      interaction: interaction,
-      createdAt: DateTime(2026, 1, 1).add(Duration(seconds: _messageSequence)),
-    );
-    _messagesBySession.putIfAbsent(sessionId, () => []).add(message);
+    final messages = _messagesBySession.putIfAbsent(sessionId, () => []);
+    final index = replaceReplyId == null
+        ? -1
+        : messages.indexWhere((m) =>
+            m.id == replaceReplyId && m.role == LlmMessageRole.assistant);
+    if (replaceReplyId != null && index < 0) throw StateError('原回复不存在');
+    final id = replaceReplyId ?? ++_messageSequence;
+    final previous = index < 0 ? null : messages[index];
+    final message = keepReplyContent && previous != null
+        ? previous.copyWith(
+            toolCallsJson: toolCallsJson, agentTimeline: agentTimeline)
+        : LlmMessage(
+            id: id,
+            sessionId: sessionId,
+            role: LlmMessageRole.assistant,
+            content: assistantText,
+            toolCallsJson: toolCallsJson,
+            agentTimeline: agentTimeline,
+            interaction: interaction,
+            createdAt: index >= 0
+                ? messages[index].createdAt
+                : replyPosition ??
+                    DateTime(2026, 1, 1).add(Duration(seconds: id)),
+          );
+    if (index >= 0) {
+      messages[index] = message;
+    } else {
+      final later =
+          messages.indexWhere((m) => m.createdAt.isAfter(message.createdAt));
+      messages.insert(later < 0 ? messages.length : later, message);
+    }
     return message;
   }
 
@@ -583,14 +612,6 @@ class FakeAnalyzeImageTagsUseCase implements AnalyzeImageTagsUseCase {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-class _FakePromptingSkillLoader implements PromptingSkillLoader {
-  @override
-  Future<String> loadSkill() async => '测试 skill';
-
-  @override
-  Future<String> loadReference(PromptingReference reference) async => '测试参考';
 }
 
 class _NoopTool extends AgentTool {

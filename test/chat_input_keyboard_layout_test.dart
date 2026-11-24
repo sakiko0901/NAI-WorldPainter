@@ -33,6 +33,7 @@ void main() {
               onSend: (_,
                   {imageBase64, imageBase64s = const [], textAttachment}) {},
               onOpenStylePresets: onOpenStylePresets,
+              onSelectModel: () async {},
             ),
           ]),
         ),
@@ -47,13 +48,18 @@ void main() {
     final resting = tester.getRect(surface);
     expect(resting.height, 56);
     final inputElement = tester.element(find.byType(TextField));
+    final input = find.byType(EditableText);
+    final restingInput = tester.getTopLeft(input);
 
     await tester.tap(find.byType(TextField));
     await tester.pump();
+    expect(tester.getTopLeft(input), restingInput);
     await tester.pump(const Duration(milliseconds: 90));
     final expanding = tester.getRect(surface);
+    final expandingInput = tester.getTopLeft(input);
     await tester.pumpAndSettle();
     final focused = tester.getRect(surface);
+    final focusedInput = tester.getTopLeft(input);
     expect(focused.height, greaterThan(resting.height + 40));
     expect(tester.element(find.byType(TextField)), same(inputElement));
     expect(expanding.width, greaterThan(resting.width));
@@ -61,11 +67,77 @@ void main() {
     expect(focused.left, lessThan(resting.left));
     expect(focused.right, greaterThan(resting.right));
     expect(focused.center.dx, resting.center.dx);
+    expect(expanding.height, inExclusiveRange(resting.height, focused.height));
+    expect(expanding.bottom, resting.bottom);
+    expect(
+        expandingInput.dx, inExclusiveRange(focusedInput.dx, restingInput.dx));
+    expect(
+        expandingInput.dy, inExclusiveRange(focusedInput.dy, restingInput.dy));
 
     await tester.tapAt(const Offset(180, 100));
+    await tester.pump();
+    expect(tester.getTopLeft(input), focusedInput);
+    await tester.pump(const Duration(milliseconds: 90));
+    final contracting = tester.getRect(surface);
+    expect(
+        contracting.height, inExclusiveRange(resting.height, focused.height));
+    expect(contracting.width, inExclusiveRange(resting.width, focused.width));
+    expect(contracting.bottom, resting.bottom);
+    expect(tester.getTopLeft(input).dy,
+        inExclusiveRange(focusedInput.dy, restingInput.dy));
     await tester.pumpAndSettle();
     expect(tester.getRect(surface).width, resting.width);
     expect(tester.getRect(surface).height, resting.height);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('composer can reverse while the model control is fading in',
+      (tester) async {
+    await pumpComposer(tester);
+    final surface = find.byKey(const ValueKey('chat-composer-surface'));
+    final model = find.byKey(const ValueKey('chat-composer-model'));
+    final input = find.byType(EditableText);
+    final resting = tester.getRect(surface);
+    await tester.tap(input);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    final beforeReverse = tester.getRect(surface);
+    final beforeInput = tester.getTopLeft(input);
+    expect(model, findsOneWidget);
+    final fade = find.ancestor(of: model, matching: find.byType(Opacity)).first;
+    final beforeOpacity = tester.widget<Opacity>(fade).opacity;
+    expect(beforeOpacity, inExclusiveRange(0, 1));
+
+    await tester.tapAt(const Offset(180, 100));
+    await tester.pump();
+    expect(tester.getRect(surface), beforeReverse);
+    expect(tester.getTopLeft(input), beforeInput);
+    expect(model, findsOneWidget);
+    expect(model.hitTestable(), findsNothing);
+    expect(tester.widget<Opacity>(fade).opacity, beforeOpacity);
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(tester.getSize(surface).height,
+        inExclusiveRange(resting.height, beforeReverse.height));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(surface), resting);
+    expect(model, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reduced motion switches composer geometry in one frame',
+      (tester) async {
+    await pumpComposer(tester, reduceMotion: true);
+    final surface = find.byKey(const ValueKey('chat-composer-surface'));
+    final resting = tester.getRect(surface);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    final expanded = tester.getRect(surface);
+    expect(expanded.height, greaterThan(resting.height + 40));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(tester.getRect(surface), expanded);
+    await tester.tapAt(const Offset(180, 100));
+    await tester.pump();
+    expect(tester.getRect(surface), resting);
     expect(tester.takeException(), isNull);
   });
 

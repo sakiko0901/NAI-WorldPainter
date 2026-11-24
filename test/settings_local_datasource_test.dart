@@ -8,6 +8,19 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('upgrades use the new agent and subsequent custom edits persist',
+      () async {
+    SharedPreferences.setMockInitialValues({'llm_system_prompt': '旧自定义提示词'});
+    final prefs = await SharedPreferences.getInstance();
+    final settings = SettingsLocalDatasource(prefs);
+    expect(settings.getLlmSystemPrompt(), AppConstants.defaultLlmSystemPrompt);
+    await settings.setLlmSystemPrompt('新版内编辑的提示词');
+    await prefs.reload();
+    expect(SettingsLocalDatasource(prefs).getLlmSystemPrompt(), '新版内编辑的提示词');
+    await settings.setLlmSystemPrompt(AppConstants.defaultLlmSystemPrompt);
+    expect(settings.getLlmSystemPrompt(), AppConstants.defaultLlmSystemPrompt);
+  });
+
   test(
       'all advanced draft values survive reload including seed zero and random',
       () async {

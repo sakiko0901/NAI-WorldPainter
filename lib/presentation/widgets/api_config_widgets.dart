@@ -34,6 +34,7 @@ class ApiConfigDialog extends StatelessWidget {
         child: FrostedSurface(
           radius: 24,
           blur: 24,
+          color: theme.dialogTheme.backgroundColor?.withValues(alpha: 0.96),
           child: SizedBox(
             width: 560,
             child: Column(

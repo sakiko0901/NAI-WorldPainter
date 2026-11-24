@@ -596,8 +596,9 @@ class _MemoryGenerationRepository implements GenerationRepository {
   @override
   void setStreamPreviewHandler(
     String taskId,
-    void Function(Uint8List bytes, int? step)? onFrame,
-  ) {}
+    void Function(Uint8List bytes, int? step)? onFrame, {
+    void Function(Uint8List bytes)? onFinalImage,
+  }) {}
 }
 
 class _MemoryHistory implements HistoryRepository {

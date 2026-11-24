@@ -1580,7 +1580,7 @@ class _OnlineGalleryDetailPageState extends State<OnlineGalleryDetailPage> {
                     media: fullMedia,
                     fit: BoxFit.contain,
                     backgroundColor: theme.brightness == Brightness.dark
-                        ? const Color(0xFF0D0F13)
+                        ? theme.colorScheme.surfaceContainerLowest
                         : const Color(0xFF202328),
                     semanticLabel: item.title,
                   ),

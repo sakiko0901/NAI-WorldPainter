@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:equatable/equatable.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 
 enum LlmMessageRole { user, assistant }
 
@@ -40,6 +41,9 @@ class LlmMessage extends Equatable {
 
   /// Agent 工具调用历史 JSON（持久化到 DB）。
   final String? toolCallsJson;
+
+  PromptDraftChange? get promptDraftChange =>
+      PromptDraftChange.fromAgentHistory(toolCallsJson);
 
   /// Agent 工具执行时间线（内存对象，由 toolCallsJson 反序列化得来）。
   final List<AgentEvent>? agentTimeline;

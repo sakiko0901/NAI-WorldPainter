@@ -28,8 +28,11 @@ class GenerationRepositoryImpl implements GenerationRepository {
   final VibeEncodingRepository _vibeEncodingRepo;
 
   /// 流式预览回调（taskId → handler），任务完成后移除。
-  final Map<String, void Function(Uint8List bytes, int? step)> _streamHandlers =
-      {};
+  final _streamHandlers = <String,
+      ({
+    void Function(Uint8List, int?)? onFrame,
+    void Function(Uint8List)? onFinalImage,
+  })>{};
 
   GenerationRepositoryImpl({
     required NovelAiApiService apiService,
@@ -101,11 +104,14 @@ class GenerationRepositoryImpl implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {
-    if (onFrame == null) {
+    String taskId,
+    void Function(Uint8List bytes, int? step)? onFrame, {
+    void Function(Uint8List bytes)? onFinalImage,
+  }) {
+    if (onFrame == null && onFinalImage == null) {
       _streamHandlers.remove(taskId);
     } else {
-      _streamHandlers[taskId] = onFrame;
+      _streamHandlers[taskId] = (onFrame: onFrame, onFinalImage: onFinalImage);
     }
   }
 
@@ -142,7 +148,8 @@ class GenerationRepositoryImpl implements GenerationRepository {
         return api.generateImageStream(
           prepared,
           token,
-          onFrame: handler,
+          onFrame: handler?.onFrame,
+          onFinalImage: handler?.onFinalImage,
         );
       }
       return api.generateImage(prepared, token);

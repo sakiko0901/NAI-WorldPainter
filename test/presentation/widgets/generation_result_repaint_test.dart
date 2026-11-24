@@ -116,19 +116,7 @@ void main() {
         _AnimationScenario.streaming => 'result-workspace-preview',
         _ => 'result-workspace-stage',
       };
-      // The workspace's first painter draws the actual static grid. Delegate to
-      // it so the measurement keeps the real component and its rendering path.
-      final grid = tester.renderObject<RenderCustomPaint>(find
-          .descendant(
-            of: find.byKey(ValueKey(workspaceKey)),
-            matching: find.byType(CustomPaint),
-          )
-          .first);
-      final counter = _CountingPainter(grid.painter!);
-      grid.painter = counter;
-      await tester.pump();
-      final initialPaints = counter.paints;
-      expect(initialPaints, greaterThan(0));
+      final workspace = tester.renderObject(find.byKey(ValueKey(workspaceKey)));
 
       final indicators = find.byType(CircularProgressIndicator);
       expect(indicators,
@@ -143,18 +131,34 @@ void main() {
         }
         expect(ancestor, isA<RenderRepaintBoundary>());
         final boundary = ancestor! as RenderRepaintBoundary;
-        boundary.debugResetMetrics();
         boundaries.add(boundary);
         indicatorSizes.add(tester.getSize(indicator));
       }
 
       const frames = 8;
-      for (var frame = 0; frame < frames; frame++) {
-        await tester.pump(const Duration(milliseconds: 80));
+      final previousCallback = debugOnProfilePaint;
+      var workspacePaints = 0;
+      debugOnProfilePaint = (object) {
+        previousCallback?.call(object);
+        if (object == workspace) workspacePaints++;
+      };
+      try {
+        workspace.markNeedsPaint();
+        await tester.pump();
+        expect(workspacePaints, greaterThan(0));
+        workspacePaints = 0;
+        for (final boundary in boundaries) {
+          boundary.debugResetMetrics();
+        }
+        for (var frame = 0; frame < frames; frame++) {
+          await tester.pump(const Duration(milliseconds: 80));
+        }
+        expect(workspacePaints, 0,
+            reason:
+                'The static workspace must not repaint with a spinner tick');
+      } finally {
+        debugOnProfilePaint = previousCallback;
       }
-
-      expect(counter.paints, initialPaints,
-          reason: 'The static workspace must not repaint with a spinner tick');
       for (var index = 0; index < boundaries.length; index++) {
         final boundary = boundaries[index];
         // A card-wide boundary would still repaint all static content.
@@ -183,20 +187,3 @@ GenerationTask _task(String id, {String? imagePath}) => GenerationTask(
       imagePath: imagePath,
       createdAt: DateTime(2026, 10, 27),
     );
-
-class _CountingPainter extends CustomPainter {
-  final CustomPainter delegate;
-  int paints = 0;
-
-  _CountingPainter(this.delegate);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    paints++;
-    delegate.paint(canvas, size);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CountingPainter oldDelegate) =>
-      oldDelegate.delegate != delegate;
-}

@@ -18,6 +18,36 @@ import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 /// 官方专用超分模型（与官方 Web 客户端一致，不随生成模型变化）。
 const String officialUpscaleModel = 'nai-diffusion-5-curated';
 
+/// Assembles each length-prefixed frame from views of the incoming chunks.
+class _ImageStreamFrames {
+  final _header = ByteData(4);
+  final _payload = BytesBuilder(copy: false);
+  int _headerSize = 0;
+  int _remaining = 0;
+
+  Iterable<Uint8List> add(Uint8List chunk) sync* {
+    var offset = 0;
+    while (offset < chunk.length) {
+      while (_headerSize < 4 && offset < chunk.length) {
+        _header.setUint8(_headerSize++, chunk[offset++]);
+        if (_headerSize == 4) _remaining = _header.getUint32(0);
+      }
+      if (_headerSize < 4) return;
+
+      final end = math.min(offset + _remaining, chunk.length);
+      if (end > offset) {
+        _payload.add(Uint8List.sublistView(chunk, offset, end));
+        _remaining -= end - offset;
+        offset = end;
+      }
+      if (_remaining == 0) {
+        _headerSize = 0;
+        yield _payload.takeBytes();
+      }
+    }
+  }
+}
+
 class OfficialNovelAiAccount {
   final String? tier;
   final int? anlas;
@@ -277,11 +307,12 @@ class OfficialNovelAiApiService {
   /// 协议（参考 NekoAI-JS StreamingMsgpackParser）：
   /// 响应为重复的 [4字节大端长度][MessagePack 消息体]；
   /// msgpack 字段 event_type = "intermediate"（JPEG 预览）/ "final"（PNG 成品），
-  /// image 字段直接是原始字节。每帧回调 onFrame(imageBytes, step, total?)。
+  /// 中间帧和成品均可在写入文件前交给界面显示。
   Future<GenerationTask> generateImageStream(
     GenerationTask task,
     String token, {
     void Function(Uint8List imageBytes, int? step)? onFrame,
+    void Function(Uint8List imageBytes)? onFinalImage,
   }) async {
     if (token.trim().isEmpty) {
       throw ApiException(
@@ -297,40 +328,36 @@ class OfficialNovelAiApiService {
       );
       final stream = response.data!;
       Uint8List? finalImage;
-      final buffer = BytesBuilder();
+      final frames = _ImageStreamFrames();
       await for (final chunk in stream.stream) {
-        buffer.add(chunk);
-        final data = buffer.toBytes();
-        var pos = 0;
-        while (pos + 4 <= data.length) {
-          final length = (data[pos] << 24) |
-              (data[pos + 1] << 16) |
-              (data[pos + 2] << 8) |
-              data[pos + 3];
-          if (pos + 4 + length > data.length) break;
-          final message = data.sublist(pos + 4, pos + 4 + length);
-          pos += 4 + length;
+        for (final message in frames.add(chunk)) {
           final decoded = _decodeMsgpackMap(message);
           if (decoded == null) continue;
           final eventType = decoded['event_type']?.toString();
           final image = decoded['image'];
-          if (image is List<int>) {
-            final bytes = Uint8List.fromList(image);
-            if (eventType == 'final') {
-              finalImage = bytes;
-            } else if (eventType == 'intermediate') {
-              onFrame?.call(bytes, decoded['step_ix'] as int?);
-            }
-          } else if (decoded.containsKey('error') ||
-              decoded.containsKey('message') && eventType == null) {
+          if (eventType == 'error' ||
+              decoded.containsKey('error') ||
+              image is! List<int> &&
+                  eventType == null &&
+                  decoded.containsKey('message')) {
             throw ApiException(
                 message: decoded['error']?.toString() ??
                     decoded['message']?.toString() ??
                     '官方流式生成失败');
           }
+          if (image is! List<int> || image.isEmpty) continue;
+          final bytes = image is Uint8List ? image : Uint8List.fromList(image);
+          if (eventType == 'final') {
+            finalImage = bytes;
+            onFinalImage?.call(bytes);
+          } else if (finalImage == null &&
+              (eventType == 'intermediate' ||
+                  eventType == null ||
+                  eventType.isEmpty)) {
+            final step = decoded['step_ix'];
+            onFrame?.call(bytes, step is int ? step : null);
+          }
         }
-        buffer.clear();
-        buffer.add(data.sublist(pos));
       }
       if (finalImage == null) {
         throw ApiException(message: '官方流式生成未返回最终图像');
@@ -349,7 +376,7 @@ class OfficialNovelAiApiService {
   /// 解码一条 msgpack 消息为 Map（仅支持本协议用到的类型子集）。
   static Map<String, dynamic>? _decodeMsgpackMap(Uint8List message) {
     try {
-      final value = msgpack.deserialize(message, copyBinaryData: true);
+      final value = msgpack.deserialize(message);
       if (value is Map) {
         return value.map((k, v) => MapEntry(k.toString(), v));
       }

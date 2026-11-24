@@ -375,7 +375,7 @@ class _PromptTagFieldState extends State<PromptTagField>
         color: Color.alphaBlend(
             colors.onSurface.withValues(alpha: 0.025), colors.surface),
         elevation: 3,
-        shadowColor: Colors.black.withValues(alpha: 0.18),
+        shadowColor: colors.shadow.withValues(alpha: 0.18),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(color: colors.outlineVariant)),

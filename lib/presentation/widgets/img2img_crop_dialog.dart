@@ -333,21 +333,24 @@ class _Img2ImgCropDialogState extends State<Img2ImgCropDialog> {
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(CupertinoIcons.xmark, size: 28),
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        const Text(
                           '选择图生图区域',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        SizedBox(height: 2),
+                        const SizedBox(height: 2),
                         Text(
                           '拖动裁剪框或图片，双指缩放',
-                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -470,9 +473,9 @@ class _Img2ImgCropDialogState extends State<Img2ImgCropDialog> {
                   IconButton(
                     tooltip: '重置',
                     onPressed: _reset,
-                    icon: const Icon(
+                    icon: Icon(
                       CupertinoIcons.arrow_counterclockwise,
-                      color: _accent,
+                      color: theme.colorScheme.primary,
                     ),
                   ),
                 ],

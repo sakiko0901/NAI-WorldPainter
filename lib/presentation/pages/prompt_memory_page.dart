@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/prompt_memory.dart';
 import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
@@ -57,10 +58,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
     final legacyOversizedContent =
         memory != null && memory.content.runes.length > 6000;
 
-    await showCupertinoDialog<void>(
+    await showStudioAlertDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => CupertinoAlertDialog(
+        builder: (ctx, setDialogState) => StudioAlertDialog(
           title: Text(memory == null ? '新增记忆' : '编辑记忆'),
           content: Material(
             color: Colors.transparent,
@@ -243,9 +244,9 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
     PromptMemory existing,
     PromptMemory newMemory,
   ) async {
-    final strategy = await showCupertinoDialog<MemoryConflictStrategy>(
+    final strategy = await showStudioAlertDialog<MemoryConflictStrategy>(
       context: context,
-      builder: (ctx) => CupertinoAlertDialog(
+      builder: (ctx) => StudioAlertDialog(
         title: Text('发现冲突'),
         content: Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -327,10 +328,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
     final contentController = TextEditingController(text: memory.content);
     var type = memory.type;
 
-    await showCupertinoDialog<void>(
+    await showStudioAlertDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => CupertinoAlertDialog(
+        builder: (ctx, setDialogState) => StudioAlertDialog(
           title: Text('编辑后确认'),
           content: Material(
             color: Colors.transparent,
@@ -444,9 +445,9 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
     final stale = await _vm.listStale();
     if (!mounted) return;
     if (stale.isEmpty) {
-      showCupertinoDialog<void>(
+      showStudioAlertDialog<void>(
         context: context,
-        builder: (ctx) => CupertinoAlertDialog(
+        builder: (ctx) => StudioAlertDialog(
           title: Text('无可清理记忆'),
           content: Text('没有超过 90 天未命中的记忆。'),
           actions: [
@@ -466,10 +467,10 @@ class _PromptMemoryPageState extends State<PromptMemoryPage> {
       if (m.id != null) selected.add(m.id!);
     }
 
-    await showCupertinoDialog<void>(
+    await showStudioAlertDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => CupertinoAlertDialog(
+        builder: (ctx, setDialogState) => StudioAlertDialog(
           title: Text('清理向导（${stale.length} 条候选）'),
           content: Padding(
             padding: const EdgeInsets.only(top: 8),

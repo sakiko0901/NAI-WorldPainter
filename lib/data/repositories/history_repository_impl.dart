@@ -2,7 +2,6 @@ import 'package:sqflite/sqflite.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/data/models/generation_task_model.dart';
-import 'package:nai_huishi/core/utils/image_utils.dart';
 
 class HistoryRepositoryImpl implements HistoryRepository {
   final Database _db;
@@ -76,19 +75,8 @@ class HistoryRepositoryImpl implements HistoryRepository {
 
   @override
   Future<void> deleteTask(String taskId) async {
-    // 只查 image_path 列，避免历史行中其它大字段（如过长的 error_message、
-    // characters JSON）撑爆 Android CursorWindow（默认 1~2MB）。
-    final rows = await _db.query(
-      _table,
-      columns: ['image_path'],
-      where: 'task_id = ?',
-      whereArgs: [taskId],
-      limit: 1,
-    );
-    final imagePath = rows.isEmpty ? null : rows.first['image_path'] as String?;
-    if (imagePath != null && imagePath.isNotEmpty) {
-      await ImageUtils.deleteImage(imagePath);
-    }
+    // The image may still be used as a reference by another task or feature.
+    // The startup cleanup reclaims it once those references are gone.
     await _db.delete(_table, where: 'task_id = ?', whereArgs: [taskId]);
   }
 

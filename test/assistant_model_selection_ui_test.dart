@@ -12,9 +12,9 @@ import 'support/chat_memory_fake.dart';
 void main() {
   const output = String.fromEnvironment('ASSISTANT_PREVIEW_DIR');
   const font = String.fromEnvironment('ASSISTANT_PREVIEW_FONT');
-  for (final brightness in [Brightness.dark, Brightness.light]) {
+  for (final mode in AppearanceMode.values) {
     testWidgets(
-        'model settings toggle persists and picker fits keyboard $brightness',
+        'model settings toggle persists and picker fits keyboard ${mode.name}',
         (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -22,7 +22,7 @@ void main() {
       final h = createChatMemoryHarness();
       addTearDown(h.dispose);
       await tester.runAsync(h.viewModel.ensureInitialized);
-      var theme = buildNaiHuishiTheme(brightness);
+      var theme = buildNaiHuishiAppearanceTheme(mode);
       if (font.isNotEmpty) {
         await tester.runAsync(() async {
           final loader = FontLoader('Preview')
@@ -39,7 +39,12 @@ void main() {
               .load();
         });
         theme = theme.copyWith(
-            textTheme: theme.textTheme.apply(fontFamily: 'Preview'));
+          textTheme: theme.textTheme.apply(fontFamily: 'Preview'),
+          chipTheme: theme.chipTheme.copyWith(
+            labelStyle:
+                theme.chipTheme.labelStyle?.copyWith(fontFamily: 'Preview'),
+          ),
+        );
       }
       final key = GlobalKey();
       await tester.pumpWidget(RepaintBoundary(
@@ -67,8 +72,7 @@ void main() {
                   .buffer
                   .asUint8List();
           await Directory(output).create(recursive: true);
-          await File('$output/$name-${brightness.name}.png')
-              .writeAsBytes(bytes);
+          await File('$output/$name-${mode.name}.png').writeAsBytes(bytes);
           image.dispose();
         });
       }
@@ -81,6 +85,11 @@ void main() {
           h.viewModel.providers.single.streaming['main-test-model'], isFalse);
       await tester.tap(find.text('main-test-model'));
       await tester.pumpAndSettle();
+      final glass = theme.extension<FrostedTheme>()!;
+      expect(
+        DefaultTextStyle.of(tester.element(find.text('全部'))).style.color,
+        glass.onSelection,
+      );
       await capture('picker');
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await tester.pumpAndSettle();

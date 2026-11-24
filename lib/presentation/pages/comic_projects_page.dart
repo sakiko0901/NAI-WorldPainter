@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/presentation/pages/comic_editor_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/comic_project_viewmodel.dart';
@@ -37,9 +38,9 @@ class _ComicProjectsPageState extends State<ComicProjectsPage> {
 
   Future<void> _create() async {
     final controller = TextEditingController();
-    final title = await showCupertinoDialog<String>(
+    final title = await showStudioAlertDialog<String>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StudioAlertDialog(
         title: const Text('新建漫画项目'),
         content: Material(
           color: Colors.transparent,
@@ -83,9 +84,9 @@ class _ComicProjectsPageState extends State<ComicProjectsPage> {
   }
 
   Future<void> _delete(String id, String title) async {
-    final confirmed = await showCupertinoDialog<bool>(
+    final confirmed = await showStudioAlertDialog<bool>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StudioAlertDialog(
         title: const Text('删除漫画项目？'),
         content: Text('将删除“$title”的分镜、候选图与可编辑对话工程。'),
         actions: [

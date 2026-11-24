@@ -60,5 +60,3 @@ flutter:
     - assets/style_presets/
     - assets/artist_prompts/
     - assets/pixiv/
-    - assets/nai5-prompting/
-    - assets/nai5-prompting/references/

@@ -13,7 +13,7 @@ Future<void> showPromptNotebook({
       context: context,
       barrierDismissible: true,
       barrierLabel: '关闭提示词笔记本',
-      barrierColor: Colors.black54,
+      barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
       transitionDuration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 260),
@@ -215,7 +215,7 @@ class _PromptNotebookDialogState extends State<PromptNotebookDialog> {
     final colors = theme.colorScheme;
     return Dialog(
       key: const ValueKey('prompt-notebook-dialog'),
-      backgroundColor: colors.surface,
+      backgroundColor: theme.dialogTheme.backgroundColor ?? colors.surface,
       surfaceTintColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),

@@ -11,7 +11,10 @@ abstract class GenerationRepository {
   /// 流式预览回调（仅官方渠道 V4/V4.5/V5 生效）。
   /// key 为 taskId；value 在任务完成后由仓库清除。
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame);
+    String taskId,
+    void Function(Uint8List bytes, int? step)? onFrame, {
+    void Function(Uint8List bytes)? onFinalImage,
+  });
 
   /// 获取模型列表
   Future<List<NaiModel>> fetchModels();

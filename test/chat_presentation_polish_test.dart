@@ -6,6 +6,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/navigation/app_destination.dart';
@@ -71,39 +73,64 @@ void main() {
   }
 
   for (final role in LlmMessageRole.values) {
-    testWidgets(
-        'message actions unfold downward and reverse without jumping ${role.name}',
+    testWidgets('message actions follow the layout for ${role.name}',
         (tester) async {
       screen(tester);
       var retried = false;
       final key = GlobalKey();
+      final readStarted = AgentEvent(
+        toolName: 'read_current_prompts',
+        toolCallId: 'read',
+        arguments: const {},
+        status: 'running',
+        createdAt: DateTime(2026),
+      );
       await tester.pumpWidget(MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: theme(Brightness.dark),
+        builder: (_, child) => RepaintBoundary(key: key, child: child!),
         home: Scaffold(
-          body: RepaintBoundary(
-            key: key,
-            child: ColoredBox(
-              color: const Color(0xFF15181C),
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ChatMessageBubble(
-                  message: LlmMessage(
-                    sessionId: 'preview',
-                    role: role,
-                    content: '想要温柔的逆光，头发边缘有淡淡的光晕。',
-                    createdAt: DateTime(2026),
-                  ),
-                  messageIndex: 0,
-                  onRetry:
-                      role == LlmMessageRole.user ? () => retried = true : null,
-                  onUndoPrompt: role == LlmMessageRole.assistant
-                      ? () => retried = true
+          body: ColoredBox(
+            color: theme(Brightness.dark).scaffoldBackgroundColor,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ChatMessageBubble(
+                message: LlmMessage(
+                  id: 1,
+                  sessionId: 'preview',
+                  role: role,
+                  content: '想要温柔的逆光，头发边缘有淡淡的光晕。',
+                  createdAt: DateTime(2026),
+                  agentTimeline: role == LlmMessageRole.assistant
+                      ? [
+                          AgentEvent(
+                            toolName: 'write_prompt',
+                            toolCallId: 'write',
+                            arguments: const {
+                              'target': 'positive',
+                              'content': 'soft light',
+                            },
+                            status: 'done',
+                            result: ToolResult.success('提示词已写入'),
+                            createdAt: DateTime(2026, 1, 1, 0, 0, 3),
+                          ),
+                          readStarted,
+                          readStarted.copyWith(
+                            status: 'done',
+                            result: ToolResult.success('已读取当前提示词框'),
+                          ),
+                        ]
                       : null,
-                  onReturnToParent:
-                      role == LlmMessageRole.assistant ? () {} : null,
-                  onEditAndResend: role == LlmMessageRole.user ? (_) {} : null,
                 ),
+                messageIndex: 0,
+                onRetry: () => retried = true,
+                onBranch: role == LlmMessageRole.assistant ? () {} : null,
+                onUndoPrompt: role == LlmMessageRole.assistant
+                    ? () => retried = true
+                    : null,
+                onReturnToParent:
+                    role == LlmMessageRole.assistant ? () {} : null,
+                onEditAndResend: role == LlmMessageRole.user ? (_) {} : null,
               ),
             ),
           ),
@@ -111,6 +138,62 @@ void main() {
       ));
       final message = find.byType(SelectableText);
       final reveal = find.byKey(const ValueKey('message-actions-reveal'));
+      if (role == LlmMessageRole.assistant) {
+        expect(reveal, findsNothing);
+        final undo = find.byTooltip('恢复上一版提示词');
+        expect(undo.hitTestable(), findsOneWidget);
+        final operations = find.text('操作过程 · 2 项');
+        final read = find.text('读取提示词框');
+        final write = find.text('写入提示词');
+        final readResult = find.text('已读取当前提示词框');
+        final writeResult = find.text('提示词已写入');
+        final details = find.byKey(const ValueKey('chat-operations-sheet'));
+        expect(read, findsOneWidget);
+        expect(write, findsOneWidget);
+        expect(readResult, findsNothing);
+        expect(writeResult, findsNothing);
+        expect(tester.getTopLeft(operations).dy,
+            lessThan(tester.getTopLeft(read).dy));
+        expect(
+            tester.getTopLeft(read).dy, lessThan(tester.getTopLeft(write).dy));
+        expect(tester.getTopLeft(write).dy,
+            lessThan(tester.getTopLeft(message).dy));
+        await capture(tester, key, 'message-actions-assistant');
+        await tester.tap(find.text('查看详情'));
+        await tester.pumpAndSettle();
+        expect(details, findsOneWidget);
+        expect(find.descendant(of: details, matching: find.text('操作过程')),
+            findsOneWidget);
+        final detailRead = find.descendant(of: details, matching: read);
+        final detailWrite = find.descendant(of: details, matching: write);
+        expect(detailRead, findsOneWidget);
+        expect(detailWrite, findsOneWidget);
+        expect(tester.getTopLeft(detailRead).dy,
+            lessThan(tester.getTopLeft(detailWrite).dy));
+        expect(
+            find.descendant(of: details, matching: readResult), findsOneWidget);
+        expect(find.descendant(of: details, matching: writeResult),
+            findsOneWidget);
+        await capture(tester, key, 'message-operations-assistant');
+        final close = find.byTooltip('关闭操作过程');
+        await tester.tap(close);
+        await tester.pumpAndSettle();
+        expect(details, findsNothing);
+        await tester.tap(write);
+        await tester.pumpAndSettle();
+        expect(details, findsOneWidget);
+        expect(
+            find.descendant(of: details, matching: writeResult).hitTestable(),
+            findsOneWidget);
+        await tester.tap(close);
+        await tester.pumpAndSettle();
+        expect(readResult, findsNothing);
+        expect(writeResult, findsNothing);
+        await tester.tap(undo);
+        expect(retried, isTrue);
+        expect(tester.takeException(), isNull);
+        return;
+      }
       final originalTop = tester.getTopLeft(message).dy;
       expect(tester.getSize(reveal).height, 0);
       await tester.tap(message);
@@ -128,14 +211,60 @@ void main() {
       expect(tester.getSize(reveal).height, greaterThan(0));
       await tester.tapAt(tester.getTopRight(message) + const Offset(-15, 10));
       await tester.pumpAndSettle();
-      await tester
-          .tap(find.byTooltip(role == LlmMessageRole.user ? '重试' : '撤销写入'));
+      await tester.tap(find.byTooltip('重试'));
       await tester.pumpAndSettle();
       expect(retried, isTrue);
       expect(tester.getSize(reveal).height, 0);
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('details scroll to the operation opened from the message',
+      (tester) async {
+    screen(tester);
+    await tester.pumpWidget(MaterialApp(
+      theme: theme(Brightness.dark),
+      home: Scaffold(
+        body: ChatMessageBubble(
+          message: LlmMessage(
+            id: 1,
+            sessionId: 'preview',
+            role: LlmMessageRole.assistant,
+            content: '操作已完成。',
+            createdAt: DateTime(2026),
+            agentTimeline: [
+              for (var index = 1; index <= 20; index++)
+                AgentEvent(
+                  toolName: '步骤 $index',
+                  toolCallId: 'operation-reused',
+                  arguments: const {},
+                  status: 'done',
+                  result: ToolResult.success('完成第 $index 步'),
+                  createdAt: DateTime(2026, 1, 1, 0, 0, index),
+                ),
+            ],
+          ),
+          messageIndex: 0,
+        ),
+      ),
+    ));
+
+    expect(find.text('步骤 1'), findsNothing);
+    await tester.tap(find.text('步骤 20'));
+    await tester.pumpAndSettle();
+    final sheet = find.byKey(const ValueKey('chat-operations-sheet'));
+    final first = find.descendant(of: sheet, matching: find.text('步骤 1'));
+    final last = find.descendant(of: sheet, matching: find.text('步骤 20'));
+    expect(last.hitTestable(), findsOneWidget);
+    expect(first.hitTestable(), findsNothing);
+
+    final scroll = find.descendant(
+        of: sheet, matching: find.byType(SingleChildScrollView));
+    await tester.drag(scroll, const Offset(0, 1900));
+    await tester.pumpAndSettle();
+    expect(first.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
       'conversation scrolls behind controls and keeps its ends reachable',
@@ -199,6 +328,9 @@ void main() {
     expect(tester.getTopLeft(find.byKey(const ValueKey(0))).dy, lessThan(0));
     await capture(tester, key, 'chat-edge-blur');
     footerHeight.value = 190;
+    await tester.pumpAndSettle();
+    // The lazy list can refine its estimated extent once the final row is laid out.
+    scroll.jumpTo(scroll.position.maxScrollExtent);
     await tester.pumpAndSettle();
     scroll.jumpTo(scroll.position.maxScrollExtent);
     await tester.pumpAndSettle();

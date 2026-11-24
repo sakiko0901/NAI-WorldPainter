@@ -136,7 +136,10 @@ class _DanbooruTagSearchPageState extends State<DanbooruTagSearchPage> {
           child: Text(
             _error!,
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.redAccent, height: 1.5),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              height: 1.5,
+            ),
           ),
         ),
       );

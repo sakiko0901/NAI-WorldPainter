@@ -84,6 +84,18 @@ void main() {
     expect(builds.pages, greaterThan(0),
         reason: 'ordinary draft changes still reach the page listener');
 
+    final finalBytes = _frame(24);
+    vm.receiveFinal('streaming', finalBytes);
+    await tester.pump();
+    final stageImage = find.descendant(
+      of: find.byKey(const ValueKey('result-workspace-stage')),
+      matching: find.byType(Image),
+    );
+    final imageElement = tester.element(stageImage);
+    expect(find.text('正在保存'), findsOneWidget);
+    expect((tester.widget<Image>(stageImage).image as MemoryImage).bytes,
+        same(finalBytes));
+
     final beforeCompletion = builds.pages;
     vm.complete(frontendResult(
       id: 'streaming',
@@ -96,6 +108,9 @@ void main() {
         find.byKey(const ValueKey('result-workspace-preview')), findsNothing);
     expect(find.text('Seed 73'), findsOneWidget);
     expect(find.text('生成图片'), findsOneWidget);
+    expect(find.text('正在保存'), findsNothing);
+    expect(tester.element(stageImage), same(imageElement));
+    expect(tester.widget<Image>(stageImage).image, isA<FileImage>());
     expect(
         tester
             .widget<GenerationResultCard>(find.byType(GenerationResultCard))
@@ -268,6 +283,17 @@ GenerationTask _pendingResult() => frontendResult(id: 'streaming').copyWith(
     );
 
 class _PreviewGenerationFake extends FrontendGenerationFake {
+  String? _finalTaskId;
+
+  @override
+  bool hasFinalStreamImage(String taskId) => _finalTaskId == taskId;
+
+  void receiveFinal(String taskId, Uint8List bytes) {
+    _finalTaskId = taskId;
+    streamPreviewSteps.remove(taskId);
+    receivePreview(taskId, bytes, null);
+  }
+
   void complete(GenerationTask task) {
     isGenerating = false;
     sessionResults = [
@@ -277,6 +303,7 @@ class _PreviewGenerationFake extends FrontendGenerationFake {
     lastCompletedTask = task;
     streamPreviews.remove(task.taskId);
     streamPreviewSteps.remove(task.taskId);
+    _finalTaskId = null;
     streamPreviewBytes = null;
     streamPreviewStep = null;
     notifyListeners();

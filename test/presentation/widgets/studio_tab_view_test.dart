@@ -34,7 +34,7 @@ void main() {
       .opacity
       .value;
 
-  testWidgets('cross-fades in direction and retains drafts through rapid taps',
+  testWidgets('cross-fades in place and retains drafts through rapid taps',
       (tester) async {
     await tester.pumpWidget(host(0));
     await tester.enterText(find.byType(TextField).first, 'keep this draft');
@@ -43,8 +43,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 120));
     expect(opacity(tester, 'first'), inExclusiveRange(0, 1));
     expect(opacity(tester, 'second'), inExclusiveRange(0, 1));
-    expect(tester.getTopLeft(page('first')).dx, lessThan(0));
-    expect(tester.getTopLeft(page('second')).dx, greaterThan(0));
+    expect(tester.getTopLeft(page('first')).dx, 0);
+    expect(tester.getTopLeft(page('second')).dx, 0);
     expect(
         find
             .descendant(of: page('first'), matching: find.byType(TextField))

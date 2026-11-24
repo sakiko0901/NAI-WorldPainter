@@ -14,7 +14,7 @@ class StudioTabView extends StatefulWidget {
     this.expand = true,
   }) : assert(index >= 0 && index < children.length);
 
-  static const duration = Duration(milliseconds: 320);
+  static const duration = Duration(milliseconds: 260);
   static const curve = Curves.easeInOutCubic;
 
   @override
@@ -47,7 +47,6 @@ class _StudioTabViewState extends State<StudioTabView> {
   @override
   Widget build(BuildContext context) {
     final duration = _reduceMotion ? Duration.zero : StudioTabView.duration;
-    final direction = Directionality.of(context) == TextDirection.ltr ? 1 : -1;
     final stack = Stack(
       key: _contentKey,
       fit: widget.expand ? StackFit.expand : StackFit.loose,
@@ -79,20 +78,9 @@ class _StudioTabViewState extends State<StudioTabView> {
                           setState(() => _visible.remove(i));
                         }
                       },
-                      child: AnimatedSlide(
-                        offset: _reduceMotion || i == widget.index
-                            ? Offset.zero
-                            : Offset(
-                                i < widget.index
-                                    ? -.045 * direction
-                                    : .045 * direction,
-                                0),
-                        duration: duration,
-                        curve: StudioTabView.curve,
-                        child: TickerMode(
-                          enabled: i == widget.index,
-                          child: RepaintBoundary(child: widget.children[i]),
-                        ),
+                      child: TickerMode(
+                        enabled: i == widget.index,
+                        child: RepaintBoundary(child: widget.children[i]),
                       ),
                     ),
                   ),

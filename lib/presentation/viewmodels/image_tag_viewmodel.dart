@@ -7,7 +7,6 @@ import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/data/datasources/local/nai_metadata_parser.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/domain/entities/image_tag_result.dart';
-import 'package:nai_huishi/domain/usecases/manage_settings.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 
@@ -255,7 +254,7 @@ class ImageTagViewModel extends ChangeNotifier {
       }
 
       final tagList = allTags.join(', ');
-      final api = sl<LlmApiService>();
+      final api = sl<LlmApiService>().forConnection(config);
       final reply = await api.chatCompletions(
         apiKey: apiKeyFinal,
         baseUrl: baseUrl,

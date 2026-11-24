@@ -152,6 +152,8 @@ class FrontendGenerationFake extends ChangeNotifier
   @override
   final Map<String, int> streamPreviewSteps = {};
   @override
+  bool hasFinalStreamImage(String taskId) => false;
+  @override
   final ChangeNotifier previewUpdates = ChangeNotifier();
 
   void receivePreview(String taskId, Uint8List bytes, int? step) {

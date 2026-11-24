@@ -28,6 +28,68 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('generation completes while Android foreground startup is pending',
+      () async {
+    const channel = MethodChannel('flutter_foreground_task/methods');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final starting = Completer<void>();
+    final finishStartup = Completer<void>();
+    final stopped = Completer<void>();
+    var running = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'checkNotificationPermission':
+          return 0;
+        case 'isRunningService':
+          return running;
+        case 'startService':
+          starting.complete();
+          await finishStartup.future;
+          running = true;
+        case 'stopService':
+          running = false;
+          stopped.complete();
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final history = _MemoryHistoryRepository();
+    final repository = _ControlledPreviewGenerationRepository();
+    final queue = GenerationQueue(repository, history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await vm.loadModels();
+    vm.prompt = 'test prompt';
+
+    final generation = vm.generate();
+    try {
+      await starting.future.timeout(const Duration(seconds: 5));
+      final taskId = vm.sessionResults.single.taskId;
+      await repository
+          .waitForSubmission(taskId)
+          .timeout(const Duration(seconds: 5));
+      repository.succeed(taskId);
+      await generation.timeout(const Duration(seconds: 5));
+      expect(vm.sessionResults.single.status, AppConstants.taskSuccess);
+      expect(running, isFalse);
+      expect(stopped.isCompleted, isFalse);
+    } finally {
+      finishStartup.complete();
+      if (starting.isCompleted) {
+        await stopped.future.timeout(const Duration(seconds: 5));
+      }
+    }
+    expect(running, isFalse);
+  });
+
   test(
       'assistant preview matches write and undo restores roles and coordinates',
       () async {
@@ -99,7 +161,24 @@ void main() {
     addTearDown(vm.dispose);
     await vm.loadModels();
     vm.prompt = 'test prompt';
+    final seedParsed = Completer<void>();
+    int? seedAtFirstDisplay;
+    var displayed = false;
+    vm.addListener(() {
+      final result = vm.lastCompletedTask;
+      if (result == null) return;
+      if (!displayed) {
+        displayed = true;
+        seedAtFirstDisplay = result.seed;
+      }
+      if (result.seed == 987654321 && !seedParsed.isCompleted) {
+        seedParsed.complete();
+      }
+    });
     await vm.generate();
+    expect(displayed, isTrue);
+    expect(seedAtFirstDisplay, isNull);
+    await seedParsed.future.timeout(const Duration(seconds: 5));
     expect(vm.sessionResults.single.seed, 987654321);
     expect(vm.lastCompletedTask!.seed, 987654321);
     expect(vm.seed, isNull);
@@ -481,6 +560,39 @@ void main() {
     });
   }
 
+  test('agent can remove the last tag and exclude glasses for just one role',
+      () async {
+    final history = _MemoryHistoryRepository();
+    final queue = GenerationQueue(_CapturingGenerationRepository('unused'), history);
+    addTearDown(queue.dispose);
+    final vm = _createGenerationViewModel(
+      generateImage: GenerateImageUseCase(history),
+      manageSettings: ManageSettingsUseCase(_SettingsRepository()),
+      saveImage: SaveImageUseCase(history),
+      queue: queue,
+    );
+    addTearDown(vm.dispose);
+    await Future<void>.delayed(Duration.zero);
+    vm.characters = const [
+      CharacterSpec(prompt: 'glasses'),
+      CharacterSpec(prompt: 'red glasses', centerX: 0.3, centerY: 0.6),
+    ];
+    final tool = WritePromptTool(vm);
+    final clear = {'target': 'character_2', 'mode': 'replace', 'content': ''};
+    expect((await tool.call({...clear}..remove('content'))).success, isFalse);
+    expect((await tool.call({...clear, 'mode': 'append'})).success, isFalse);
+    expect((await tool.call({...clear, 'target': 'character_3'})).success, isFalse);
+    expect(vm.characters.last.prompt, 'red glasses');
+    expect((await tool.call(clear)).success, isTrue);
+    expect((await tool.call({'target': 'character_2_uc', 'content': 'glasses'})).success, isTrue);
+    expect(vm.characters, hasLength(2));
+    expect(vm.characters.first.prompt, 'glasses');
+    expect(vm.characters.last.prompt, isEmpty);
+    expect(vm.characters.last.uc, 'glasses');
+    expect(vm.characters.last.centerX, 0.3);
+    expect(vm.negativePrompt, isNot(contains('glasses')));
+  });
+
   test('agent position validation and batch prompt replacement preserve layout',
       () async {
     final history = _MemoryHistoryRepository();
@@ -707,6 +819,15 @@ void main() {
     expect(previewNotifications, 21);
     expect(ordinaryNotifications, beforeFrames);
 
+    final finalFrame = Uint8List.fromList([137, 80, 78, 71]);
+    repository.finalImage(first.taskId, finalFrame);
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.streamPreviews[first.taskId], same(finalFrame));
+    expect(vm.hasFinalStreamImage(first.taskId), isTrue);
+    expect(vm.streamPreviewSteps, isEmpty);
+    expect(vm.sessionResults, isEmpty);
+    expect(ordinaryNotifications, beforeFrames);
+
     repository.succeed(first.taskId);
     expect((await firstCompletion).status, AppConstants.taskSuccess);
     await successApplied.future.timeout(const Duration(seconds: 2));
@@ -716,6 +837,7 @@ void main() {
     expect(vm.streamPreviewSteps, isEmpty);
     expect(vm.streamPreviewBytes, isNull);
     expect(vm.streamPreviewStep, isNull);
+    expect(vm.hasFinalStreamImage(first.taskId), isFalse);
     expect(vm.sessionResults.single.taskId, first.taskId);
     expect(ordinaryNotifications, greaterThan(beforeFrames));
 
@@ -728,7 +850,7 @@ void main() {
         reason: 'the next task must not inherit the previous task\'s step');
     expect(vm.streamPreviewBytes, same(secondFrame));
     expect(vm.streamPreviewStep, isNull);
-    expect(previewNotifications, 22);
+    expect(previewNotifications, 23);
     expect(ordinaryNotifications, beforeSecondFrame);
 
     repository.preview(second.taskId, secondFrame, 7);
@@ -2946,7 +3068,8 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -2956,6 +3079,7 @@ class _ControlledPreviewGenerationRepository implements GenerationRepository {
   final _submissions = <String, Completer<GenerationTask>>{};
   final _completions = <String, Completer<GenerationTask>>{};
   final _handlers = <String, void Function(Uint8List, int?)>{};
+  final _finalHandlers = <String, void Function(Uint8List)>{};
   final _tasks = <String, GenerationTask>{};
 
   Future<GenerationTask> waitForSubmission(String taskId) =>
@@ -2963,6 +3087,9 @@ class _ControlledPreviewGenerationRepository implements GenerationRepository {
 
   void preview(String taskId, Uint8List bytes, int? step) =>
       _handlers[taskId]!(bytes, step);
+
+  void finalImage(String taskId, Uint8List bytes) =>
+      _finalHandlers[taskId]!(bytes);
 
   void succeed(String taskId) => _completions[taskId]!.complete(
         _tasks[taskId]!.copyWith(status: AppConstants.taskSuccess),
@@ -2985,7 +3112,13 @@ class _ControlledPreviewGenerationRepository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {
+    if (onFinalImage == null) {
+      _finalHandlers.remove(taskId);
+    } else {
+      _finalHandlers[taskId] = onFinalImage;
+    }
     if (onFrame == null) {
       _handlers.remove(taskId);
     } else {
@@ -3026,7 +3159,8 @@ class _CapturingGenerationRepository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -3055,7 +3189,8 @@ class _BadGatewayGenerationRepository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

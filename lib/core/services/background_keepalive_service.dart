@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -16,6 +14,7 @@ class BackgroundKeepAliveService {
 
   int _refCount = 0;
   bool _initialized = false;
+  Future<void> _platformWork = Future.value();
 
   /// 初始化前台任务通道。app 启动时调用一次即可。
   Future<void> init() async {
@@ -43,70 +42,77 @@ class BackgroundKeepAliveService {
     _initialized = true;
   }
 
-  /// 获取一次保活引用。第一次调用时启动前台服务并持有 wakelock。
-  Future<void> acquire({String? notificationText}) async {
-    if (!_initialized) {
-      await init();
-    }
+  /// 立即登记保活引用，系统权限和服务启动在后台串行执行。
+  void acquire({String? notificationText}) {
     _refCount++;
     if (_refCount == 1) {
-      try {
-        await WakelockPlus.enable();
-      } catch (_) {}
-      try {
-        // Android 13+ 需要 POST_NOTIFICATIONS 运行时权限，否则前台服务起不来。
-        final notif = await FlutterForegroundTask.checkNotificationPermission();
-        if (notif != NotificationPermission.granted) {
-          await FlutterForegroundTask.requestNotificationPermission();
-        }
-      } catch (_) {}
-      try {
-        final isRunning = await FlutterForegroundTask.isRunningService;
-        if (!isRunning) {
-          await FlutterForegroundTask.startService(
-            serviceId: 5210,
-            notificationTitle: 'NAI 绘世',
-            notificationText: notificationText ?? '正在生成图像…',
-          );
-          // 等待服务真的就绪，避免 acquire 返回时前台服务还没起来导致后台立刻被杀。
-          for (int i = 0; i < 20; i++) {
-            if (await FlutterForegroundTask.isRunningService) break;
-            await Future.delayed(const Duration(milliseconds: 100));
-          }
-        } else if (notificationText != null) {
-          await FlutterForegroundTask.updateService(
-              notificationText: notificationText);
-        }
-      } catch (_) {
-        // 前台服务启动失败不阻塞生成流程。
-      }
+      _schedule(() => _start(notificationText));
     } else if (notificationText != null) {
-      try {
+      updateNotification(notificationText);
+    }
+  }
+
+  Future<void> _start(String? notificationText) async {
+    if (_refCount == 0) return;
+    await init();
+    try {
+      final permission =
+          await FlutterForegroundTask.checkNotificationPermission();
+      if (permission != NotificationPermission.granted && _refCount > 0) {
+        await FlutterForegroundTask.requestNotificationPermission();
+      }
+    } catch (_) {}
+    if (_refCount == 0) return;
+    try {
+      await WakelockPlus.enable();
+    } catch (_) {}
+    if (_refCount == 0) return;
+    if (await FlutterForegroundTask.isRunningService) {
+      if (notificationText != null) {
         await FlutterForegroundTask.updateService(
             notificationText: notificationText);
-      } catch (_) {}
+      }
+    } else if (_refCount > 0) {
+      await FlutterForegroundTask.startService(
+        serviceId: 5210,
+        notificationTitle: 'NAI 绘世',
+        notificationText: notificationText ?? '正在生成图像…',
+      );
     }
   }
 
-  /// 更新前台服务通知文案（不影响引用计数）。
-  Future<void> updateNotification(String text) async {
-    if (_refCount <= 0) return;
-    try {
-      await FlutterForegroundTask.updateService(notificationText: text);
-    } catch (_) {}
+  void _schedule(Future<void> Function() operation) {
+    _platformWork = _platformWork.then((_) async {
+      try {
+        await operation();
+      } catch (_) {
+        // 保活失败后继续处理后续的启动和释放。
+      }
+    });
   }
 
-  /// 释放一次引用。当引用归零时关闭前台服务并解除 wakelock。
-  Future<void> release() async {
-    if (_refCount <= 0) return;
+  /// 更新前台服务通知文案。
+  void updateNotification(String text) {
+    if (_refCount == 0) return;
+    _schedule(() async {
+      if (_refCount > 0) {
+        await FlutterForegroundTask.updateService(notificationText: text);
+      }
+    });
+  }
+
+  /// 释放一次引用。引用归零后异步停止服务并解除 wakelock。
+  void release() {
+    if (_refCount == 0) return;
     _refCount--;
-    if (_refCount == 0) {
+    if (_refCount != 0) return;
+    _schedule(() async {
+      if (_refCount != 0) return;
       try {
         await FlutterForegroundTask.stopService();
-      } catch (_) {}
-      try {
+      } finally {
         await WakelockPlus.disable();
-      } catch (_) {}
-    }
+      }
+    });
   }
 }

@@ -10,6 +10,7 @@ import 'dart:io';
 import 'package:nai_huishi/presentation/widgets/studio_scaffold.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/vibe_encoding.dart';
 import 'package:nai_huishi/presentation/viewmodels/vibe_encoding_viewmodel.dart';
@@ -46,9 +47,9 @@ class _VibeEncodingLibraryPageState extends State<VibeEncodingLibraryPage> {
 
   Future<void> _rename(VibeEncoding encoding) async {
     final controller = TextEditingController(text: encoding.title);
-    final title = await showCupertinoDialog<String>(
+    final title = await showStudioAlertDialog<String>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StudioAlertDialog(
         title: const Text('重命名氛围编码'),
         content: Material(
           color: Colors.transparent,
@@ -76,9 +77,9 @@ class _VibeEncodingLibraryPageState extends State<VibeEncodingLibraryPage> {
 
   Future<void> _delete(VibeEncoding encoding) async {
     if (encoding.id == null) return;
-    final confirmed = await showCupertinoDialog<bool>(
+    final confirmed = await showStudioAlertDialog<bool>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StudioAlertDialog(
         title: const Text('删除氛围编码？'),
         content: const Text('只会删除本地保存的编码和缩略图，不会删除相册原图。'),
         actions: [

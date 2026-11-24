@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/core/constants/api_constants.dart';
@@ -296,8 +297,14 @@ class SettingsLocalDatasource {
   String getLlmSystemPrompt() =>
       _prefs.getString(AppConstants.keyLlmSystemPrompt) ??
       AppConstants.defaultLlmSystemPrompt;
-  Future<void> setLlmSystemPrompt(String value) async =>
-      _prefs.setString(AppConstants.keyLlmSystemPrompt, value);
+
+  Future<void> setLlmSystemPrompt(String value) async {
+    if (value == AppConstants.defaultLlmSystemPrompt) {
+      await _prefs.remove(AppConstants.keyLlmSystemPrompt);
+    } else {
+      await _prefs.setString(AppConstants.keyLlmSystemPrompt, value);
+    }
+  }
 
   String? getLlmActiveSessionId() =>
       _prefs.getString(AppConstants.keyLlmActiveSessionId);

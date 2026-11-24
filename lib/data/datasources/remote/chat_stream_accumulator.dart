@@ -4,7 +4,11 @@ import 'package:nai_huishi/domain/entities/tool_call.dart';
 
 /// Parses complete SSE data events; transport decoding handles split UTF-8 bytes.
 class ChatStreamAccumulator {
+  ChatStreamAccumulator({this.captureReasoning = false});
+
+  final bool captureReasoning;
   final _text = StringBuffer();
+  final _reasoning = StringBuffer();
   final _calls = <int, Map<String, String>>{};
   String? _finish;
   bool done = false;
@@ -31,6 +35,9 @@ class ChatStreamAccumulator {
       final delta = choice['delta'] ?? choice['message'];
       if (delta is! Map) continue;
       if (delta['content'] is String) _text.write(delta['content']);
+      if (captureReasoning && delta['reasoning_content'] is String) {
+        _reasoning.write(delta['reasoning_content']);
+      }
       for (final raw in (delta['tool_calls'] as List? ?? const [])) {
         if (raw is! Map) continue;
         final index = (raw['index'] as num?)?.toInt() ?? _calls.length;
@@ -70,6 +77,7 @@ class ChatStreamAccumulator {
         toolCalls: calls,
         finishReason: _finish ?? 'stop',
         promptTokens: promptTokens,
-        completionTokens: completionTokens);
+        completionTokens: completionTokens,
+        reasoningContent: _reasoning.isEmpty ? null : _reasoning.toString());
   }
 }

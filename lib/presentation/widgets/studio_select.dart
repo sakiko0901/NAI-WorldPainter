@@ -35,7 +35,7 @@ class StudioSelect<T> extends StatelessWidget {
       context: context,
       barrierDismissible: true,
       barrierLabel: '关闭$label选项',
-      barrierColor: Colors.black.withValues(alpha: 0.22),
+      barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.22),
       transitionDuration: media.disableAnimations
           ? Duration.zero
           : const Duration(milliseconds: 180),

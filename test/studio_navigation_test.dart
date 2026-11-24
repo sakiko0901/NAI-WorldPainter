@@ -182,6 +182,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+      'assistant composer stays anchored as keyboard crosses navigation',
+      (tester) async {
+    viewport(tester);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpWidget(host(scale: 1.5));
+    await tester.tap(nav('assistant'));
+    await tester.pumpAndSettle();
+    final surface = find.byKey(const ValueKey('chat-composer-surface'));
+    final restingBottom = tester.getRect(surface).bottom;
+    final navHeight = tester.getSize(find.byType(StudioNavigationBar)).height;
+    await tester.tap(find.byKey(const ValueKey('chat-composer-input')));
+    for (final inset in [8.0, 48.0, 100.0, 300.0, 100.0, 48.0, 8.0, 0.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      tester.view.padding =
+          FakeViewPadding(top: 24, bottom: (24 - inset).clamp(0, 24));
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(tester.getRect(surface).bottom,
+          closeTo(restingBottom - (inset - navHeight).clamp(0, 300), .01),
+          reason: 'keyboard inset $inset');
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   for (final brightness in Brightness.values) {
     testWidgets(
         'bottom bar fits ${brightness.name}, large text and system insets',

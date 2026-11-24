@@ -61,42 +61,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'outfit aliases editor stays scrollable on a narrow keyboard viewport',
-      (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(320, 640);
-    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetViewInsets);
+  for (final mode in [AppearanceMode.dark, AppearanceMode.coffeePaper]) {
+    testWidgets('outfit aliases editor fits a narrow keyboard in ${mode.name}',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetViewInsets);
 
-    await tester.pumpWidget(MaterialApp(
-      theme: buildNaiHuishiTheme(Brightness.dark),
-      home: const PromptMemoryPage(),
-    ));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(MaterialApp(
+        theme: buildNaiHuishiAppearanceTheme(mode),
+        home: const PromptMemoryPage(),
+      ));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('纳西妲 | Nahida'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('纳西妲 | Nahida'));
+      await tester.pumpAndSettle();
 
-    final dialog = find.byType(CupertinoAlertDialog);
-    expect(find.text('编辑记忆'), findsOneWidget);
-    expect(find.text('角色标准穿搭'), findsOneWidget);
-    expect(find.text('标准穿搭描述'), findsOneWidget);
-    expect(find.text('别名（多个用 | 分隔）'), findsOneWidget);
+      final dialog = find.byType(mode == AppearanceMode.coffeePaper
+          ? AlertDialog
+          : CupertinoAlertDialog);
+      expect(find.text('编辑记忆'), findsOneWidget);
+      expect(find.text('角色标准穿搭'), findsOneWidget);
+      expect(find.text('标准穿搭描述'), findsOneWidget);
+      expect(find.text('别名（多个用 | 分隔）'), findsOneWidget);
 
-    final fields = find.descendant(
-      of: dialog,
-      matching: find.byType(TextField),
-    );
-    expect(fields, findsNWidgets(3));
-    await tester.ensureVisible(fields.at(1));
-    await tester.tap(fields.at(1));
-    await tester.pump();
+      final fields = find.descendant(
+        of: dialog,
+        matching: find.byType(TextField),
+      );
+      expect(fields, findsNWidgets(3));
+      await tester.ensureVisible(fields.at(1));
+      await tester.tap(fields.at(1));
+      await tester.pump();
 
-    expect(tester.takeException(), isNull);
-  });
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('opens editor with a full-length trigger and no aliases',
       (tester) async {

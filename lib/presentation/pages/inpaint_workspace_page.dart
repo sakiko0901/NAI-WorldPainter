@@ -24,6 +24,7 @@ import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_stream_preview.dart';
 import 'package:nai_huishi/presentation/widgets/character_position_editor.dart';
 import 'package:nai_huishi/presentation/controllers/inpaint_preview_scheduler.dart';
 import 'package:nai_huishi/presentation/controllers/inpaint_mask_controller.dart';
@@ -117,24 +118,29 @@ _RasterizeResult _rasterizeIsolate(_RasterizeInput input) {
     expandPixels: input.expandPixels,
     preserveRoundBrush: true,
   );
-  final comparisonBase = img.Image.from(result.image);
-  for (final entry in input.comparisonLayers) {
-    final layer = img.decodePng(entry.imagePng);
-    if (layer == null) throw const FormatException('结果图层解码失败');
-    final placed = rasterizer.rasterize(
-      source: layer,
-      sourceBounds: entry.worldRect,
-      worldRect: input.worldRect,
-      outputWidth: input.outputWidth,
-      outputHeight: input.outputHeight,
-      strokes: const [],
-    );
-    img.compositeImage(comparisonBase, placed.image);
+  final basePng = Uint8List.fromList(img.encodePng(result.image));
+  var comparisonBasePng = basePng;
+  if (input.comparisonLayers.isNotEmpty) {
+    final comparisonBase = img.Image.from(result.image);
+    for (final entry in input.comparisonLayers) {
+      final layer = img.decodePng(entry.imagePng);
+      if (layer == null) throw const FormatException('结果图层解码失败');
+      final placed = rasterizer.rasterize(
+        source: layer,
+        sourceBounds: entry.worldRect,
+        worldRect: input.worldRect,
+        outputWidth: input.outputWidth,
+        outputHeight: input.outputHeight,
+        strokes: const [],
+      );
+      img.compositeImage(comparisonBase, placed.image);
+    }
+    comparisonBasePng = Uint8List.fromList(img.encodePng(comparisonBase));
   }
   return _RasterizeResult(
-    Uint8List.fromList(img.encodePng(result.image)),
+    basePng,
     rasterizer.encodeMask(result.mask, alignToLatentGrid: false),
-    Uint8List.fromList(img.encodePng(comparisonBase)),
+    comparisonBasePng,
     rasterizer.encodeMask(result.mask),
   );
 }
@@ -315,7 +321,9 @@ enum _GestureKind { none, draw, moveBox, panScene, moveGlobal }
 
 /// 局部重绘工作区（嵌入生成页内的圆角卡片组件）。
 class InpaintWorkspaceCard extends StatefulWidget {
-  const InpaintWorkspaceCard({super.key});
+  const InpaintWorkspaceCard({super.key, this.workspaceHeight});
+
+  final double? workspaceHeight;
 
   /// 工作区手势激活中（绘制遮罩/拖框/移动图片/对比拖动）。
   /// 生成页监听它来锁定页面滚动，避免涂抹遮罩时页面跟着移动。
@@ -358,6 +366,8 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
   final List<List<InpaintStroke>> _redo = [];
   final List<InpaintResultLayer> _resultLayers = [];
   final List<_ReviewCandidate> _candidates = [];
+  final _streamFrame = ValueNotifier<GenerationFrame?>(null);
+  Uint8List? _streamMaskBytes;
   String? _selectedCandidateId;
   bool _reviewOpen = false;
   int _brushSizeLevel = 3;
@@ -515,6 +525,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     _menuAnimation.dispose();
     _menuController.dispose();
     _maskPreviewScheduler.dispose();
+    _streamFrame.dispose();
     _promptController.dispose();
     _negativeController.dispose();
     _strokeCache.dispose();
@@ -574,6 +585,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           _sessionSourcePath = null;
           _sessionMaskPath = null;
           _activeRevision = null;
+          _busy = false;
+          _addingLayer = false;
+          _streamMaskBytes = null;
+          _streamFrame.value = null;
         }
       });
     } catch (error) {
@@ -1165,23 +1180,34 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           'inpaint_${timestamp}_${revision}_mask.png';
       final beforePath = '${dir.path}${Platform.pathSeparator}'
           'inpaint_${timestamp}_${revision}_before.png';
-      await File(basePath).writeAsBytes(raster.basePng, flush: true);
-      await File(maskPath).writeAsBytes(raster.requestMaskPng, flush: true);
-      await File(beforePath)
-          .writeAsBytes(raster.comparisonBasePng, flush: true);
+      await Future.wait([
+        File(basePath).writeAsBytes(raster.basePng, flush: true),
+        File(maskPath).writeAsBytes(raster.requestMaskPng, flush: true),
+      ]);
+      if (!mounted || revision != _activeRevision) return false;
       _sessionSourcePath = basePath;
       _sessionMaskPath = maskPath;
+      setState(() => _streamMaskBytes = raster.maskPng);
       for (var index = 0; index < total; index++) {
         if (_generation.isBatchCancelling) break;
+        _streamFrame.value = null;
         final task = requestTemplates[index].copyWith(
           sourceImagePath: basePath,
           maskImagePath: maskPath,
         );
-        final completed = await _queue.enqueueTransientAndWait(task);
+        final completed = await _queue.enqueueTransientAndWait(
+          task,
+          onFrame: (frame) {
+            if (mounted && revision == _activeRevision) {
+              _streamFrame.value = frame;
+            }
+          },
+        );
         if (!mounted || revision != _activeRevision) return false;
         if (completed.status == 'success') {
           final generatedPath = await _saveImage.saveTransient(completed);
           if (!mounted || revision != _activeRevision) return false;
+          final frame = _streamFrame.value;
           setState(() => _addingLayer = true);
           final candidateImages =
               await compute<_MaskLayerInput, _CandidateImages>(
@@ -1189,20 +1215,25 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
             _MaskLayerInput(
               basePng: raster.comparisonBasePng,
               maskPng: raster.maskPng,
-              generatedPng: await File(generatedPath).readAsBytes(),
+              generatedPng: frame != null && frame.isFinal
+                  ? frame.bytes
+                  : await File(generatedPath).readAsBytes(),
               featherPixels: featherPixels,
             ),
           );
-          final dir = await ImageUtils.getImageDirectory();
           final layerPath = '${dir.path}${Platform.pathSeparator}'
               'inpaint_layer_${DateTime.now().millisecondsSinceEpoch}_'
               '${index + 1}.png';
           final comparisonPath = '${dir.path}${Platform.pathSeparator}'
               'inpaint_compare_${timestamp}_${revision}_${index + 1}.png';
-          await File(layerPath)
-              .writeAsBytes(candidateImages.layerPng, flush: true);
-          await File(comparisonPath)
-              .writeAsBytes(candidateImages.comparisonPng, flush: true);
+          await Future.wait([
+            if (!receivedCandidate)
+              File(beforePath)
+                  .writeAsBytes(raster.comparisonBasePng, flush: true),
+            File(layerPath).writeAsBytes(candidateImages.layerPng, flush: true),
+            File(comparisonPath)
+                .writeAsBytes(candidateImages.comparisonPng, flush: true),
+          ]);
           if (!mounted || revision != _activeRevision) return false;
           // 工作区的成功候选也进入生成结果区，便于继续保存、查看或复用。
           // comparisonPath 是保留未遮罩区域的完整合成图；generatedPath 仅是模型输出。
@@ -1243,15 +1274,23 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           showFloatingToast(context, completed.errorMessage ?? '重绘失败');
           break;
         }
+        if (index + 1 < total && !_generation.isBatchCancelling) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          if (!mounted || revision != _activeRevision) return false;
+        }
       }
       return true;
     } catch (error) {
-      if (mounted) showFloatingToast(context, '生成失败：$error');
+      if (mounted && revision == _activeRevision) {
+        showFloatingToast(context, '生成失败：$error');
+      }
       return false;
     } finally {
       if (mounted && revision == _activeRevision) {
+        _streamFrame.value = null;
         setState(() {
           _busy = false;
+          _streamMaskBytes = null;
           _addingLayer = false;
           _reviewOpen = _candidates.isNotEmpty;
         });
@@ -1423,7 +1462,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
           radius: 18,
           child: Column(children: [
             _buildHeader(colors),
-            _buildStage(),
+            SizedBox(height: widget.workspaceHeight, child: _buildStage()),
             if (_candidates.isNotEmpty) _buildCandidatePanel(colors),
             _buildToolbar(colors),
           ]),
@@ -1717,6 +1756,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final sourcePath = _sourcePath;
     final sourceWidth = _sourceWidth;
     final review = _reviewOpen ? _selectedCandidate : null;
+    final streamMaskBytes = _streamMaskBytes;
     final previewCurrent = !_busy &&
         _pointers.isEmpty &&
         _draft == null &&
@@ -1729,7 +1769,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
         child: GestureDetector(
           onTap: _pickSource,
           child: Container(
-            margin: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+            margin: const EdgeInsets.fromLTRB(6, 0, 6, 4),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
@@ -1763,7 +1803,7 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
       key: const ValueKey('inpaint-workspace-stage'),
       aspectRatio: 0.86,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+        padding: const EdgeInsets.fromLTRB(6, 0, 6, 4),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: LayoutBuilder(builder: (context, constraints) {
@@ -1833,8 +1873,10 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                         painter: InpaintCanvasPainter(
                           transform: _transform,
                           strokes: const [],
-                          showMask:
-                              _showMask && review == null && !previewCurrent,
+                          showMask: _showMask &&
+                              review == null &&
+                              !previewCurrent &&
+                              !_busy,
                           showImageStrokes: false,
                           maskController: _strokeCache,
                         ),
@@ -1848,6 +1890,23 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
                         transform: _transform,
                         box: _box!,
                         bytes: _maskPreviewBytes!,
+                      ),
+                    if (_busy && _displayBox != null && streamMaskBytes != null)
+                      Positioned.fromRect(
+                        rect: _displayBox!.rect,
+                        child: IgnorePointer(
+                          child: RepaintBoundary(
+                            child: ValueListenableBuilder<GenerationFrame?>(
+                              valueListenable: _streamFrame,
+                              builder: (context, frame, _) => frame == null
+                                  ? const SizedBox.shrink()
+                                  : InpaintStreamPreview(
+                                      bytes: frame.bytes,
+                                      maskBytes: streamMaskBytes,
+                                    ),
+                            ),
+                          ),
+                        ),
                       ),
                     if (review != null)
                       Positioned.fromRect(
@@ -1981,26 +2040,43 @@ class _InpaintWorkspaceCardState extends State<InpaintWorkspaceCard>
     final colors = Theme.of(context).colorScheme;
     return Positioned.fill(
       child: IgnorePointer(
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            decoration: BoxDecoration(
-              color: colors.surface.withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 10),
-                Text(
-                    _addingLayer
-                        ? '准备候选…'
-                        : '生成中 $_batchCompleted/$_batchTotal',
-                    style: const TextStyle(fontSize: 13)),
-              ],
-            ),
-          ),
+        child: ValueListenableBuilder<GenerationFrame?>(
+          valueListenable: _streamFrame,
+          builder: (context, frame, _) {
+            final step = frame?.step;
+            final status = frame?.isFinal == true || _addingLayer
+                ? '准备候选…'
+                : _streamMaskBytes == null
+                    ? '准备重绘…'
+                    : '生成中 $_batchCompleted/$_batchTotal';
+            return Align(
+              alignment: frame == null ? Alignment.center : Alignment.topRight,
+              child: Container(
+                margin: const EdgeInsets.all(8),
+                padding: EdgeInsets.symmetric(
+                  horizontal: frame == null ? 20 : 10,
+                  vertical: frame == null ? 14 : 6,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.surface.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: frame == null
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 10),
+                          Text(status, style: const TextStyle(fontSize: 13)),
+                        ],
+                      )
+                    : Text(
+                        step == null ? status : '$status · 第 ${step + 1} 步',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+              ),
+            );
+          },
         ),
       ),
     );

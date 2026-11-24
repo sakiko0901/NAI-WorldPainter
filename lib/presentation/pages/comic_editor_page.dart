@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:uuid/uuid.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/domain/agents/tools/comic_panel_prompt_tools.dart';
 import 'package:nai_huishi/domain/entities/comic_project.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/comic_post_editor_page.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_drawer.dart';
 import 'package:nai_huishi/presentation/viewmodels/comic_project_viewmodel.dart';
@@ -171,9 +173,9 @@ class _ComicEditorPageState extends State<ComicEditorPage> {
   }
 
   Future<void> _deletePanel(ComicProject project, ComicPanel panel) async {
-    final confirmed = await showCupertinoDialog<bool>(
+    final confirmed = await showStudioAlertDialog<bool>(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (context) => StudioAlertDialog(
         title: const Text('删除分镜'),
         content: Text('“${panel.title}”及其候选图、后期图层会被删除，无法恢复。'),
         actions: [
@@ -215,9 +217,9 @@ class _ComicEditorPageState extends State<ComicEditorPage> {
       if (!mounted) return;
       showFloatingToast(context, '已导出整页和分镜 PNG',
           icon: CupertinoIcons.square_arrow_down);
-      await showCupertinoDialog<void>(
+      await showStudioAlertDialog<void>(
         context: context,
-        builder: (context) => CupertinoAlertDialog(
+        builder: (context) => StudioAlertDialog(
           title: const Text('漫画已导出'),
           content: Text(path),
           actions: [
@@ -370,29 +372,33 @@ class _ComicEditorPageState extends State<ComicEditorPage> {
 }
 
 ThemeData _comicTheme(ThemeData base) {
+  final glass = base.extension<FrostedTheme>() ??
+      FrostedTheme.forBrightness(base.brightness);
+  if (glass.appearanceMode == AppearanceMode.coffeePaper) {
+    return base;
+  }
+  final dark = base.brightness == Brightness.dark;
   const goldDark = Color(0xFF9A7222);
   const mint = Color(0xFF2F9E8F);
-  final dark = base.brightness == Brightness.dark;
-  final scheme = base.colorScheme.copyWith(
-    primary: dark ? const Color(0xFFD4A84C) : goldDark,
-    onPrimary: Colors.white,
-    primaryContainer: dark ? const Color(0xFF4A391B) : const Color(0xFFF1DFB5),
-    onPrimaryContainer:
-        dark ? const Color(0xFFFFEAC0) : const Color(0xFF2D2107),
-    secondary: mint,
-    onSecondary: Colors.white,
-    secondaryContainer:
-        dark ? const Color(0xFF163D38) : const Color(0xFFD4EEE8),
-    onSecondaryContainer:
-        dark ? const Color(0xFFB8F0E5) : const Color(0xFF103B35),
-    tertiary: mint,
-  );
+  final scheme = dark
+      ? base.colorScheme
+      : base.colorScheme.copyWith(
+          primary: goldDark,
+          onPrimary: Colors.white,
+          primaryContainer: const Color(0xFFF1DFB5),
+          onPrimaryContainer: const Color(0xFF2D2107),
+          secondary: mint,
+          onSecondary: Colors.white,
+          secondaryContainer: const Color(0xFFD4EEE8),
+          onSecondaryContainer: const Color(0xFF103B35),
+          tertiary: mint,
+        );
   return base.copyWith(
     colorScheme: scheme,
     scaffoldBackgroundColor:
-        dark ? const Color(0xFF0F1011) : const Color(0xFFF3F2EE),
+        dark ? base.scaffoldBackgroundColor : const Color(0xFFF3F2EE),
     cardTheme: base.cardTheme.copyWith(
-      color: dark ? const Color(0xFF191B1D) : Colors.white,
+      color: dark ? glass.panel : Colors.white,
       surfaceTintColor: Colors.transparent,
       margin: EdgeInsets.zero,
       elevation: 0,
@@ -400,7 +406,7 @@ ThemeData _comicTheme(ThemeData base) {
     ),
     inputDecorationTheme: base.inputDecorationTheme.copyWith(
       filled: true,
-      fillColor: dark ? const Color(0xFF111314) : const Color(0xFFF8F8F5),
+      fillColor: dark ? glass.field : const Color(0xFFF8F8F5),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
@@ -408,18 +414,17 @@ ThemeData _comicTheme(ThemeData base) {
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide(
-          color: dark ? Colors.white12 : Colors.black12,
+          color: dark ? glass.border : Colors.black12,
         ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide:
-            BorderSide(color: dark ? const Color(0xFFD4A84C) : goldDark),
+        borderSide: BorderSide(color: scheme.primary),
       ),
     ),
     appBarTheme: base.appBarTheme.copyWith(
       surfaceTintColor: Colors.transparent,
-      backgroundColor: dark ? const Color(0xFF111213) : const Color(0xFFF3F2EE),
+      backgroundColor: dark ? glass.rail : const Color(0xFFF3F2EE),
     ),
     chipTheme: base.chipTheme.copyWith(
       side: BorderSide.none,

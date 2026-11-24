@@ -112,13 +112,28 @@ void main() {
     );
   });
 
-  testWidgets('StudioBackground skips its image layer but keeps the gradient',
+  testWidgets(
+      'dark background stays solid with a result image and blur enabled',
+      (tester) async {
+    await tester.pumpWidget(_app(
+        brightness: Brightness.dark,
+        enabled: true,
+        home: const StudioBackground(image: AssetImage('unused'))));
+    final bg = find.byType(StudioBackground);
+    final fill = tester.widget<ColoredBox>(
+        find.descendant(of: bg, matching: find.byType(ColoredBox)));
+    expect(fill.color, const Color(0xFF1A1A1A));
+    expect(find.descendant(of: bg, matching: find.byType(Image)), findsNothing);
+  });
+
+  testWidgets(
+      'Light StudioBackground skips its image layer but keeps the gradient',
       (tester) async {
     final image = MemoryImage(base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
     ));
     Widget backgroundApp(bool enabled) => _app(
-          brightness: Brightness.dark,
+          brightness: Brightness.light,
           enabled: enabled,
           home: SizedBox.expand(child: StudioBackground(image: image)),
         );
@@ -214,18 +229,22 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    final allFilters = find.byType(BackdropFilter);
+    final panelFilter = find.ancestor(
+      of: find.byKey(const ValueKey('session-history-list')),
+      matching: allFilters,
+    );
+
     await openPanel(true);
-    var filters =
-        tester.widgetList<BackdropFilter>(find.byType(BackdropFilter));
-    expect(filters, hasLength(1));
-    expect(filters.single.enabled, isTrue);
+    expect(tester.widget<BackdropFilter>(panelFilter).enabled, isTrue);
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
     await tester.pumpAndSettle();
 
     await openPanel(false);
-    filters = tester.widgetList<BackdropFilter>(find.byType(BackdropFilter));
-    expect(filters, hasLength(1));
-    expect(filters.single.enabled, isFalse);
+    expect(tester.widget<BackdropFilter>(panelFilter).enabled, isFalse);
+    expect(
+        tester.widgetList<BackdropFilter>(allFilters).where((f) => f.enabled),
+        isEmpty);
   });
 }
 

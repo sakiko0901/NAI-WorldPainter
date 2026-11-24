@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/style_preset.dart';
@@ -47,9 +48,9 @@ class _StylePresetPageState extends State<StylePresetPage> {
     final titleController = TextEditingController();
     final promptController = TextEditingController();
 
-    await showCupertinoDialog<void>(
+    await showStudioAlertDialog<void>(
       context: context,
-      builder: (ctx) => CupertinoAlertDialog(
+      builder: (ctx) => StudioAlertDialog(
         title: const Text('新增画风收藏'),
         content: Material(
           color: Colors.transparent,

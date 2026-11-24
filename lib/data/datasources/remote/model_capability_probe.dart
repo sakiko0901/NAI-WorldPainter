@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'llm_api_service.dart';
+import 'llm_native_protocol.dart';
 
 class ModelCapabilityProbe {
   final LlmApiService api;
@@ -86,25 +88,40 @@ class ModelCapabilityProbe {
   static Future<int?> contextWindow(Dio client,
       {required String apiKey,
       required String baseUrl,
-      required String model}) async {
-    final base = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    final response = await client.get(
-        '${base.endsWith('/v1') ? base : '$base/v1'}/models',
+      required String model,
+      LlmApiProtocol protocol = LlmApiProtocol.openAiCompatible}) async {
+    final path = switch (protocol) {
+      LlmApiProtocol.gemini =>
+        'models/${Uri.encodeComponent(geminiModelId(model))}',
+      LlmApiProtocol.anthropic => 'models/${Uri.encodeComponent(model)}',
+      _ => 'models',
+    };
+    final response = await client.get(llmEndpoint(protocol, baseUrl, path),
         options: Options(
-            headers: {'Authorization': 'Bearer $apiKey'},
+            headers: llmAuthHeaders(protocol, apiKey),
+            followRedirects: protocol != LlmApiProtocol.gemini,
             receiveTimeout: const Duration(seconds: 20)));
     final data = response.data;
-    if (data is! Map || data['data'] is! List) return null;
-    for (final item in data['data']) {
-      if (item is! Map || item['id'] != model) continue;
-      for (final key in [
-        'context_length',
-        'context_window',
-        'max_context_tokens'
-      ]) {
-        final value = item[key];
-        if (value is num && value >= 2048) return value.toInt();
-      }
+    if (data is! Map) return null;
+    final models = data['data'];
+    final item = switch (protocol) {
+      LlmApiProtocol.gemini || LlmApiProtocol.anthropic => data,
+      _ => models is List
+          ? models
+              .whereType<Map>()
+              .where((item) => item['id'] == model)
+              .firstOrNull
+          : null,
+    };
+    for (final key in [
+      'inputTokenLimit',
+      'max_input_tokens',
+      'context_length',
+      'context_window',
+      'max_context_tokens',
+    ]) {
+      final value = item?[key];
+      if (value is num && value >= 2048) return value.toInt();
     }
     return null;
   }

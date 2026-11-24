@@ -125,7 +125,8 @@ class _ControlledRepository implements GenerationRepository {
   }
 
   @override
-  void setStreamPreviewHandler(String taskId, dynamic onFrame) {}
+  void setStreamPreviewHandler(String taskId, dynamic onFrame,
+      {dynamic onFinalImage}) {}
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

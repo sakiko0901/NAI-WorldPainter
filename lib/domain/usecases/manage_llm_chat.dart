@@ -11,7 +11,10 @@ class ManageLlmChatUseCase {
 
   ManageLlmChatUseCase(this._repo);
 
-  Future<LlmSession> forkSession(String sessionId, int beforeMessageId) => _repo.forkSession(sessionId, beforeMessageId);
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId,
+          {bool includeMessage = false}) =>
+      _repo.forkSession(sessionId, beforeMessageId,
+          includeMessage: includeMessage);
 
   Future<List<LlmSession>> listSessions() => _repo.listSessions();
   Future<List<LlmSessionSearchResult>> searchSessions(String query) =>
@@ -66,6 +69,9 @@ class ManageLlmChatUseCase {
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
     LlmInteraction? interaction,
+    int? replaceReplyId,
+    DateTime? replyPosition,
+    bool keepReplyContent = false,
   }) =>
       _repo.saveAgentRunResult(
         sessionId: sessionId,
@@ -73,6 +79,9 @@ class ManageLlmChatUseCase {
         toolCallsJson: toolCallsJson,
         agentTimeline: agentTimeline,
         interaction: interaction,
+        replaceReplyId: replaceReplyId,
+        replyPosition: replyPosition,
+        keepReplyContent: keepReplyContent,
       );
 
   /// 删除指定消息及其之后的所有消息

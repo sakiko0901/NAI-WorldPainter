@@ -34,6 +34,7 @@ class ChatTokenBudget {
                   n +
                   8 +
                   content(m['content']) +
+                  content(m['reasoning_content']) +
                   (m['tool_calls'] == null
                       ? 0
                       : text(jsonEncode(m['tool_calls']))));

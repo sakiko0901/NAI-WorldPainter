@@ -200,22 +200,75 @@ class LlmChatLocalDatasource {
     return rows.map(_messageFromRow).toList();
   }
 
-  Future<int> insertMessage(LlmMessage message) async {
+  Map<String, Object?> _messageContent(LlmMessage message) {
     final toolCallsJson = message.toolCallsJson ??
         (message.agentTimeline != null && message.agentTimeline!.isNotEmpty
             ? AgentEvent.toJsonList(message.agentTimeline!)
             : null);
-    return _db.insert('llm_messages', {
-      'session_id': message.sessionId,
-      'role': message.roleString,
+    return {
       'content': message.content,
       'image_path': message.imagePaths.isNotEmpty
           ? jsonEncode(message.imagePaths)
           : message.imagePath,
       'tool_calls': toolCallsJson,
       'interaction_json': message.interaction?.toJsonString(),
-      'created_at': message.createdAt.millisecondsSinceEpoch,
+    };
+  }
+
+  Future<int> insertMessage(LlmMessage message) => _db.insert('llm_messages', {
+        'session_id': message.sessionId,
+        'role': message.roleString,
+        ..._messageContent(message),
+        'created_at': message.createdAt.millisecondsSinceEpoch,
+      });
+
+  Future<LlmMessage> replaceAssistantReply(
+    int id,
+    LlmMessage replacement, {
+    required bool keepReplyContent,
+  }) async {
+    final details = _messageContent(replacement);
+    final content =
+        keepReplyContent ? {'tool_calls': details['tool_calls']} : details;
+    final (previous, saved) = await _db.transaction((txn) async {
+      const where = 'id = ? AND session_id = ? AND role = ?';
+      final args = [id, replacement.sessionId, 'assistant'];
+      final rows = await txn.query(
+        'llm_messages',
+        where: where,
+        whereArgs: args,
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('原回复不存在');
+      final row = rows.single;
+      await txn.update('llm_messages', content, where: where, whereArgs: args);
+      await txn.update(
+        'llm_sessions',
+        {'updated_at': replacement.createdAt.millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: [replacement.sessionId],
+      );
+      return (_messageFromRow(row), _messageFromRow({...row, ...content}));
     });
+
+    for (final path in previous.allImagePaths.toSet().difference(
+          saved.allImagePaths.toSet(),
+        )) {
+      // One remote image file may be used by more than one reply.
+      try {
+        final references = await _db.query(
+          'llm_messages',
+          columns: ['id'],
+          where: 'image_path = ? OR instr(image_path, ?) > 0',
+          whereArgs: [path, jsonEncode(path)],
+          limit: 1,
+        );
+        if (references.isEmpty) await _deleteImageFile(path);
+      } catch (_) {
+        // The reply is already saved. Attachment cleanup is best effort.
+      }
+    }
+    return saved;
   }
 
   Future<void> deleteMessage(int id) async {

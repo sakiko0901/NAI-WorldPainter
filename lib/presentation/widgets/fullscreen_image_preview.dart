@@ -5,6 +5,7 @@ import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 Future<void> showFullscreenImagePreview(
   BuildContext context, {
@@ -24,11 +25,15 @@ Future<void> showFullscreenImagePreview(
           ? Duration.zero
           : const Duration(milliseconds: 180),
       pageBuilder: (context, animation, secondaryAnimation) {
-        return _FullscreenImagePreview(
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle.light,
+          child: _FullscreenImagePreview(
             imagePath: imagePath,
             imageUrl: imageUrl,
             imageBytes: imageBytes,
-            allowSave: allowSave);
+            allowSave: allowSave,
+          ),
+        );
       },
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         return FadeTransition(opacity: animation, child: child);

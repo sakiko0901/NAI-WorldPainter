@@ -13,7 +13,13 @@ Future<LlmRoleBinding?> showModelSelectionSheet(
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : const AnimationStyle(
+              duration: Duration(milliseconds: 235),
+              reverseDuration: Duration(milliseconds: 180)),
+      backgroundColor: Theme.of(context).dialogTheme.backgroundColor ??
+          Theme.of(context).scaffoldBackgroundColor,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (_) => ModelSelectionSheet(
@@ -26,10 +32,14 @@ class ModelSelectionSheet extends StatefulWidget {
       {super.key,
       required this.providers,
       required this.selected,
-      required this.title});
+      required this.title,
+      this.onBack,
+      this.onSelected});
   final List<LlmProvider> providers;
   final LlmRoleBinding selected;
   final String title;
+  final VoidCallback? onBack;
+  final ValueChanged<LlmRoleBinding>? onSelected;
 
   @override
   State<ModelSelectionSheet> createState() => _ModelSelectionSheetState();
@@ -38,6 +48,23 @@ class ModelSelectionSheet extends StatefulWidget {
 class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
   String _query = '';
   String? _providerId;
+  bool _searching = false;
+  final _inlineScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _inlineScroll.dispose();
+    super.dispose();
+  }
+
+  void _select(LlmRoleBinding binding) {
+    final onSelected = widget.onSelected;
+    if (onSelected != null) {
+      onSelected(binding);
+    } else {
+      Navigator.pop(context, binding);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +79,7 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
           .toList();
       if (models.isNotEmpty) groups[provider] = models;
     }
+    if (widget.onBack != null) return _buildInline(groups);
     return SafeArea(
       top: false,
       child: Padding(
@@ -68,8 +96,7 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
                     child:
                         Text(widget.title, style: theme.textTheme.titleLarge)),
                 TextButton(
-                    onPressed: () =>
-                        Navigator.pop(context, const LlmRoleBinding()),
+                    onPressed: () => _select(const LlmRoleBinding()),
                     child: const Text('暂不选择')),
               ]),
             ),
@@ -131,6 +158,93 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
     );
   }
 
+  Widget _buildInline(Map<LlmProvider, List<String>> groups) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            IconButton(
+              tooltip: '返回思考等级',
+              onPressed: widget.onBack,
+              icon: const Icon(Icons.chevron_left_rounded, size: 23),
+            ),
+            Expanded(
+                child: Text(widget.title, style: theme.textTheme.titleSmall)),
+            IconButton(
+              tooltip: _searching ? '关闭搜索' : '搜索模型',
+              onPressed: () => setState(() {
+                _searching = !_searching;
+                if (!_searching) _query = '';
+              }),
+              icon: Icon(
+                  _searching ? Icons.close_rounded : Icons.search_rounded,
+                  size: 20),
+            ),
+          ]),
+          if (_searching)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+              child: TextField(
+                autofocus: true,
+                onChanged: (value) =>
+                    setState(() => _query = value.trim().toLowerCase()),
+                decoration: InputDecoration(
+                  hintText: '搜索模型或供应商',
+                  isDense: true,
+                  filled: true,
+                  fillColor: colors.onSurface.withValues(alpha: .06),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(13),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+          Flexible(
+            child: Scrollbar(
+              controller: _inlineScroll,
+              child: ListView(
+                controller: _inlineScroll,
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                children: [
+                  if (groups.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Text('没有匹配的模型', style: theme.textTheme.bodyMedium),
+                    ),
+                  for (final MapEntry(:key, :value) in groups.entries) ...[
+                    if (groups.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+                        child: Text(key.name,
+                            style: theme.textTheme.labelSmall
+                                ?.copyWith(color: colors.onSurfaceVariant)),
+                      ),
+                    for (final model in value) _model(key, model, inline: true),
+                  ],
+                  if (!_searching && widget.selected.model.isNotEmpty)
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton(
+                        onPressed: () => _select(const LlmRoleBinding()),
+                        child: const Text('暂不选择'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _filter(String label, String? id) => Padding(
         padding: const EdgeInsets.only(right: 8),
         child: FilterChip(
@@ -140,11 +254,46 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
             onSelected: (_) => setState(() => _providerId = id)),
       );
 
-  Widget _model(LlmProvider provider, String model) {
+  Widget _model(LlmProvider provider, String model, {bool inline = false}) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final selected = widget.selected.providerId == provider.id &&
         widget.selected.model == model;
+    if (inline) {
+      return Semantics(
+        selected: selected,
+        child: Material(
+          borderRadius: BorderRadius.circular(13),
+          color: selected
+              ? colors.primary.withValues(alpha: .13)
+              : Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(13),
+            onTap: () =>
+                _select(LlmRoleBinding(providerId: provider.id, model: model)),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 44),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Row(children: [
+                  Expanded(
+                      child: Text(model,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: selected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500))),
+                  if (selected)
+                    Icon(Icons.check_rounded, size: 19, color: colors.primary),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Material(
@@ -166,8 +315,8 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
               color: selected
                   ? colors.primary
                   : colors.outline.withValues(alpha: 0.5)),
-          onTap: () => Navigator.pop(
-              context, LlmRoleBinding(providerId: provider.id, model: model)),
+          onTap: () =>
+              _select(LlmRoleBinding(providerId: provider.id, model: model)),
         ),
       ),
     );

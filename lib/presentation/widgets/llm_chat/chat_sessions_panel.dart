@@ -580,10 +580,11 @@ class _SessionsPanelState extends State<_SessionsPanel> {
       position: PopupMenuPosition.under,
       icon: Icon(CupertinoIcons.ellipsis,
           size: 21, color: theme.colorScheme.onSurfaceVariant),
-      color: theme.colorScheme.surface.withValues(alpha: 0.98),
+      color: theme.popupMenuTheme.color ??
+          theme.colorScheme.surface.withValues(alpha: 0.98),
       surfaceTintColor: Colors.transparent,
       elevation: 3,
-      shadowColor: Colors.black.withValues(alpha: .20),
+      shadowColor: theme.colorScheme.shadow.withValues(alpha: .20),
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
           side: BorderSide(color: FrostedTheme.of(context).border)),
@@ -623,10 +624,14 @@ class _SessionsPanelState extends State<_SessionsPanel> {
       );
 }
 
-Color _dangerColor(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFFF8A86)
-        : const Color(0xFFB3261E);
+Color _dangerColor(BuildContext context) {
+  final theme = Theme.of(context);
+  return switch (FrostedTheme.of(context).appearanceMode) {
+    AppearanceMode.dark => const Color(0xFFFF8A86),
+    AppearanceMode.light => const Color(0xFFB3261E),
+    AppearanceMode.coffeePaper => theme.colorScheme.error,
+  };
+}
 
 class _HistoryState extends StatelessWidget {
   final IconData icon;

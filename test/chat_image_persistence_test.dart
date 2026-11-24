@@ -6,6 +6,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
 import 'package:nai_huishi/data/repositories/llm_chat_repository_impl.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -36,15 +38,57 @@ void main() {
       expect(reloaded.imagePath, reloaded.allImagePaths.first);
       expect(await File(reloaded.allImagePaths[0]).readAsBytes(), [1, 2, 3, 4]);
       expect(await File(reloaded.allImagePaths[1]).readAsBytes(), [5, 6, 7, 8]);
-      await repo.saveAgentRunResult(
-          sessionId: session.id, assistantText: '已识别');
+      PromptDraftSnapshot draft(String tags) => PromptDraftSnapshot(
+          positive: tags,
+          negative: '',
+          inpaintPositive: '',
+          inpaintNegative: '',
+          characters: [],
+          inpainting: false,
+          version: 0);
+      final operation = AgentEvent(
+          toolName: 'write_prompt',
+          toolCallId: '1',
+          arguments: {},
+          status: 'done',
+          createdAt: DateTime.now());
+      final reply = await repo.saveAgentRunResult(
+          sessionId: session.id,
+          assistantText: '已识别',
+          toolCallsJson: AgentEvent.toJsonList([operation],
+              promptDraftChange: PromptDraftChange(
+                before: draft('原词'),
+                after: draft('新词'),
+              )));
+      final stored = (await repo.listMessages(session.id)).last;
+      expect(stored.promptDraftChange?.before.positive, '原词');
+      expect(stored.promptDraftChange?.after.positive, '新词');
+      expect(stored.agentTimeline?.single.toolName, 'write_prompt');
       final nextId =
           await repo.saveUserMessage(sessionId: session.id, userText: '修改构图');
-      final branch = await repo.forkSession(session.id, nextId);
+      final branch =
+          await repo.forkSession(session.id, reply.id!, includeMessage: true);
+      expect((await repo.listMessages(session.id)).last.id, nextId);
       expect(branch.parentSessionId, session.id);
       final branchMessages = await repo.listMessages(branch.id);
       expect(branchMessages, hasLength(2));
+      expect(branchMessages.last.content, '已识别');
+      expect(branchMessages.last.promptDraftChange, isNull);
+      expect(
+          branchMessages.last.agentTimeline?.single.toolName, 'write_prompt');
       expect(branchMessages.first.allImagePaths, isNot(reloaded.allImagePaths));
+      final retried = await repo.saveAgentRunResult(
+          sessionId: session.id,
+          assistantText: '重试后已识别',
+          replaceReplyId: reply.id);
+      expect(retried.id, reply.id);
+      expect(retried.createdAt, stored.createdAt);
+      expect(retried.promptDraftChange, isNull);
+      final updated = await repo.listMessages(session.id);
+      expect(updated.map((m) => m.id), [id, reply.id, nextId]);
+      expect(updated[1].content, '重试后已识别');
+      expect(updated.first.allImagePaths, reloaded.allImagePaths);
+      expect((await repo.listMessages(branch.id)).last.content, '已识别');
       await repo.deleteMessagesFrom(id, session.id);
       for (final path in branchMessages.first.allImagePaths) {
         expect(await File(path).exists(), isTrue);

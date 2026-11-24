@@ -1,20 +1,18 @@
 import 'package:nai_huishi/data/datasources/remote/model_capability_probe.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
+import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 
 /// A separate client prevents testing a draft from changing the active chat client.
 class ModelConnectionButton extends StatefulWidget {
-  final String apiKey;
-  final String baseUrl;
-  final String model;
+  final LlmRoleConfig config;
   final bool streaming;
   final void Function(int)? onContextWindow;
   const ModelConnectionButton(
       {super.key,
-      required this.apiKey,
-      required this.baseUrl,
-      required this.model,
+      required this.config,
       this.streaming = false,
       this.onContextWindow});
   @override
@@ -29,9 +27,15 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
   @override
   void didUpdateWidget(covariant ModelConnectionButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.apiKey != widget.apiKey ||
-        oldWidget.baseUrl != widget.baseUrl ||
-        oldWidget.model != widget.model ||
+    final old = oldWidget.config;
+    final current = widget.config;
+    if (old.apiKey != current.apiKey ||
+        old.baseUrl != current.baseUrl ||
+        old.model != current.model ||
+        old.protocol != current.protocol ||
+        old.thinkingLevel != current.thinkingLevel ||
+        old.geminiKeyIndex != current.geminiKeyIndex ||
+        !listEquals(old.backupApiKeys, current.backupApiKeys) ||
         oldWidget.streaming != widget.streaming) {
       _client?.close(force: true);
       _client = null;
@@ -48,6 +52,7 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
   }
 
   Future<void> _test([String kind = '连接']) async {
+    final config = widget.config;
     final client =
         Dio(BaseOptions(connectTimeout: const Duration(seconds: 15)));
     _client = client;
@@ -57,24 +62,25 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
     });
     final watch = Stopwatch()..start();
     try {
-      final api = LlmApiService(client);
+      final api = LlmApiService(client).forConnection(config);
       final probe = ModelCapabilityProbe(api);
       var passed = true;
       if (kind == '图片理解') {
         passed = await probe.image(
-            apiKey: widget.apiKey,
-            baseUrl: widget.baseUrl,
-            model: widget.model);
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model);
       } else if (kind == '工具调用') {
         passed = await probe.tools(
-            apiKey: widget.apiKey,
-            baseUrl: widget.baseUrl,
-            model: widget.model);
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model);
       } else if (kind == '容量') {
         final window = await ModelCapabilityProbe.contextWindow(client,
-            apiKey: widget.apiKey,
-            baseUrl: widget.baseUrl,
-            model: widget.model);
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model,
+            protocol: config.protocol);
         if (!mounted || _client != client) return;
         if (window != null) widget.onContextWindow?.call(window);
         setState(() {
@@ -85,9 +91,9 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
         return;
       } else if (widget.streaming) {
         await api.chatCompletionsStreamWithTools(
-          apiKey: widget.apiKey,
-          baseUrl: widget.baseUrl,
-          model: widget.model,
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
           messages: const [
             {'role': 'user', 'content': 'Reply only OK.'}
           ],
@@ -96,9 +102,9 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
         );
       } else {
         await api.chatCompletions(
-            apiKey: widget.apiKey,
-            baseUrl: widget.baseUrl,
-            model: widget.model,
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model,
             messages: [
               {'role': 'user', 'content': 'Reply only OK.'}
             ]);
@@ -112,9 +118,10 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
       });
     } catch (e) {
       if (!mounted || _client != client) return;
-      final error = e
-          .toString()
-          .replaceAll(widget.apiKey.isEmpty ? '\u0000' : widget.apiKey, '***');
+      var error = e.toString();
+      for (final key in [config.apiKey, ...config.backupApiKeys]) {
+        if (key.isNotEmpty) error = error.replaceAll(key, '***');
+      }
       setState(() {
         _success = false;
         _result = '$kind检测失败：$error';
@@ -129,7 +136,7 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         TextButton.icon(
-            onPressed: _running || widget.model.trim().isEmpty ? null : _test,
+            onPressed: _running || !widget.config.isConfigured ? null : _test,
             icon: _running
                 ? const SizedBox(
                     width: 14,
@@ -143,14 +150,20 @@ class _ModelConnectionButtonState extends State<ModelConnectionButton> {
             label: Text(_running ? '检测中…' : '检测连接')),
         Wrap(spacing: 4, children: [
           TextButton(
-              onPressed: _running ? null : () => _test('图片理解'),
+              onPressed: _running || !widget.config.isConfigured
+                  ? null
+                  : () => _test('图片理解'),
               child: const Text('检测图片理解')),
           TextButton(
-              onPressed: _running ? null : () => _test('工具调用'),
+              onPressed: _running || !widget.config.isConfigured
+                  ? null
+                  : () => _test('工具调用'),
               child: const Text('检测工具调用')),
           if (widget.onContextWindow != null)
             TextButton(
-                onPressed: _running ? null : () => _test('容量'),
+                onPressed: _running || !widget.config.isConfigured
+                    ? null
+                    : () => _test('容量'),
                 child: const Text('读取容量')),
         ]),
         if (_result != null)

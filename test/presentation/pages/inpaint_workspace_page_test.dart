@@ -22,6 +22,7 @@ import 'package:nai_huishi/presentation/pages/inpaint_workspace_page.dart';
 import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_canvas_painter.dart';
 import 'package:nai_huishi/presentation/widgets/inpaint_comparison.dart';
+import 'package:nai_huishi/presentation/widgets/inpaint_stream_preview.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 
 import '../../support/frontend_generation_fake.dart';
@@ -56,6 +57,56 @@ void main() {
     }
   });
 
+  testWidgets('streamed inpaint frame leaves the unmasked pixels visible',
+      (tester) async {
+    final mask = img.Image(width: 8, height: 4);
+    for (var y = 0; y < mask.height; y++) {
+      for (var x = 4; x < mask.width; x++) {
+        mask.setPixelRgb(x, y, 255, 255, 255);
+      }
+    }
+    final frame = img.Image(width: 8, height: 4);
+    img.fill(frame, color: img.ColorRgb8(255, 0, 0));
+    final maskBytes = img.encodePng(mask);
+    final frameBytes = img.encodePng(frame);
+    await tester.runAsync(() async {
+      for (final bytes in [maskBytes, frameBytes]) {
+        final stream = MemoryImage(bytes).resolve(ImageConfiguration.empty);
+        final decoded = Completer<ImageInfo>();
+        final listener =
+            ImageStreamListener((info, _) => decoded.complete(info));
+        stream.addListener(listener);
+        final info = await decoded.future;
+        stream.removeListener(listener);
+        info.dispose();
+      }
+    });
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(_host(Center(
+      child: RepaintBoundary(
+        key: boundaryKey,
+        child: SizedBox(
+          width: 8,
+          height: 4,
+          child: Stack(fit: StackFit.expand, children: [
+            const ColoredBox(color: Color(0xff00ff00)),
+            InpaintStreamPreview(bytes: frameBytes, maskBytes: maskBytes),
+          ]),
+        ),
+      ),
+    )));
+    final pixels = (await tester.runAsync(() async {
+      final boundary = boundaryKey.currentContext!.findRenderObject()!
+          as RenderRepaintBoundary;
+      final image = await boundary.toImage();
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      image.dispose();
+      return data!.buffer.asUint8List();
+    }))!;
+    expect(pixels.sublist(4, 8), [0, 255, 0, 255]);
+    expect(pixels.sublist(24, 28), [255, 0, 0, 255]);
+  });
+
   testWidgets('batch count syncs in both directions across generation modes',
       (tester) async {
     tester.view.devicePixelRatio = 1;
@@ -67,26 +118,47 @@ void main() {
     await tester.pumpAndSettle();
     final normalSlider = find.byKey(const ValueKey('workspace-batch-slider'));
     await tester.ensureVisible(normalSlider);
-    await tester.tapAt(tester.getRect(normalSlider).center);
+    final normalRect = tester.getRect(normalSlider);
+    await tester.dragFrom(normalRect.centerLeft + const Offset(15, 0),
+        Offset(normalRect.width / 2, 0));
     await tester.pumpAndSettle();
+    expect(vm.generationMode, GenerationMode.textToImage);
     final normalCount = vm.batchCount;
     expect(normalCount, greaterThan(1));
 
-    vm.setGenerationMode(GenerationMode.inpainting);
+    final empty = find.byKey(const ValueKey('result-workspace-empty'));
+    await tester.ensureVisible(empty);
     await tester.pumpAndSettle();
+    final start = tester.getCenter(empty) - const Offset(80, 0);
+    final swipe = await tester.startGesture(start);
+    await swipe.moveBy(const Offset(120, 0));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(vm.generationMode, GenerationMode.textToImage);
+    expect(tester.getCenter(empty), start + const Offset(80, 0));
+    await swipe.up();
+    await tester.pumpAndSettle();
+    expect(vm.generationMode, GenerationMode.inpainting);
     final retainedWorkspace = tester.state(find.byType(InpaintWorkspaceCard));
     final inpaintSlider = find.byKey(const ValueKey('inpaint-batch-slider'));
     await tester.ensureVisible(inpaintSlider);
     await tester.pumpAndSettle();
     expect(tester.widget<Slider>(inpaintSlider).value, normalCount.toDouble());
     final rect = tester.getRect(inpaintSlider);
+    await tester.dragFrom(rect.center, Offset(-rect.width / 2, 0));
+    await tester.pumpAndSettle();
+    expect(vm.generationMode, GenerationMode.inpainting);
+    expect(vm.batchCount, lessThan(normalCount));
     await tester.dragFrom(rect.center, Offset(rect.width, 0));
     await tester.pumpAndSettle();
     expect(vm.batchCount, 30);
+    expect(vm.generationMode, GenerationMode.inpainting);
     expect(tester.widget<Slider>(inpaintSlider).value, 30);
     expect(find.text('生成 30 张图片'), findsOneWidget);
 
-    vm.setGenerationMode(GenerationMode.textToImage);
+    final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
+    await tester.ensureVisible(stage);
+    await tester.pumpAndSettle();
+    await tester.drag(stage, const Offset(-100, 0));
     await tester.pumpAndSettle();
     await tester.ensureVisible(normalSlider);
     expect(tester.widget<Slider>(normalSlider).value, 30);
@@ -94,7 +166,13 @@ void main() {
         Offset(-tester.getSize(normalSlider).width, 0));
     await tester.pumpAndSettle();
     expect(vm.batchCount, 1);
-    vm.setGenerationMode(GenerationMode.inpainting);
+    vm.receive(frontendResult(id: 'swipe-image'));
+    await tester.pumpAndSettle();
+    final viewer = find.byKey(const ValueKey('result-image-viewer'));
+    await tester.ensureVisible(viewer);
+    await tester.pumpAndSettle();
+    await tester.timedDrag(
+        viewer, const Offset(130, 0), const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
     expect(tester.state(find.byType(InpaintWorkspaceCard)),
         same(retainedWorkspace));
@@ -104,6 +182,12 @@ void main() {
     vm.notifyListeners();
     await tester.pump();
     expect(tester.widget<Slider>(inpaintSlider).onChanged, isNull);
+    await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
+    await tester.drag(stage, const Offset(-100, 0));
+    await tester.pump();
+    expect(vm.generationMode, GenerationMode.inpainting);
     expect(tester.takeException(), isNull);
   });
 
@@ -263,6 +347,8 @@ void main() {
     await tester.pumpAndSettle();
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
     await tester.drag(stage, const Offset(20, 0));
     await tester.pumpAndSettle();
     final cache = (tester
@@ -285,6 +371,8 @@ void main() {
     await tester.tap(done);
     await tester.pumpAndSettle();
     await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
     await tester.drag(stage, const Offset(20, 0));
     await tester.pumpAndSettle();
     expect(cache.strokes.last.square, isFalse);
@@ -301,6 +389,8 @@ void main() {
     await tester.tap(done);
     await tester.pumpAndSettle();
     await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
     await tester.drag(stage, const Offset(20, 0));
     await tester.pumpAndSettle();
     expect(cache.strokes.last.mode, InpaintStrokeMode.erase);
@@ -363,6 +453,8 @@ void main() {
     await tester.pumpAndSettle();
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
     await tester.drag(stage, const Offset(20, 0));
     await tester.pumpAndSettle();
     expect(await _generateWhilePumping(tester, vm.inpaintWorkspaceHandler!),
@@ -719,6 +811,8 @@ void main() {
     await tester.pumpAndSettle();
     final stage = find.byKey(const ValueKey('inpaint-workspace-stage'));
     await tester.ensureVisible(stage);
+    await tester.pump();
+    expect(stage.hitTestable(), findsOneWidget);
     await tester.drag(stage, const Offset(20, 0));
     await tester.pump();
     final cache = (tester
@@ -835,8 +929,22 @@ void main() {
     await tester.pump();
     final generate = vm.inpaintWorkspaceHandler;
     expect(generate, isNotNull);
-    final firstHandled = await _generateWhilePumping(tester, generate!);
+    final previewGate = Completer<void>();
+    generationRepository.previewGate = previewGate;
+    final firstHandled =
+        await _generateWhilePumping(tester, generate!, afterPump: () {
+      if (previewGate.isCompleted ||
+          find.byType(InpaintStreamPreview).evaluate().isEmpty) {
+        return;
+      }
+      expect(find.text('生成中 0/3 · 第 4 步'), findsOneWidget);
+      expect(find.byType(InpaintComparison), findsNothing);
+      expect(vm.sessionResults, isEmpty);
+      previewGate.complete();
+    });
     await tester.pumpAndSettle();
+    expect(previewGate.isCompleted, isTrue);
+    expect(find.byType(InpaintStreamPreview), findsNothing);
     expect(firstHandled, isTrue);
     expect(find.text('结果图层 1'), findsNothing);
     expect(find.byType(InpaintComparison), findsOneWidget);
@@ -1059,8 +1167,9 @@ Future<void> _openWorkspaceMenu(WidgetTester tester) async {
 
 Future<bool?> _generateWhilePumping(
   WidgetTester tester,
-  Future<bool?> Function() generate,
-) async {
+  Future<bool?> Function() generate, {
+  VoidCallback? afterPump,
+}) async {
   bool? result;
   Object? error;
   var completed = false;
@@ -1080,6 +1189,7 @@ Future<bool?> _generateWhilePumping(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );
     await tester.pump(const Duration(milliseconds: 20));
+    afterPump?.call();
   }
   if (error != null) throw error!;
   expect(completed, isTrue, reason: 'Workspace generation did not finish');
@@ -1295,6 +1405,9 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
   final submittedTasks = <GenerationTask>[];
   final generatedPaths = <String>[];
   bool failNext = false;
+  Completer<void>? previewGate;
+  void Function(Uint8List, int?)? _onPreview;
+  void Function(Uint8List)? _onFinalImage;
 
   _SuccessfulGenerationRepository(this.outputDirectory);
 
@@ -1313,8 +1426,16 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
     img.fill(generated,
         color: img.ColorRgba8(
             247, 79 + (submittedTasks.length - 1) * 8, 126, 255));
+    final bytes = img.encodePng(generated);
+    final gate = previewGate;
+    if (gate != null) {
+      previewGate = null;
+      _onPreview?.call(bytes, 3);
+      await gate.future;
+      _onFinalImage?.call(bytes);
+    }
     final file = File('${outputDirectory.path}/generated_${task.taskId}.png');
-    await file.writeAsBytes(img.encodePng(generated), flush: true);
+    await file.writeAsBytes(bytes, flush: true);
     generatedPaths.add(file.path);
     return task.copyWith(
       status: 'success',
@@ -1325,7 +1446,11 @@ class _SuccessfulGenerationRepository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {
+    _onPreview = onFrame;
+    _onFinalImage = onFinalImage;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

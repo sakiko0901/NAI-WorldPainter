@@ -57,7 +57,8 @@ class _Repository implements GenerationRepository {
 
   @override
   void setStreamPreviewHandler(
-      String taskId, void Function(Uint8List bytes, int? step)? onFrame) {}
+      String taskId, void Function(Uint8List bytes, int? step)? onFrame,
+      {void Function(Uint8List bytes)? onFinalImage}) {}
 
   @override
   Future<List<NaiModel>> fetchModels() async => const [];

@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
+import 'chat_model_menu.dart';
 
 class ChatInputBar extends StatefulWidget {
   final bool isSending;
@@ -23,6 +24,8 @@ class ChatInputBar extends StatefulWidget {
   final double? maxHeight;
   final AppUpdateInstallGuard? updateGuard;
   final String modelName;
+  final String? thinkingLabel;
+  final ChatModelMenuAnchor? modelMenuAnchor;
   final Future<void> Function()? onSelectModel;
 
   const ChatInputBar({
@@ -36,6 +39,8 @@ class ChatInputBar extends StatefulWidget {
     this.maxHeight,
     this.updateGuard,
     this.modelName = '',
+    this.thinkingLabel,
+    this.modelMenuAnchor,
     this.onSelectModel,
   });
 
@@ -45,6 +50,10 @@ class ChatInputBar extends StatefulWidget {
 
 class _ChatInputBarState extends State<ChatInputBar>
     with SingleTickerProviderStateMixin {
+  static const _composerDuration = Duration(milliseconds: 240);
+  static const _inputStyle = TextStyle(fontSize: 14, height: 1.5);
+  static const _textPadding = EdgeInsets.symmetric(vertical: 13.5);
+
   late final TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
   late final AnimationController _attachmentAnimation;
@@ -217,7 +226,7 @@ class _ChatInputBarState extends State<ChatInputBar>
     final restoreFocus = _focusNode.hasFocus;
     _setAttachmentMenu(false);
     setState(() => _selectingModel = true);
-    _focusNode.unfocus();
+    if (widget.modelMenuAnchor == null) _focusNode.unfocus();
     try {
       await widget.onSelectModel!();
     } finally {
@@ -257,172 +266,174 @@ class _ChatInputBarState extends State<ChatInputBar>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final glass = FrostedTheme.of(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final expanded = _focusNode.hasFocus ||
         _hasText ||
         _selectingModel ||
         _pendingImages.isNotEmpty ||
         _pendingTextAttachment != null;
-    final horizontalInset = expanded ? 12.0 : 24.0;
-    final duration =
-        reduceMotion ? Duration.zero : const Duration(milliseconds: 240);
+    final keyboardInset = widget.includeKeyboardInset
+        ? MediaQuery.viewInsetsOf(context).bottom
+        : 0.0;
+    final lineHeight =
+        MediaQuery.textScalerOf(context).scale(_inputStyle.fontSize!) *
+            _inputStyle.height!;
+
+    final add = Positioned(left: 0, bottom: 0, child: _buildAddButton());
+    final send = Positioned(right: 0, bottom: 0, child: _buildSendButton());
+    final model = widget.onSelectModel == null
+        ? null
+        : _buildModelButton(expanded: expanded);
+    final input = _animateContentSize(_buildTextField(expanded: expanded));
+    final previews = _buildPendingPreviews();
     return ConstrainedBox(
       constraints:
           BoxConstraints(maxHeight: widget.maxHeight ?? double.infinity),
-      child: AnimatedPadding(
-        duration: duration,
-        curve: Curves.easeOutCubic,
-        padding: EdgeInsets.fromLTRB(
-            horizontalInset,
-            8,
-            horizontalInset,
-            12 +
-                (widget.includeKeyboardInset
-                    ? MediaQuery.viewInsetsOf(context).bottom
-                    : 0)),
+      child: Padding(
+        padding: EdgeInsets.only(top: 8, bottom: 12 + keyboardInset),
         child: TextFieldTapRegion(
           child: TapRegion(
             onTapOutside: (_) => _setAttachmentMenu(false),
-            child: LayoutBuilder(
-                builder: (context, available) =>
-                    Column(mainAxisSize: MainAxisSize.min, children: [
-                      ConstrainedBox(
+            child: LayoutBuilder(builder: (context, available) {
+              final menu = ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxHeight: (available.maxHeight - 116).clamp(0, 160)),
+                child: SingleChildScrollView(
+                    child: _buildAttachmentMenu(
+                        compact: available.maxHeight < 240)),
+              );
+              return TweenAnimationBuilder<double>(
+                tween: Tween(end: expanded ? 1.0 : 0.0),
+                duration: reduceMotion ? Duration.zero : _composerDuration,
+                curve: Curves.easeInOutCubic,
+                child: input,
+                builder: (context, progress, field) {
+                  final inset = 24 - 12 * progress;
+                  // Widen the text row once it has cleared the attachment and send icons.
+                  final textWidth =
+                      const Interval(.28, 1, curve: Curves.easeInOut)
+                          .transform(progress);
+                  final modelOpacity =
+                      const Interval(.45, 1).transform(progress);
+                  final editor = Stack(children: [
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(48 - 36 * textWidth,
+                          4 * progress, 52 - 40 * textWidth, 48 * progress),
+                      child: ConstrainedBox(
                         constraints: BoxConstraints(
-                            maxHeight:
-                                (available.maxHeight - 116).clamp(0, 160)),
-                        child: SingleChildScrollView(
-                            child: _buildAttachmentMenu(
-                                compact: available.maxHeight < 240)),
+                          minWidth: double.infinity,
+                          minHeight: _textPadding.vertical +
+                              lineHeight * (1 + progress),
+                        ),
+                        child: field,
                       ),
-                      Flexible(
-                        fit: FlexFit.loose,
-                        child: FrostedSurface(
-                          key: const ValueKey('chat-composer-surface'),
-                          radius: 28,
-                          blur: 16,
-                          color: glass.blurEnabled
-                              ? glass.surface
-                              : theme.colorScheme.surface,
-                          padding: const EdgeInsets.all(4),
-                          child: LayoutBuilder(
-                              builder: (context, composer) =>
-                                  _animateComposerSize(
-                                    child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          if (_pendingPaths.isNotEmpty ||
-                                              _pendingTextAttachment != null)
-                                            ConstrainedBox(
-                                              constraints: BoxConstraints(
-                                                  maxHeight:
-                                                      (composer.maxHeight - 100)
-                                                          .clamp(0, 160)),
-                                              child: SingleChildScrollView(
-                                                padding:
-                                                    const EdgeInsets.fromLTRB(
-                                                        8, 8, 8, 0),
-                                                child: Column(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      if (_pendingPaths
-                                                          .isNotEmpty)
-                                                        _buildImagePreview(),
-                                                      if (_pendingTextAttachment !=
-                                                          null)
-                                                        _buildTextFilePreview(),
-                                                    ]),
-                                              ),
-                                            ),
-                                          Flexible(
-                                            fit: FlexFit.loose,
-                                            child: Stack(children: [
-                                              Padding(
-                                                padding: EdgeInsets.fromLTRB(
-                                                    expanded ? 12 : 48,
-                                                    expanded ? 4 : 0,
-                                                    expanded ? 12 : 52,
-                                                    expanded ? 48 : 0),
-                                                child: TextField(
-                                                  key: const ValueKey(
-                                                      'chat-composer-input'),
-                                                  controller: _controller,
-                                                  focusNode: _focusNode,
-                                                  onTap: () =>
-                                                      _setAttachmentMenu(false),
-                                                  onTapOutside: (_) =>
-                                                      _focusNode.unfocus(),
-                                                  minLines: expanded ? 2 : 1,
-                                                  maxLines: expanded ? 5 : 1,
-                                                  textAlignVertical:
-                                                      TextAlignVertical.top,
-                                                  textInputAction:
-                                                      TextInputAction.newline,
-                                                  style: TextStyle(
-                                                      fontSize: 14,
-                                                      height: 1.5,
-                                                      color: theme.colorScheme
-                                                          .onSurface),
-                                                  decoration: InputDecoration(
-                                                    isDense: true,
-                                                    hintText: '描述你想画的画面...',
-                                                    hintStyle: TextStyle(
-                                                        color: theme.colorScheme
-                                                            .onSurfaceVariant
-                                                            .withValues(
-                                                                alpha: .5),
-                                                        fontSize: 14),
-                                                    border: InputBorder.none,
-                                                    enabledBorder:
-                                                        InputBorder.none,
-                                                    focusedBorder:
-                                                        InputBorder.none,
-                                                    filled: false,
-                                                    contentPadding:
-                                                        const EdgeInsets
-                                                            .symmetric(
-                                                            vertical: 13.5),
-                                                  ),
-                                                ),
-                                              ),
-                                              Positioned(
-                                                  left: 0,
-                                                  bottom: 0,
-                                                  child: _buildAddButton()),
-                                              if (expanded &&
-                                                  widget.onSelectModel != null)
-                                                Positioned(
-                                                  left: 52,
-                                                  right: 52,
-                                                  bottom: 0,
-                                                  child: Align(
-                                                      alignment:
-                                                          Alignment.centerRight,
-                                                      child:
-                                                          _buildModelButton()),
-                                                ),
-                                              Positioned(
-                                                  right: 0,
-                                                  bottom: 0,
-                                                  child: _buildSendButton()),
-                                            ]),
-                                          ),
-                                        ]),
-                                  )),
+                    ),
+                    add,
+                    if (model != null && modelOpacity > 0)
+                      Positioned(
+                        left: 52,
+                        right: 52,
+                        bottom: 0,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Opacity(opacity: modelOpacity, child: model),
                         ),
                       ),
-                    ])),
+                    send,
+                  ]);
+                  return Padding(
+                    padding: EdgeInsets.symmetric(horizontal: inset),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      menu,
+                      Flexible(
+                        child: _buildComposerSurface(
+                            previews: previews, editor: editor),
+                      ),
+                    ]),
+                  );
+                },
+              );
+            }),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildModelButton() {
+  Widget _buildTextField({required bool expanded}) {
+    final colors = Theme.of(context).colorScheme;
+    return TextField(
+      key: const ValueKey('chat-composer-input'),
+      controller: _controller,
+      focusNode: _focusNode,
+      onTap: () => _setAttachmentMenu(false),
+      onTapOutside: (_) => _focusNode.unfocus(),
+      minLines: 1,
+      maxLines: expanded ? 5 : 1,
+      textAlignVertical: TextAlignVertical.top,
+      textInputAction: TextInputAction.newline,
+      style: _inputStyle.copyWith(color: colors.onSurface),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: '描述你想画的画面...',
+        hintStyle: TextStyle(
+          color: colors.onSurfaceVariant.withValues(alpha: .5),
+          fontSize: _inputStyle.fontSize,
+        ),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        filled: false,
+        contentPadding: _textPadding,
+      ),
+    );
+  }
+
+  Widget _buildComposerSurface(
+      {required Widget previews, required Widget editor}) {
+    final theme = Theme.of(context);
+    final glass = FrostedTheme.of(context);
+    final surface = FrostedSurface(
+      key: const ValueKey('chat-composer-surface'),
+      radius: 28,
+      blur: 16,
+      color: glass.blurEnabled ? glass.surface : theme.colorScheme.surface,
+      padding: const EdgeInsets.all(4),
+      child: LayoutBuilder(builder: (context, composer) {
+        return Column(mainAxisSize: MainAxisSize.min, children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: (composer.maxHeight - 100).clamp(0, 160)),
+            child: previews,
+          ),
+          Flexible(child: editor),
+        ]);
+      }),
+    );
+    final anchor = widget.modelMenuAnchor;
+    return anchor == null
+        ? surface
+        : CompositedTransformTarget(
+            key: anchor.key, link: anchor.link, child: surface);
+  }
+
+  Widget _buildPendingPreviews() {
+    return _animateContentSize(
+      _pendingPaths.isEmpty && _pendingTextAttachment == null
+          ? const SizedBox.shrink()
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (_pendingPaths.isNotEmpty) _buildImagePreview(),
+                if (_pendingTextAttachment != null) _buildTextFilePreview(),
+              ]),
+            ),
+    );
+  }
+
+  Widget _buildModelButton({required bool expanded}) {
     final label = widget.modelName.isEmpty ? '选择模型' : widget.modelName;
-    return Tooltip(
+    final button = Tooltip(
       message: '主模型：$label',
       child: TextButton(
         key: const ValueKey('chat-composer-model'),
@@ -440,19 +451,34 @@ class _ChatInputBarState extends State<ChatInputBar>
                   style: const TextStyle(
                       fontSize: 12, fontWeight: FontWeight.w600))),
           const SizedBox(width: 4),
+          if (widget.thinkingLabel case final String level) ...[
+            Text(level,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.primary)),
+            const SizedBox(width: 4),
+          ],
           const Icon(CupertinoIcons.chevron_down, size: 12),
         ]),
       ),
     );
+    return IgnorePointer(
+      ignoring: !expanded,
+      child: ExcludeFocus(
+        excluding: !expanded,
+        child: ExcludeSemantics(excluding: !expanded, child: button),
+      ),
+    );
   }
 
-  Widget _animateComposerSize({required Widget child}) {
+  Widget _animateContentSize(Widget child) {
     // Zero-duration AnimatedSize can invalidate its own layout on a resize.
     if (MediaQuery.disableAnimationsOf(context)) return child;
     return AnimatedSize(
-      duration: const Duration(milliseconds: 240),
+      duration: _composerDuration,
       curve: Curves.easeOutCubic,
-      alignment: Alignment.bottomCenter,
+      alignment: Alignment.topLeft,
       child: child,
     );
   }
@@ -535,11 +561,14 @@ class _ChatInputBarState extends State<ChatInputBar>
                     : null,
             child: Center(
               child: widget.isSending
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
-                      child: Icon(Icons.stop_rounded,
-                          size: 20, color: Colors.white),
+                      child: Icon(
+                        Icons.stop_rounded,
+                        size: 20,
+                        color: theme.colorScheme.onSurface,
+                      ),
                     )
                   : Icon(
                       CupertinoIcons.arrow_up,

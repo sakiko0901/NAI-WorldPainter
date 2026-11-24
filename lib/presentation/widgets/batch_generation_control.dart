@@ -18,21 +18,11 @@ class BatchGenerationControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(children: [
-        Row(children: [
-          Text('批量生成',
-              style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant)),
-          const Spacer(),
-          Text('$value 张',
-              style: TextStyle(
-                  fontSize: 12,
-                  color: colors.primary,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-        ]),
-        SizedBox(
-          height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(children: [
+        Text('批量',
+            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant)),
+        Expanded(
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(
                 trackHeight: 4,
@@ -40,6 +30,7 @@ class BatchGenerationControl extends StatelessWidget {
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 16)),
             child: Slider(
               key: sliderKey,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               value: value
                   .toDouble()
                   .clamp(1, AppConstants.maxBatchCount.toDouble()),
@@ -53,6 +44,13 @@ class BatchGenerationControl extends StatelessWidget {
             ),
           ),
         ),
+        Text('$value 张',
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.primary,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            )),
       ]),
     );
   }

@@ -8,12 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/di/injection.dart';
-import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
+import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/domain/services/llm_thinking.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/style_preset_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_input_bar.dart';
-import 'package:nai_huishi/presentation/widgets/llm_chat/model_selection_sheet.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/chat_model_menu.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_scroll_surface.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_message_list.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/prompt_version_dialog.dart';
@@ -56,6 +57,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
   late final Future<bool> Function(AgentToolConfirmRequest request)
       _confirmationHandler = _showConfirmationDialog;
   final TextEditingController _inputController = TextEditingController();
+  final _modelMenuAnchor = ChatModelMenuAnchor();
   bool _ready = false;
   late Object _controlsState;
 
@@ -67,6 +69,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
         _vm.activeSession?.parentSessionId,
         _vm.runStage,
         _vm.mainBinding,
+        _vm.mainConfig.thinkingLevel,
       );
 
   @override
@@ -130,6 +133,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
         return AlertDialog(
           title: const Text('确认操作'),
           content: Column(
@@ -146,12 +150,12 @@ class _ChatDrawerState extends State<ChatDrawer> {
               const SizedBox(height: 8),
               Text(
                 '说明：${request.description}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
-              Text(
+              const Text(
                 '参数：',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -160,7 +164,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.05),
+                  color: colors.onSurface.withValues(alpha: 0.05),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 constraints: const BoxConstraints(maxHeight: 200),
@@ -232,14 +236,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
       await showChatSettingsSheet(context, _vm);
       return;
     }
-    final selected = await showModelSelectionSheet(
-      context,
-      providers: _vm.providers,
-      selected: _vm.mainBinding,
-      title: '选择主模型',
-    );
-    if (!mounted || selected == null || _vm.isSending) return;
-    await _vm.setRoleBinding(LlmProfileRole.main, selected);
+    await showChatModelMenu(context, vm: _vm, composer: _modelMenuAnchor);
   }
 
   Future<void> _createNewSession() async {
@@ -272,8 +269,9 @@ class _ChatDrawerState extends State<ChatDrawer> {
     if (widget.embedded) {
       final safeInsets = MediaQuery.paddingOf(context);
       return AnnotatedRegion<SystemUiOverlayStyle>(
-        value: (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
-            .copyWith(statusBarColor: Colors.transparent),
+        value: theme.appBarTheme.systemOverlayStyle ??
+            (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+                .copyWith(statusBarColor: Colors.transparent),
         child: ColoredBox(
           color: theme.scaffoldBackgroundColor,
           child: SafeArea(
@@ -297,7 +295,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
             behavior: HitTestBehavior.opaque,
             onTap: widget.onClose,
             child: Container(
-              color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.38),
+              color: theme.colorScheme.scrim
+                  .withValues(alpha: isDark ? 0.48 : 0.38),
             ),
           ),
         ),
@@ -342,6 +341,8 @@ class _ChatDrawerState extends State<ChatDrawer> {
   }
 
   Widget _buildChatColumn({EdgeInsets safeInsets = EdgeInsets.zero}) {
+    final colors = Theme.of(context).colorScheme;
+    final config = _vm.mainConfig;
     return LayoutBuilder(
       builder: (context, constraints) => ChatScrollSurface(
         background: widget.embedded ? const StudioBackground() : null,
@@ -370,17 +371,17 @@ class _ChatDrawerState extends State<ChatDrawer> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.12),
+                      color: colors.error.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
-                      border:
-                          Border.all(color: Colors.red.withValues(alpha: 0.24)),
+                      border: Border.all(
+                          color: colors.error.withValues(alpha: 0.24)),
                     ),
                     child: Row(
                       children: [
-                        const StudioAnimatedIcon(
+                        StudioAnimatedIcon(
                           CupertinoIcons.exclamationmark_triangle,
                           size: 16,
-                          color: Colors.redAccent,
+                          color: colors.error,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
@@ -390,7 +391,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurface,
+                              color: colors.onSurface,
                             ),
                           ),
                         ),
@@ -399,8 +400,7 @@ class _ChatDrawerState extends State<ChatDrawer> {
                           child: StudioAnimatedIcon(
                             CupertinoIcons.xmark,
                             size: 14,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: colors.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -422,6 +422,11 @@ class _ChatDrawerState extends State<ChatDrawer> {
                   role: StudioEntranceRole.content,
                   child: ChatInputBar(
                     modelName: _vm.mainBinding.model,
+                    thinkingLabel: config.thinkingLevel ==
+                            LlmThinkingLevel.automatic
+                        ? null
+                        : LlmThinking.label(config.model, config.thinkingLevel),
+                    modelMenuAnchor: _modelMenuAnchor,
                     onSelectModel: _selectMainModel,
                     updateGuard: sl.isRegistered<AppUpdateInstallGuard>()
                         ? sl<AppUpdateInstallGuard>()

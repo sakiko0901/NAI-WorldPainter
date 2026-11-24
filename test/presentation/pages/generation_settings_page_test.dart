@@ -200,7 +200,10 @@ void main() {
     slider.onChanged!(30);
     await tester.pump();
     expect(vm.batchCount, 30);
-    expect(find.text('30 张'), findsOneWidget);
+    final count = find.text('30 张');
+    expect(tester.getCenter(count).dy, closeTo(tester.getCenter(finder).dy, 1));
+    expect(tester.getTopLeft(count).dx,
+        greaterThanOrEqualTo(tester.getTopRight(finder).dx));
     expect(tester.takeException(), isNull);
   });
 

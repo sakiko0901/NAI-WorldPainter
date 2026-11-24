@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
+import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 import 'package:nai_huishi/domain/agents/agent_tool.dart';
 
 /// Agent 循环中的事件，用于 UI 时间线展示
@@ -85,16 +86,22 @@ class AgentEvent {
   static List<AgentEvent> fromJsonList(String? json) {
     if (json == null || json.trim().isEmpty) return const [];
     try {
-      final list = (jsonDecode(json) as List).cast<Map<String, dynamic>>();
+      final data = jsonDecode(json);
+      final list = ((data is Map ? data['events'] : data) as List)
+          .cast<Map<String, dynamic>>();
       return list.map(AgentEvent.fromJson).toList();
     } catch (_) {
       return const [];
     }
   }
 
-  static String toJsonList(List<AgentEvent> events) {
+  static String toJsonList(List<AgentEvent> events,
+      {PromptDraftChange? promptDraftChange}) {
     try {
-      return jsonEncode(events.map((e) => e.toJson()).toList());
+      final list = events.map((e) => e.toJson()).toList();
+      return jsonEncode(promptDraftChange == null
+          ? list
+          : {'events': list, 'promptDraftChange': promptDraftChange.toJson()});
     } catch (_) {
       return '[]';
     }

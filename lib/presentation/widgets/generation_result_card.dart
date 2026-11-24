@@ -16,6 +16,8 @@ enum _ResultMoreAction { inpaint, director, upscale, enhance }
 /// Shows the selected generation result and actions for that exact task.
 /// Draft parameters are never used as metadata for an existing image.
 class GenerationResultCard extends StatefulWidget {
+  static const horizontalInset = 6.0;
+
   final GenerationTask? task;
   final List<GenerationTask> results;
   final String? error;
@@ -29,6 +31,7 @@ class GenerationResultCard extends StatefulWidget {
   final VoidCallback? onImport;
   final VoidCallback? onSave;
   final Widget? batchControl;
+  final ValueChanged<Offset>? onImageSwipe;
   final GenerationResultAction? onInpaint;
   final GenerationResultAction? onUpscale;
   final GenerationResultAction? onEnhance;
@@ -45,9 +48,10 @@ class GenerationResultCard extends StatefulWidget {
   /// 删除当前工作区显示的图像（由页面给出确认弹窗）。
   final GenerationResultAction? onDelete;
 
-  /// 官方渠道流式预览帧（JPEG 字节），生成中实时刷新；为 null 显示占位。
+  /// 官方流式预览帧或未落盘的成品字节。
   final Uint8List? streamPreviewBytes;
   final int? streamPreviewStep;
+  final bool streamFinalImage;
 
   const GenerationResultCard({
     super.key,
@@ -64,6 +68,7 @@ class GenerationResultCard extends StatefulWidget {
     this.onImport,
     this.onSave,
     this.batchControl,
+    this.onImageSwipe,
     this.onInpaint,
     this.onUpscale,
     this.onEnhance,
@@ -74,6 +79,7 @@ class GenerationResultCard extends StatefulWidget {
     this.onEffortChanged,
     this.streamPreviewBytes,
     this.streamPreviewStep,
+    this.streamFinalImage = false,
   });
 
   @override
@@ -83,6 +89,8 @@ class GenerationResultCard extends StatefulWidget {
 class _GenerationResultCardState extends State<GenerationResultCard> {
   late final TransformationController _imageController;
   double _imageScale = 1;
+  Offset? _imageSwipeStart;
+  Offset _imageSwipeDelta = Offset.zero;
 
   @override
   void initState() {
@@ -111,6 +119,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
   }
 
   void _handleInteractionUpdate(ScaleUpdateDetails details) {
+    if (details.pointerCount != 1) _imageSwipeStart = null;
+    if (_imageSwipeStart case final start?) {
+      _imageSwipeDelta = details.focalPoint - start;
+    }
     final nextScale = _imageController.value.getMaxScaleOnAxis();
     if ((nextScale - _imageScale).abs() < 0.02) return;
     setState(() => _imageScale = nextScale);
@@ -143,7 +155,8 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     return FrostedSurface(
       radius: 16,
       blur: 18,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: const EdgeInsets.fromLTRB(GenerationResultCard.horizontalInset,
+          6, GenerationResultCard.horizontalInset, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -162,14 +175,17 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           ],
           const SizedBox(height: 8),
           if (current == null)
-            _buildEmptyState(context, theme, workspaceHeight)
+            _buildEmptyState(theme, workspaceHeight)
           else if (isPlaceholder && widget.generating) ...[
             // 选中项是生成中的占位卡：显示流式帧/转圈，
             // 缩略图条保留，用户可随时切回旧图。
-            widget.streamPreviewBytes != null
-                ? _buildStreamPreview(context, theme, workspaceHeight)
-                : _buildEmptyState(context, theme, workspaceHeight,
-                    generating: true),
+            if (widget.streamFinalImage)
+              _buildImageViewport(context, theme, current, workspaceHeight,
+                  isPlaceholder: true)
+            else if (widget.streamPreviewBytes != null)
+              _buildStreamPreview(context, theme, workspaceHeight)
+            else
+              _buildEmptyState(theme, workspaceHeight, generating: true),
             if (widget.results.length > 1) ...[
               const SizedBox(height: 6),
               _buildThumbnails(context, theme, current),
@@ -364,13 +380,22 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     );
   }
 
+  Widget _workspaceGrid({Widget? child}) {
+    final glass = FrostedTheme.of(context);
+    return CustomPaint(
+      painter: _WorkspaceGridPainter(
+        background: glass.stage,
+        line: glass.border.withValues(alpha: 0.04),
+      ),
+      child: child,
+    );
+  }
+
   Widget _buildEmptyState(
-    BuildContext context,
     ThemeData theme,
     double workspaceHeight, {
     bool generating = false,
   }) {
-    final glass = FrostedTheme.of(context);
     final showGenerating = generating || widget.generating;
     return ClipRRect(
       borderRadius: BorderRadius.circular(13),
@@ -378,11 +403,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
         key: const ValueKey('result-workspace-empty'),
         height: workspaceHeight,
         width: double.infinity,
-        child: CustomPaint(
-          painter: _WorkspaceGridPainter(
-            background: glass.stage,
-            line: glass.border.withValues(alpha: 0.04),
-          ),
+        child: _workspaceGrid(
           child: Center(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -435,7 +456,6 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     ThemeData theme,
     double workspaceHeight,
   ) {
-    final glass = FrostedTheme.of(context);
     final bytes = widget.streamPreviewBytes!;
     final step = widget.streamPreviewStep;
     return ClipRRect(
@@ -447,12 +467,7 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CustomPaint(
-              painter: _WorkspaceGridPainter(
-                background: glass.stage,
-                line: glass.border.withValues(alpha: 0.04),
-              ),
-            ),
+            _workspaceGrid(),
             Center(
               child: Image.memory(
                 bytes,
@@ -502,12 +517,12 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
     double workspaceHeight, {
     bool isPlaceholder = false,
   }) {
-    final glass = FrostedTheme.of(context);
-    final gridLine = glass.border.withValues(alpha: 0.04);
+    final saving = isPlaceholder && widget.streamFinalImage;
     return Semantics(
       container: true,
-      label:
-          '图像工作区，点按全屏查看，双指缩放，Seed ${current.seed ?? '无'}，${current.width} × ${current.height}',
+      label: saving
+          ? '生成图像，正在保存'
+          : '图像工作区，点按全屏查看，双指缩放，Seed ${current.seed ?? '无'}，${current.width} × ${current.height}',
       child: ClipRRect(
         borderRadius: BorderRadius.circular(13),
         child: SizedBox(
@@ -517,24 +532,38 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              CustomPaint(
-                painter: _WorkspaceGridPainter(
-                  background: glass.stage,
-                  line: gridLine,
-                ),
-              ),
+              _workspaceGrid(),
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: widget.onPreview,
+                onTap: saving ? null : widget.onPreview,
                 child: InteractiveViewer(
                   key: const ValueKey('result-image-viewer'),
                   transformationController: _imageController,
                   minScale: 1,
                   maxScale: 5,
                   boundaryMargin: EdgeInsets.zero,
+                  onInteractionStart: (details) {
+                    _imageSwipeStart =
+                        details.pointerCount == 1 && _imageScale == 1
+                            ? details.focalPoint
+                            : null;
+                    _imageSwipeDelta = Offset.zero;
+                  },
                   onInteractionUpdate: _handleInteractionUpdate,
+                  onInteractionEnd: (_) {
+                    if (_imageSwipeStart != null && _imageScale == 1) {
+                      widget.onImageSwipe?.call(_imageSwipeDelta);
+                    }
+                    _imageSwipeStart = null;
+                  },
                   child: SizedBox.expand(
-                    child: Center(child: _ResultImage(task: current)),
+                    child: Center(
+                      child: _ResultImage(
+                        key: ValueKey(current.taskId),
+                        task: current,
+                        bytes: saving ? widget.streamPreviewBytes : null,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -565,7 +594,8 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                           ),
                         ),
                         const SizedBox(width: 7),
-                        Text('正在生成', style: theme.textTheme.labelSmall),
+                        Text(saving ? '正在保存' : '正在生成',
+                            style: theme.textTheme.labelSmall),
                       ],
                     ),
                   ),
@@ -955,8 +985,10 @@ class _WorkspaceGridPainter extends CustomPainter {
 class _ResultImage extends StatelessWidget {
   final GenerationTask task;
   final bool thumbnail;
+  final Uint8List? bytes;
 
-  const _ResultImage({required this.task, this.thumbnail = false});
+  const _ResultImage(
+      {super.key, required this.task, this.thumbnail = false, this.bytes});
 
   @override
   Widget build(BuildContext context) {
@@ -983,10 +1015,20 @@ class _ResultImage extends StatelessWidget {
                   ),
           ),
         );
+    final pendingBytes = bytes;
+    if (pendingBytes != null) {
+      return Image.memory(
+        pendingBytes,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => unavailable(),
+      );
+    }
     if (task.imagePath != null && File(task.imagePath!).existsSync()) {
       return Image.file(
         File(task.imagePath!),
         fit: fit,
+        gaplessPlayback: !thumbnail,
         cacheWidth: thumbnail ? 192 : null,
         errorBuilder: (_, __, ___) => unavailable(),
       );
@@ -1015,6 +1057,12 @@ class _EffortToggle extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isHigh = effort == GenerationEffort.high;
+    final accent = switch ((effort, theme.brightness)) {
+      (GenerationEffort.high, Brightness.dark) => const Color(0xFFCDB88C),
+      (GenerationEffort.high, Brightness.light) => const Color(0xFF795F31),
+      (GenerationEffort.medium, Brightness.dark) => const Color(0xFF9ABA9F),
+      (GenerationEffort.medium, Brightness.light) => const Color(0xFF3C654B),
+    };
     return Tooltip(
       message: isHigh
           ? '思考等级：High（完整模型，点击切换 Medium 节约模式）'
@@ -1037,15 +1085,11 @@ class _EffortToggle extends StatelessWidget {
             height: 28,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: isHigh
-                  ? colors.primary.withValues(alpha: 0.14)
-                  : colors.tertiary.withValues(alpha: 0.14),
+              color: accent.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 width: 1,
-                color: isHigh
-                    ? colors.primary.withValues(alpha: 0.45)
-                    : colors.tertiary.withValues(alpha: 0.45),
+                color: accent.withValues(alpha: 0.32),
               ),
             ),
             child: Row(
@@ -1054,14 +1098,14 @@ class _EffortToggle extends StatelessWidget {
                 Icon(
                   isHigh ? Icons.psychology : Icons.bolt,
                   size: 14,
-                  color: isHigh ? colors.primary : colors.tertiary,
+                  color: accent,
                 ),
                 const SizedBox(width: 5),
                 Text(
                   isHigh ? 'High' : 'Medium',
                   style: theme.textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.w700,
-                    color: isHigh ? colors.primary : colors.tertiary,
+                    color: accent,
                   ),
                 ),
                 const SizedBox(width: 3),

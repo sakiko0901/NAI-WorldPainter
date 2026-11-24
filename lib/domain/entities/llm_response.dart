@@ -14,9 +14,16 @@ class LlmResponse {
   final int? promptTokens;
   final int? completionTokens;
 
+  final String? reasoningContent;
+
+  /// Original provider items needed when returning local tool results.
+  final List<Map<String, dynamic>>? providerItems;
+
   const LlmResponse({
     this.promptTokens,
     this.completionTokens,
+    this.reasoningContent,
+    this.providerItems,
     required this.content,
     required this.toolCalls,
     required this.finishReason,

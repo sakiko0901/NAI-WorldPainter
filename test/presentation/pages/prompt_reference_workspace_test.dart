@@ -17,6 +17,52 @@ class _ReferenceFake extends FrontendGenerationFake {
 }
 
 void main() {
+  testWidgets('coffee paper themes the Vibe replace-options sheet',
+      (tester) async {
+    const reference = CharacterReferenceImage(path: 'missing-vibe.png');
+    final vm = _ReferenceFake()..vibeReferences = [reference];
+    sl.registerSingleton<GenerationViewModel>(vm);
+    addTearDown(() async {
+      await sl.reset();
+      vm.dispose();
+    });
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final theme = buildNaiHuishiAppearanceTheme(AppearanceMode.coffeePaper);
+    await tester
+        .pumpWidget(MaterialApp(theme: theme, home: const GeneratePage()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('生成参数'));
+    await tester.pumpAndSettle();
+
+    final vibe = find.text('氛围转移 · 1/16');
+    await tester.ensureVisible(vibe);
+    await tester.tap(vibe);
+    await tester.pumpAndSettle();
+    final replace = find.text('替换');
+    await tester.ensureVisible(replace);
+    await tester.tap(replace);
+    await tester.pumpAndSettle();
+
+    final title = find.text('选择氛围来源');
+    expect(title, findsOneWidget);
+    expect(find.text('选择本地图片'), findsOneWidget);
+    expect(find.text('从 Vibe 编码库选择'), findsOneWidget);
+    final surface = find.ancestor(
+      of: title,
+      matching: find.byWidgetPredicate((widget) =>
+          widget is Material &&
+          widget.color == theme.bottomSheetTheme.modalBackgroundColor),
+    );
+    expect(surface, findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(title, findsNothing);
+    expect(vm.vibeReferences, [reference]);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'settings hosts the reference cards and preserves the prompt on return',
       (tester) async {

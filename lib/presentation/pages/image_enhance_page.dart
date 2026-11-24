@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/sr_model.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/super_resolution_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
@@ -96,7 +97,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
   }
 
   Widget _buildPreview(bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final cardColor = FrostedTheme.of(context).panel;
     final showOutput = _vm.status == SrStatus.success && _vm.outputPath != null;
     final inputPath = _vm.inputPath;
     final outputPath = _vm.outputPath;
@@ -153,7 +154,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
   }
 
   Widget _buildModelSelector(bool isDark) {
-    final cardColor = isDark ? const Color(0xFF1C1C21) : Colors.white;
+    final glass = FrostedTheme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -165,7 +166,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
         ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: Container(
-            color: cardColor,
+            color: glass.panel,
             child: Column(
               children: [
                 for (var i = 0; i < SrModel.presets.length; i++) ...[
@@ -175,9 +176,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
                         height: 1,
                         thickness: 0.6,
                         indent: 16,
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.07)
-                            : Colors.black.withValues(alpha: 0.07)),
+                        color: glass.border),
                 ],
               ],
             ),
@@ -237,7 +236,7 @@ class _ImageEnhancePageState extends State<ImageEnhancePage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+        color: FrostedTheme.of(context).panel,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(

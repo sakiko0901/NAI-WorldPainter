@@ -11,7 +11,7 @@ class WritePromptTool extends AgentTool {
   String get name => 'write_prompt';
 
   @override
-  String get description => '把生成的提示词写入指定的提示词框。target 取值：'
+  String get description => '把生成的提示词写入指定的提示词框；编排或修改完成后必须实际写入。target 取值：'
       'positive（正向主提示词）、negative（负向主提示词）、'
       'inpaint_positive（局部重绘正向）、inpaint_negative（局部重绘负向）、'
       'character_1 ~ character_6（多角色各自的 prompt 框）、'
@@ -19,11 +19,11 @@ class WritePromptTool extends AgentTool {
       'mode=append（默认）追加到现有内容末尾，mode=replace 覆盖现有内容。'
       '\n\n【重要】inpaint_positive 和 inpaint_negative 是"局部重绘"专用框，仅当用户明确要求修改局部/重绘/修图时才能写入。'
       '若当前不是局部重绘模式（即文生图模式），调写 inpaint 框会被拒绝。'
-      '常规生图请求只写 positive / negative。'
+      '文生图模式使用主框及相应的角色框。'
       '\n\n【多角色场景】当用户要求 2 人及以上生图时，每个角色的外貌、服装、动作应分别写入 character_1、character_2 等独立框，'
       '不要全部塞进 positive——避免多角色外貌混淆。多角色 prompt 不应再重复 positive 里的通用画质词。'
       '若 character_N 序号超出当前角色数，会自动补齐到对应数量。'
-      '\n多角色场景下 character_N 是首选 target，positive 只放通用画质词（masterpiece / best quality 等）与画风词；'
+      '\n多角色场景下 character_N 是首选 target，positive 写完整默认画师串、人数、环境、镜头和共享互动；'
       '角色名、发色、瞳色、服装、动作一律写入对应 character_N。'
       '\n【角色坐标】${AppConstants.assistantCharacterPositionPolicy}'
       'character_N 正向框支持可选 position:{x,y}，x/y 是 0..1 的归一化画布中心坐标（x 向右、y 向下）。'
@@ -47,7 +47,7 @@ class WritePromptTool extends AgentTool {
           },
           'content': {
             'type': 'string',
-            'description': '要写入的提示词内容（NovelAI 英文 tag）',
+            'description': '该框的提示词；删除最后一项时，显式用 replace 并传空字符串清空',
           },
           'mode': {
             'type': 'string',
@@ -81,8 +81,13 @@ class WritePromptTool extends AgentTool {
   @override
   Future<ToolResult> call(Map<String, dynamic> arguments) async {
     final target = (arguments['target'] as String?)?.trim() ?? '';
-    final content = (arguments['content'] as String?)?.trim() ?? '';
+    final rawContent = arguments['content'];
+    if (rawContent is! String) return ToolResult.failure('content 必须是字符串');
+    final content = rawContent.trim();
     final modeStr = (arguments['mode'] as String?)?.trim() ?? 'append';
+    if (modeStr != 'append' && modeStr != 'replace') {
+      return ToolResult.failure('mode 必须是 append 或 replace');
+    }
     final append = modeStr == 'append';
     if (target.isEmpty) {
       return ToolResult.failure('target 不能为空');
@@ -92,8 +97,15 @@ class WritePromptTool extends AgentTool {
           'target 非法：$target。合法取值：positive / negative / inpaint_positive / inpaint_negative / '
           'character_1..character_6 / character_1_uc..character_6_uc');
     }
-    if (content.isEmpty) {
-      return ToolResult.failure('content 不能为空');
+    if (append && content.isEmpty) {
+      return ToolResult.failure('追加内容不能为空');
+    }
+
+    if (content.isEmpty && target.startsWith('character_')) {
+      final index = int.parse(target.split('_')[1]);
+      if (index > _accessor.characters.length) {
+        return ToolResult.failure('无法清空尚未创建的角色框');
+      }
     }
 
     final hasPosition = arguments.containsKey('position');

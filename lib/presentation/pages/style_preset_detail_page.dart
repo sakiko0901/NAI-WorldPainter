@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:nai_huishi/domain/entities/style_preset.dart';
 import 'package:nai_huishi/presentation/viewmodels/style_preset_viewmodel.dart';
 
@@ -34,9 +35,9 @@ class _StylePresetDetailPageState extends State<StylePresetDetailPage> {
     final titleController = TextEditingController(text: _preset.title);
     final promptController = TextEditingController(text: _preset.prompt);
 
-    await showCupertinoDialog<void>(
+    await showStudioAlertDialog<void>(
       context: context,
-      builder: (ctx) => CupertinoAlertDialog(
+      builder: (ctx) => StudioAlertDialog(
         title: Text('编辑画风收藏'),
         content: Material(
           color: Colors.transparent,
@@ -87,9 +88,9 @@ class _StylePresetDetailPageState extends State<StylePresetDetailPage> {
   Future<void> _delete() async {
     final id = _preset.id;
     if (id == null) return;
-    final confirmed = await showCupertinoDialog<bool>(
+    final confirmed = await showStudioAlertDialog<bool>(
       context: context,
-      builder: (ctx) => CupertinoAlertDialog(
+      builder: (ctx) => StudioAlertDialog(
         title: Text('删除收藏'),
         content: Text('确定删除这个画风画师串收藏吗？'),
         actions: [
@@ -130,7 +131,9 @@ class _StylePresetDetailPageState extends State<StylePresetDetailPage> {
             borderRadius: BorderRadius.circular(18),
             child: Container(
               height: 360,
-              color: const Color(0xFF1C1C21),
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Theme.of(context).colorScheme.surfaceContainerLowest
+                  : const Color(0xFF1C1C21),
               child: exists
                   ? InteractiveViewer(
                       child: Image.file(file, fit: BoxFit.contain))

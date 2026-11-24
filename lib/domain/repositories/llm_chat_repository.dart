@@ -6,7 +6,8 @@ import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 
 abstract class LlmChatRepository {
-  Future<LlmSession> forkSession(String sessionId, int beforeMessageId);
+  Future<LlmSession> forkSession(String sessionId, int beforeMessageId,
+      {bool includeMessage = false});
   Future<List<LlmSession>> listSessions();
   Future<List<LlmSessionSearchResult>> searchSessions(String query);
   Future<void> setSessionPinned(String id, bool pinned);
@@ -41,6 +42,9 @@ abstract class LlmChatRepository {
     String? toolCallsJson,
     List<AgentEvent>? agentTimeline,
     LlmInteraction? interaction,
+    int? replaceReplyId,
+    DateTime? replyPosition,
+    bool keepReplyContent = false,
   });
 
   /// 仅落库用户消息 + assistant 消息（不调 LLM，用于无 tool 调用的单次回复场景）

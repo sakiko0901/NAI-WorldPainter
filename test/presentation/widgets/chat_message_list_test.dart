@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
+import 'package:nai_huishi/domain/entities/llm_role_config.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
@@ -16,6 +17,10 @@ class _ChatVm extends ChangeNotifier implements LlmChatViewModel {
   List<LlmMessage> items;
   int messageReads = 0;
   final retries = <(String?, int)>[];
+  final branches = <int>[];
+
+  @override
+  Future<void> branchFromReply(int index) async => branches.add(index);
   final edits = <(String?, int, String)>[];
   final answers = <LlmMessage>[];
   bool get hasUiListeners => hasListeners;
@@ -36,6 +41,8 @@ class _ChatVm extends ChangeNotifier implements LlmChatViewModel {
   bool canStop = false;
   @override
   LlmRoleBinding get mainBinding => const LlmRoleBinding();
+  @override
+  LlmRoleConfig get mainConfig => const LlmRoleConfig();
   @override
   bool canUndoPrompt = false;
   @override
@@ -145,8 +152,7 @@ void main() {
     await _settle(tester);
   }
 
-  testWidgets(
-      'assistant actions reveal on tap and refresh without new messages',
+  testWidgets('assistant actions are inline and refresh without new messages',
       (tester) async {
     final reply = _message(2, text: 'Agent reply');
     final vm = _ChatVm([_message(1, text: 'Earlier reply'), reply])
@@ -155,31 +161,27 @@ void main() {
       ..parentSessionId = 'parent';
     await pump(tester, vm);
     final bubble = _bubble(2);
-    final reveal = find.descendant(
-        of: bubble,
-        matching: find.byKey(const ValueKey('message-actions-reveal')));
-    final text =
+    Finder action(String label) => find
+        .descendant(of: bubble, matching: find.byTooltip(label))
+        .hitTestable();
+    final replyText =
         find.descendant(of: bubble, matching: find.byType(SelectableText));
-    expect(find.byTooltip('撤销写入').hitTestable(), findsNothing);
-    expect(find.byTooltip('返回原会话').hitTestable(), findsNothing);
-    final top = tester.getTopLeft(text).dy;
-    await tester.tap(text);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    final partial = tester.getSize(reveal).height;
-    expect(partial, greaterThan(0));
-    expect(tester.getTopLeft(text).dy, top);
-    await _settle(tester);
-    expect(tester.getSize(reveal).height, greaterThan(partial));
-    expect(find.byTooltip('撤销写入').hitTestable(), findsOneWidget);
-    await tester.tap(find.byTooltip('撤销写入').hitTestable());
+    expect(action('整段复制'), findsOneWidget);
+    expect(action('从这里创建分支'), findsOneWidget);
+    expect(action('重试'), findsOneWidget);
+    expect(action('恢复上一版提示词'), findsOneWidget);
+    expect(tester.getTopLeft(action('整段复制')).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(replyText).dy));
+    await tester.tap(action('从这里创建分支'));
+    expect(vm.branches, [1]);
+    await tester.tap(action('重试'));
+    expect(vm.retries, [('session', 1)]);
+    await tester.tap(action('恢复上一版提示词'));
     await _settle(tester);
     expect(vm.undoCalls, 1);
-    expect(tester.getSize(reveal).height, 0);
-    expect(find.byTooltip('撤销写入'), findsNothing);
+    expect(action('恢复上一版提示词'), findsNothing);
+    expect(action('返回原会话'), findsOneWidget);
 
-    await tester.tap(text);
-    await _settle(tester);
     vm.isSending = true;
     vm.notifyListeners();
     await _settle(tester);
@@ -187,7 +189,7 @@ void main() {
     vm.isSending = false;
     vm.notifyListeners();
     await _settle(tester);
-    await tester.tap(find.byTooltip('返回原会话').hitTestable());
+    await tester.tap(action('返回原会话'));
     await _settle(tester);
     expect(vm.selectedSessions, ['parent']);
   });
@@ -236,8 +238,10 @@ void main() {
     expect(_scroll(tester).position.extentAfter, greaterThan(0.5));
     expect(_scroll(tester).position.extentAfter, lessThan(80));
     final offset = _scroll(tester).offset;
-    vm.publish(
-        [...vm.items.take(19), vm.items.last.copyWith(content: 'new text')]);
+    vm.publish([
+      ...vm.items.take(19),
+      vm.items.last.copyWith(content: 'New text\nA second line\nA third line')
+    ]);
     await _settle(tester);
     expect(_scroll(tester).offset, offset);
     expect(_back, findsOneWidget);

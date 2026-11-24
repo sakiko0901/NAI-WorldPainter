@@ -8,9 +8,11 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/data/datasources/local/daily_stats_local_datasource.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/history_detail_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/history_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 
 class HistoryPage extends StatefulWidget {
   final ValueChanged<int>? onNavigate;
@@ -148,7 +150,7 @@ class _HistoryPageState extends State<HistoryPage> {
             color: Theme.of(ctx).colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08),
+              color: FrostedTheme.of(ctx).border,
               width: 0.5,
             ),
           ),
@@ -321,12 +323,13 @@ class _HistoryPageState extends State<HistoryPage> {
             onPressed: _vm.history.isEmpty
                 ? null
                 : () async {
-                    final confirmed = await showCupertinoDialog<bool>(
+                    final confirmed = await showStudioAlertDialog<bool>(
                       context: context,
-                      builder: (ctx) => CupertinoAlertDialog(
+                      builder: (ctx) => StudioAlertDialog(
                         title: const Text('清空历史记录'),
                         content: const Text(
-                          '只会清空历史列表，不会删除已保存到本地或系统相册的图片。是否继续？',
+                          '清空后，未被引用的应用内图片会在定期清理时移除。'
+                          '已导出或保存到系统相册的图片会保留。是否继续？',
                         ),
                         actions: [
                           CupertinoDialogAction(
@@ -619,7 +622,7 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
       isScrollControlled: true,
       enableDrag: true,
       backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.28),
+      barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.28),
       builder: (ctx) {
         final theme = Theme.of(ctx);
         final isDark = theme.brightness == Brightness.dark;
@@ -647,7 +650,7 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
                   margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+                    color: FrostedTheme.of(ctx).panel,
                     borderRadius: BorderRadius.circular(28),
                     border: Border.all(
                       color: theme.colorScheme.onSurface.withValues(
@@ -656,7 +659,7 @@ class _HistoryGridCardState extends State<_HistoryGridCard> {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(
+                        color: theme.colorScheme.shadow.withValues(
                           alpha: isDark ? 0.35 : 0.12,
                         ),
                         blurRadius: 28,

@@ -147,12 +147,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final statusBarInset = MediaQuery.paddingOf(context).top;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: StudioScrollSurface(
-        initialHeaderHeight: MediaQuery.paddingOf(context).top,
-        background: const StudioBackground(),
-        header: SizedBox(height: MediaQuery.paddingOf(context).top),
+        initialHeaderHeight: statusBarInset,
+        background: StudioBackground(
+          headerGridInset: statusBarInset + 8,
+          showHeaderArtwork: true,
+        ),
+        header: SizedBox(height: statusBarInset),
         bodyBuilder: (insets) => BackdropGroup(
             child: ListView(
           padding: EdgeInsets.fromLTRB(
@@ -295,7 +299,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 _SettingsTile(
                   icon: CupertinoIcons.paintbrush_fill,
                   title: '主题与外观',
-                  subtitle: '亮色、暗色与毛玻璃效果',
+                  subtitle: '亮色、暗色、咖啡纸与毛玻璃效果',
                   onTap: () => Navigator.of(context).push(
                     CupertinoPageRoute(
                       builder: (_) => ThemeAppearancePage(

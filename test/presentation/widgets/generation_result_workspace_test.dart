@@ -76,8 +76,7 @@ void main() {
 
         final initial = (await tester.runAsync(sample))!;
         expect(initial[3], 255,
-            reason:
-                'Painting a translucent grid must not erase its opaque backdrop');
+            reason: 'The workspace backdrop must remain opaque under the grid');
         await tester.pump(const Duration(seconds: 3));
         expect(await tester.runAsync(sample), initial);
         final boundary = captureKey.currentContext!.findRenderObject()!
@@ -146,7 +145,8 @@ void main() {
 
     expect(
         find.byKey(const ValueKey('result-workspace-empty')), findsOneWidget);
-    expect(find.byKey(const ValueKey('result-import-button')), findsOneWidget);
+    expect(find.text('图像工作区'), findsOneWidget);
+    expect(find.text('导入图片'), findsOneWidget);
     expect(
         tester
             .getSize(find.byKey(const ValueKey('result-workspace-empty')))
@@ -156,6 +156,8 @@ void main() {
         tester.getRect(find.byTooltip('导入新图片')).right, lessThanOrEqualTo(280));
     await tester.tap(find.byKey(const ValueKey('result-import-button')));
     expect(importCount, 1);
+    await tester.tap(find.byTooltip('导入新图片'));
+    expect(importCount, 2);
     expect(tester.takeException(), isNull);
   });
 

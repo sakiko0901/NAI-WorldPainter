@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 
 /// 屏幕中央悬浮 Toast，淡入淡出 + 自动消失。
 /// 使用 Overlay，不阻塞用户操作，不依赖 Scaffold。
@@ -11,20 +12,21 @@ void showFloatingToast(
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
 
-  final isDark = Theme.of(context).brightness == Brightness.dark;
-  final bgColor = isDark
-      ? Colors.black.withValues(alpha: 0.78)
-      : Colors.black.withValues(alpha: 0.72);
-  final borderColor = isDark
-      ? Colors.white.withValues(alpha: 0.08)
-      : Colors.white.withValues(alpha: 0.12);
-  final textColor = Colors.white;
-  final iconColor = Colors.white;
-
   late OverlayEntry entry;
   final notifier = ValueNotifier<double>(0);
-  entry = OverlayEntry(
-    builder: (_) => Center(
+  entry = OverlayEntry(builder: (overlayContext) {
+    final theme = Theme.of(overlayContext);
+    final glass = FrostedTheme.of(overlayContext);
+    final isDark = theme.brightness == Brightness.dark;
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final bgColor = isCoffeePaper
+        ? theme.colorScheme.inverseSurface
+        : Colors.black.withValues(alpha: isDark ? 0.78 : 0.72);
+    final textColor =
+        isCoffeePaper ? theme.colorScheme.onInverseSurface : Colors.white;
+    final borderColor = textColor.withValues(alpha: isDark ? 0.08 : 0.12);
+
+    return Center(
       child: IgnorePointer(
         child: ValueListenableBuilder<double>(
           valueListenable: notifier,
@@ -35,7 +37,7 @@ void showFloatingToast(
               color: Colors.transparent,
               child: Container(
                 constraints: BoxConstraints(
-                  maxWidth: MediaQuery.sizeOf(context).width - 32,
+                  maxWidth: MediaQuery.sizeOf(overlayContext).width - 32,
                 ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
@@ -50,8 +52,8 @@ void showFloatingToast(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (icon != null) ...[
-                      Icon(icon, size: 16, color: iconColor),
-                      SizedBox(width: 8),
+                      Icon(icon, size: 16, color: textColor),
+                      const SizedBox(width: 8),
                     ],
                     Flexible(
                       child: Text(
@@ -70,8 +72,8 @@ void showFloatingToast(
           ),
         ),
       ),
-    ),
-  );
+    );
+  });
 
   overlay.insert(entry);
   // 淡入

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -101,6 +102,77 @@ void main() {
   });
 
   tearDown(() => server.close(force: true));
+
+  test('official inpaint streams a fragmented final frame before closing',
+      () async {
+    final inputs = await Directory.systemTemp.createTemp('inpaint-stream-');
+    addTearDown(() => inputs.delete(recursive: true));
+    final png = img.encodePng(img.Image(width: 2, height: 2));
+    final source = await File('${inputs.path}/source.png').writeAsBytes(png);
+    final mask = await File('${inputs.path}/mask.png').writeAsBytes(png);
+    final chunks = StreamController<Uint8List>();
+    addTearDown(() async {
+      if (!chunks.isClosed) await chunks.close();
+    });
+    final dio = Dio(BaseOptions(baseUrl: baseUri.toString()));
+    late RequestOptions request;
+    dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+      request = options;
+      handler.resolve(Response(
+        requestOptions: options,
+        data: ResponseBody(chunks.stream, 200),
+      ));
+    }));
+    Uint8List frame(Map<String, dynamic> event) {
+      final payload = msgpack.serialize(event);
+      final bytes = Uint8List(4 + payload.length);
+      ByteData.sublistView(bytes).setUint32(0, payload.length);
+      bytes.setRange(4, bytes.length, payload);
+      return bytes;
+    }
+
+    final preview = frame({
+      'image': Uint8List.fromList([1, 2, 3]),
+      'step_ix': 3,
+    });
+    final finalFrame = frame({'event_type': 'final', 'image': png});
+    final finalReceived = Completer<Uint8List>();
+    final steps = <int?>[];
+    var saved = false;
+    final result = OfficialNovelAiApiService(dio)
+        .generateImageStream(
+      _task(
+        model: 'nai-diffusion-4-5-full',
+        sourceImagePath: source.path,
+        maskImagePath: mask.path,
+      ).copyWith(mode: GenerationMode.inpainting),
+      'key',
+      onFrame: (_, step) => steps.add(step),
+      onFinalImage: finalReceived.complete,
+    )
+        .then((task) {
+      saved = true;
+      return task;
+    });
+    chunks.add(Uint8List.sublistView(preview, 0, 2));
+    chunks.add(Uint8List.fromList([...preview.skip(2), ...finalFrame.take(7)]));
+    chunks.add(Uint8List.sublistView(finalFrame, 7));
+
+    expect(await finalReceived.future.timeout(const Duration(seconds: 5)), png);
+    expect(request.path, ApiConstants.officialGenerateImageStream);
+    final body = request.data as Map<String, dynamic>;
+    expect(body['action'], 'infill');
+    expect(body['model'], 'nai-diffusion-4-5-full-inpainting');
+    expect(body['parameters'], containsPair('stream', 'msgpack'));
+    expect(body['parameters'], containsPair('image', base64Encode(png)));
+    expect(body['parameters'], containsPair('mask', base64Encode(png)));
+    expect(steps, [3]);
+    expect(saved, isFalse);
+    await chunks.close();
+    final completed = await result;
+    addTearDown(() => _deleteIfPresent(completed.imagePath));
+    expect(await File(completed.imagePath!).readAsBytes(), png);
+  });
 
   test(
       'official precise reference sends padded PNGs in a synchronous JSON request',

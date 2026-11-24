@@ -204,13 +204,22 @@ void main() {
     await h.viewModel.sendUserMessage('请画两个人，一人在前景，一人在远处。');
     final system = h.api.mainCalls.single.firstSystemContent!;
     expect(system, contains(AppConstants.assistantCharacterPositionPolicy));
+    expect(system, contains('正向没有该元素'));
+    expect(system, isNot(contains('V5 插画构图与写法')));
     expect(system.indexOf(AppConstants.assistantCharacterPositionPolicy),
         greaterThan(system.indexOf('旧规则')));
     expect(AppConstants.defaultLlmSystemPrompt,
         contains(AppConstants.assistantCharacterPositionPolicy));
+    const style = 'best quality, 1.2::artist:example::, watercolor';
+    await h.viewModel.setDefaultStyleWordsV5(style);
     await h.viewModel.createNewSession();
     await h.viewModel.sendUserMessage('请画两个人，一人在前景，一人在远处。');
     final v5System = h.api.mainCalls.last.firstSystemContent!;
+    expect(v5System, contains(style));
+    expect(v5System, contains('V5 插画构图与写法'));
+    expect(v5System, contains('foot focus'));
+    expect(h.api.mainCalls.last.tools.toString(),
+        isNot(contains('read_prompting_reference')));
     expect(v5System, contains(AppConstants.assistantCharacterPositionPolicy));
     expect(v5System, contains('默认省略，由 V5 自动布局'));
   });

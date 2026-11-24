@@ -295,9 +295,12 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                 children: [
                   ModelConnectionButton(
                       streaming: vm.streamingFor(role),
-                      apiKey: selectedProvider!.apiKey,
-                      baseUrl: selectedProvider.baseUrl,
-                      model: binding.model)
+                      config: (role == LlmProfileRole.vision
+                              ? vm.visionConfig
+                              : vm.mainConfig)
+                          .copyWith(
+                              geminiKeyIndex:
+                                  vm.activeGeminiKeyIndex(selectedProvider!)))
                 ],
               )),
         ],

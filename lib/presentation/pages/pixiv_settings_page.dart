@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/presentation/viewmodels/pixiv_settings_viewmodel.dart';
@@ -322,7 +323,7 @@ class _Section extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+            color: FrostedTheme.of(context).panel,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: Theme.of(context)

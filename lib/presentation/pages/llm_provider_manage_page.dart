@@ -36,19 +36,8 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
         actions: [
           IconButton(
             icon: const Icon(CupertinoIcons.add_circled),
-            onPressed: () async {
-              final newProvider = LlmProvider.create(name: '新供应商');
-              await Navigator.push(
-                context,
-                CupertinoPageRoute(
-                  builder: (_) => LlmProviderEditPage(
-                    vm: vm,
-                    providerId: newProvider.id,
-                  ),
-                ),
-              );
-              if (mounted) setState(() {});
-            },
+            tooltip: '添加供应商',
+            onPressed: _addProvider,
           ),
         ],
       ),
@@ -106,7 +95,8 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
                       ),
                       title: Text(p.name.isEmpty ? '(未命名)' : p.name),
                       subtitle: Text(
-                        '${p.baseUrl.isEmpty ? "(未设置 base URL)" : p.baseUrl}\n模型 ${p.models.length} 个'
+                        '${p.baseUrl.isEmpty ? "(未设置 Base URL)" : p.baseUrl}\n'
+                        '${p.protocol.label} · 模型 ${p.models.length} 个'
                         '${isReferenced ? "  ·  被角色绑定引用" : ""}',
                         style: const TextStyle(fontSize: 11),
                       ),
@@ -131,6 +121,51 @@ class _LlmProviderManagePageState extends State<LlmProviderManagePage> {
               },
             ),
     );
+  }
+
+  Future<void> _addProvider() async {
+    final choice = await showModalBottomSheet<(LlmProviderPreset?,)>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final preset in LlmProviderPreset.values)
+                ListTile(
+                  title: Text(preset.label),
+                  subtitle: Text(preset.baseUrl),
+                  onTap: () => Navigator.pop(sheetContext, (preset,)),
+                ),
+              ListTile(
+                title: const Text('自定义供应商'),
+                onTap: () => Navigator.pop(sheetContext, (null,)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final preset = choice.$1;
+    final draft = LlmProvider.create(
+      name: preset?.label ?? '',
+      protocol: preset?.protocol ?? LlmApiProtocol.openAiCompatible,
+      baseUrl: preset?.baseUrl ?? '',
+      models: [if (preset != null) preset.model],
+    );
+    await Navigator.push<void>(
+      context,
+      CupertinoPageRoute(
+        builder: (_) => LlmProviderEditPage(
+          vm: widget.vm,
+          providerId: draft.id,
+          draft: draft,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   Future<void> _confirmDelete(LlmProvider provider, bool isReferenced) async {

@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
-import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
 class ThemeAppearancePage extends StatefulWidget {
   final AppearanceMode appearanceMode;
@@ -39,10 +38,7 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final dividerColor = isDark
-        ? Colors.white.withValues(alpha: 0.07)
-        : Colors.black.withValues(alpha: 0.08);
+    final glass = FrostedTheme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -58,8 +54,8 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: ColoredBox(
-              color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+            child: Material(
+              color: glass.panel,
               child: Column(
                 children: [
                   _AppearanceOption(
@@ -68,24 +64,19 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
                     selected: _selectedMode == AppearanceMode.light,
                     onTap: () => _select(AppearanceMode.light),
                   ),
-                  Divider(height: 1, indent: 58, color: dividerColor),
+                  const Divider(height: 1, indent: 58),
                   _AppearanceOption(
                     icon: CupertinoIcons.moon_stars_fill,
                     title: '暗色',
                     selected: _selectedMode == AppearanceMode.dark,
                     onTap: () => _select(AppearanceMode.dark),
                   ),
-                  Divider(height: 1, indent: 58, color: dividerColor),
+                  const Divider(height: 1, indent: 58),
                   _AppearanceOption(
                     icon: CupertinoIcons.doc_text_fill,
                     title: '咖啡纸',
-                    subtitle: '即将推出',
-                    selected: false,
-                    onTap: () => showFloatingToast(
-                      context,
-                      '咖啡纸主题暂不可用',
-                      icon: CupertinoIcons.info_circle_fill,
-                    ),
+                    selected: _selectedMode == AppearanceMode.coffeePaper,
+                    onTap: () => _select(AppearanceMode.coffeePaper),
                   ),
                 ],
               ),
@@ -95,7 +86,7 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
           ClipRRect(
             borderRadius: BorderRadius.circular(20),
             child: Material(
-              color: isDark ? const Color(0xFF1C1C21) : Colors.white,
+              color: glass.panel,
               child: SwitchListTile.adaptive(
                 key: const ValueKey('frosted-glass-switch'),
                 title: const Text('毛玻璃效果'),
@@ -119,14 +110,12 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
 class _AppearanceOption extends StatelessWidget {
   final IconData icon;
   final String title;
-  final String? subtitle;
   final bool selected;
   final VoidCallback onTap;
 
   const _AppearanceOption({
     required this.icon,
     required this.title,
-    this.subtitle,
     required this.selected,
     required this.onTap,
   });
@@ -134,19 +123,25 @@ class _AppearanceOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, size: 22, color: selected ? colors.primary : null),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+    final glass = FrostedTheme.of(context);
+    final highlight =
+        selected && glass.appearanceMode == AppearanceMode.coffeePaper;
+    return Semantics(
+      selected: selected,
+      child: Ink(
+        color: highlight ? glass.selection.withValues(alpha: 0.45) : null,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Icon(icon,
+                    size: 22,
+                    color: selected ? colors.primary : colors.onSurfaceVariant),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Text(
                     title,
                     style: TextStyle(
                       fontSize: 15,
@@ -154,27 +149,19 @@ class _AppearanceOption extends StatelessWidget {
                       color: selected ? colors.primary : colors.onSurface,
                     ),
                   ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle!,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                ],
-              ),
+                ),
+                Icon(
+                  selected
+                      ? CupertinoIcons.checkmark_circle_fill
+                      : CupertinoIcons.circle,
+                  size: 21,
+                  color: selected
+                      ? colors.primary
+                      : colors.onSurfaceVariant.withValues(alpha: 0.35),
+                ),
+              ],
             ),
-            Icon(
-              selected
-                  ? CupertinoIcons.checkmark_circle_fill
-                  : CupertinoIcons.circle,
-              size: 21,
-              color: selected
-                  ? colors.primary
-                  : colors.onSurfaceVariant.withValues(alpha: 0.35),
-            ),
-          ],
+          ),
         ),
       ),
     );

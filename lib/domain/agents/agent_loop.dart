@@ -111,6 +111,9 @@ class AgentLoop {
         // 把 assistant 消息（含可能的 tool_calls）落回 messages
         final assistantMsg = <String, dynamic>{
           'role': 'assistant',
+          if (resp.providerItems != null) 'provider_items': resp.providerItems,
+          if (resp.reasoningContent != null)
+            'reasoning_content': resp.reasoningContent,
         };
         if (resp.content.isNotEmpty) {
           assistantMsg['content'] = resp.content;

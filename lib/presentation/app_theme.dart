@@ -1,4 +1,6 @@
+import 'package:flutter/cupertino.dart' show NoDefaultCupertinoThemeData;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 enum AppearanceMode {
@@ -14,10 +16,93 @@ enum AppearanceMode {
   }
 
   Brightness get brightness => switch (this) {
-        AppearanceMode.light => Brightness.light,
-        AppearanceMode.dark || AppearanceMode.coffeePaper => Brightness.dark,
+        AppearanceMode.light || AppearanceMode.coffeePaper => Brightness.light,
+        AppearanceMode.dark => Brightness.dark,
       };
 }
+
+const _darkBackground = Color(0xFF1A1A1A);
+const _darkSurface = Color(0xFF242424);
+const _darkRaised = Color(0xFF303030);
+const _darkControl = Color(0xFF3B3B3B);
+const _darkInk = Color(0xFFF2F2F2);
+const _darkMuted = Color(0xFFB7B7B7);
+const _darkPrimary = Color(0xFFE3E3E3);
+
+final _darkColors = ColorScheme.fromSeed(
+  seedColor: _darkPrimary,
+  brightness: Brightness.dark,
+  dynamicSchemeVariant: DynamicSchemeVariant.monochrome,
+).copyWith(
+  primary: _darkPrimary,
+  onPrimary: _darkBackground,
+  primaryContainer: _darkControl,
+  onPrimaryContainer: _darkInk,
+  secondaryContainer: _darkControl,
+  onSecondaryContainer: _darkInk,
+  surface: _darkSurface,
+  surfaceDim: _darkBackground,
+  surfaceBright: _darkControl,
+  surfaceContainerLowest: _darkBackground,
+  surfaceContainerLow: _darkSurface,
+  surfaceContainer: const Color(0xFF292929),
+  surfaceContainerHigh: _darkRaised,
+  surfaceContainerHighest: _darkControl,
+  surfaceTint: Colors.transparent,
+  onSurface: _darkInk,
+  onSurfaceVariant: _darkMuted,
+  outline: const Color(0xFF8F8F8F),
+  outlineVariant: const Color(0xFF414141),
+);
+
+const _coffeePaperBackground = Color(0xFFF3EDE2);
+const _coffeePaperColors = ColorScheme(
+  brightness: Brightness.light,
+  primary: Color(0xFFA24E37),
+  onPrimary: Color(0xFFFFFBF5),
+  primaryContainer: Color(0xFFF2D7C9),
+  onPrimaryContainer: Color(0xFF622F21),
+  secondary: Color(0xFF755846),
+  onSecondary: Color(0xFFFFFBF5),
+  secondaryContainer: Color(0xFFEDE0D1),
+  onSecondaryContainer: Color(0xFF4E382B),
+  tertiary: Color(0xFF566448),
+  onTertiary: Color(0xFFFFFBF5),
+  tertiaryContainer: Color(0xFFE2E8D6),
+  onTertiaryContainer: Color(0xFF38452C),
+  error: Color(0xFFA3342A),
+  onError: Color(0xFFFFFBF5),
+  errorContainer: Color(0xFFF8DED7),
+  onErrorContainer: Color(0xFF702720),
+  surface: Color(0xFFFCF8F0),
+  onSurface: Color(0xFF362820),
+  onSurfaceVariant: Color(0xFF6D584A),
+  surfaceDim: Color(0xFFE8DACA),
+  surfaceBright: Color(0xFFFFFBF5),
+  surfaceContainerLowest: Color(0xFFFFFBF5),
+  surfaceContainerLow: Color(0xFFFAF4EA),
+  surfaceContainer: Color(0xFFF7EFE4),
+  surfaceContainerHigh: Color(0xFFF2E8DC),
+  surfaceContainerHighest: Color(0xFFEEE0D1),
+  outline: Color(0xFF87705D),
+  outlineVariant: Color(0xFFD9C8B6),
+  inverseSurface: Color(0xFF47352B),
+  onInverseSurface: Color(0xFFFFF6E9),
+  inversePrimary: Color(0xFFF3B89F),
+  shadow: Color(0xFF493326),
+  scrim: Color(0xFF362820),
+  surfaceTint: Colors.transparent,
+);
+
+const _coffeePaperOverlayStyle = SystemUiOverlayStyle(
+  statusBarColor: Colors.transparent,
+  statusBarIconBrightness: Brightness.dark,
+  statusBarBrightness: Brightness.light,
+  systemNavigationBarColor: Colors.transparent,
+  systemNavigationBarDividerColor: Colors.transparent,
+  systemNavigationBarIconBrightness: Brightness.dark,
+  systemNavigationBarContrastEnforced: false,
+);
 
 const zhFallback = <String>[
   'PingFang SC',
@@ -63,47 +148,75 @@ ThemeData buildNaiHuishiTheme(
   Brightness brightness, {
   bool useGoogleFonts = false,
   bool frostedGlassEnabled = true,
+}) =>
+    buildNaiHuishiAppearanceTheme(
+      brightness == Brightness.dark
+          ? AppearanceMode.dark
+          : AppearanceMode.light,
+      useGoogleFonts: useGoogleFonts,
+      frostedGlassEnabled: frostedGlassEnabled,
+    );
+
+ThemeData buildNaiHuishiAppearanceTheme(
+  AppearanceMode appearanceMode, {
+  bool useGoogleFonts = false,
+  bool frostedGlassEnabled = true,
 }) {
+  final brightness = appearanceMode.brightness;
   final isDark = brightness == Brightness.dark;
+  final isCoffeePaper = appearanceMode == AppearanceMode.coffeePaper;
   final baseTheme = ThemeData(brightness: brightness).textTheme;
   final interTheme =
       useGoogleFonts ? GoogleFonts.interTextTheme(baseTheme) : baseTheme;
-  final glass = FrostedTheme.forBrightness(brightness)
+  final glass = FrostedTheme.forAppearance(appearanceMode)
       .copyWith(blurEnabled: frostedGlassEnabled);
-  final textColor = isDark ? const Color(0xFFE7EBF0) : const Color(0xFF303944);
-  final surface = isDark ? const Color(0xFF23272D) : const Color(0xFFF9FBFF);
-  final primary = isDark ? const Color(0xFFB5C2D3) : const Color(0xFF7488A3);
+  final colors = switch (appearanceMode) {
+    AppearanceMode.dark => _darkColors,
+    AppearanceMode.light => _lightColors(),
+    AppearanceMode.coffeePaper => _coffeePaperColors,
+  };
+  final useThemedSurfaces = isDark || isCoffeePaper;
+  final textColor = colors.onSurface;
+  final textTheme = _appleishBold(interTheme, textColor);
+  final primary = colors.primary;
+  final popupSurface =
+      isDark ? colors.surfaceContainerHigh : colors.surfaceContainerLowest;
+  final modalBarrier =
+      isCoffeePaper ? colors.scrim.withValues(alpha: 0.42) : null;
+  final popupOutline =
+      isCoffeePaper ? BorderSide(color: glass.border) : BorderSide.none;
 
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
-    scaffoldBackgroundColor:
-        isDark ? const Color(0xFF15181C) : const Color(0xFFEDF0F4),
+    scaffoldBackgroundColor: switch (appearanceMode) {
+      AppearanceMode.light => const Color(0xFFEDF0F4),
+      AppearanceMode.dark => _darkBackground,
+      AppearanceMode.coffeePaper => _coffeePaperBackground,
+    },
+    canvasColor: useThemedSurfaces ? popupSurface : null,
+    cupertinoOverrideTheme: useThemedSurfaces
+        ? NoDefaultCupertinoThemeData(
+            primaryColor: primary,
+            primaryContrastingColor: colors.onPrimary,
+            scaffoldBackgroundColor:
+                isDark ? _darkBackground : _coffeePaperBackground,
+            barBackgroundColor: glass.rail,
+            applyThemeToAll: true,
+          )
+        : null,
     extensions: [glass],
     fontFamily: useGoogleFonts ? GoogleFonts.inter().fontFamily : null,
     fontFamilyFallback: zhFallback,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: primary,
-      brightness: brightness,
-    ).copyWith(
-      primary: primary,
-      onPrimary: isDark ? const Color(0xFF273240) : Colors.white,
-      secondary: isDark ? const Color(0xFFB0A1BC) : const Color(0xFF8F839A),
-      onSecondary: isDark ? const Color(0xFF273240) : Colors.white,
-      tertiary: isDark ? const Color(0xFFA3B7AD) : const Color(0xFF718F81),
-      onTertiary: Colors.white,
-      error: isDark ? Colors.redAccent : const Color(0xFFFF6B6B),
-      onError: Colors.white,
-      surface: surface,
-      onSurface: textColor,
-      surfaceContainerHighest:
-          isDark ? const Color(0xFF31363D) : const Color(0xFFE5EAF0),
-      outlineVariant:
-          isDark ? const Color(0xFF363D47) : const Color(0xFFD3DAE3),
-      onSurfaceVariant:
-          isDark ? const Color(0xFF939CA9) : const Color(0xFF727E8D),
-    ),
-    textTheme: _appleishBold(interTheme, textColor),
+    colorScheme: colors,
+    textTheme: textTheme,
+    textSelectionTheme: useThemedSurfaces
+        ? TextSelectionThemeData(
+            cursorColor: primary,
+            selectionColor: primary.withValues(alpha: 0.24),
+            selectionHandleColor: primary,
+          )
+        : null,
     cardTheme: CardThemeData(
       color: glass.surface,
       elevation: 0,
@@ -131,6 +244,7 @@ ThemeData buildNaiHuishiTheme(
       foregroundColor: textColor,
       elevation: 0,
       scrolledUnderElevation: 0,
+      systemOverlayStyle: isCoffeePaper ? _coffeePaperOverlayStyle : null,
       titleTextStyle: TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w600,
@@ -167,24 +281,56 @@ ThemeData buildNaiHuishiTheme(
           fontWeight: FontWeight.w500,
           fontFamilyFallback: zhFallback)),
     ),
+    dialogTheme: useThemedSurfaces
+        ? DialogThemeData(
+            backgroundColor: popupSurface,
+            barrierColor: modalBarrier,
+            surfaceTintColor: Colors.transparent,
+            shadowColor: colors.shadow.withValues(alpha: 0.24),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: popupOutline,
+            ),
+          )
+        : null,
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: glass.raised,
-      modalBackgroundColor: glass.raised,
+      backgroundColor: isCoffeePaper ? popupSurface : glass.raised,
+      modalBackgroundColor: isCoffeePaper ? popupSurface : glass.raised,
+      modalBarrierColor: modalBarrier,
+      surfaceTintColor: useThemedSurfaces ? Colors.transparent : null,
+      dragHandleColor: isCoffeePaper ? colors.outline : null,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
     ),
+    popupMenuTheme: useThemedSurfaces
+        ? PopupMenuThemeData(
+            color: popupSurface,
+            surfaceTintColor: Colors.transparent,
+            shadowColor: colors.shadow.withValues(alpha: 0.20),
+            elevation: 4,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: popupOutline,
+            ),
+          )
+        : null,
     chipTheme: ChipThemeData(
       backgroundColor: glass.field,
       selectedColor: glass.selection,
       secondarySelectedColor: glass.selection,
-      labelStyle: WidgetStateTextStyle.resolveWith((states) => TextStyle(
-            color: states.contains(WidgetState.selected)
-                ? glass.onSelection
-                : textColor,
-            fontSize: 12,
-          )),
+      labelStyle: textTheme.labelSmall?.copyWith(
+        fontSize: 12,
+        color: WidgetStateColor.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return textColor.withValues(alpha: 0.38);
+          }
+          return states.contains(WidgetState.selected)
+              ? glass.onSelection
+              : textColor;
+        }),
+      ),
       side: BorderSide(color: glass.border),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),
@@ -200,14 +346,36 @@ ThemeData buildNaiHuishiTheme(
                 : textColor),
       ),
     ),
+    dividerColor: useThemedSurfaces ? glass.border : null,
     dividerTheme: DividerThemeData(color: glass.border, thickness: 1),
+  );
+}
+
+ColorScheme _lightColors() {
+  const primary = Color(0xFF7488A3);
+  return ColorScheme.fromSeed(seedColor: primary).copyWith(
+    primary: primary,
+    onPrimary: Colors.white,
+    secondary: const Color(0xFF8F839A),
+    onSecondary: Colors.white,
+    tertiary: const Color(0xFF718F81),
+    onTertiary: Colors.white,
+    error: const Color(0xFFFF6B6B),
+    onError: Colors.white,
+    surface: const Color(0xFFF9FBFF),
+    onSurface: const Color(0xFF303944),
+    surfaceContainerHighest: const Color(0xFFE5EAF0),
+    outlineVariant: const Color(0xFFD3DAE3),
+    onSurfaceVariant: const Color(0xFF727E8D),
   );
 }
 
 @immutable
 class FrostedTheme extends ThemeExtension<FrostedTheme> {
+  final AppearanceMode appearanceMode;
   final bool blurEnabled;
   final Color surface,
+      panel,
       raised,
       border,
       selection,
@@ -217,8 +385,10 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
       stage;
 
   const FrostedTheme(
-      {this.blurEnabled = true,
+      {required this.appearanceMode,
+      this.blurEnabled = true,
       required this.surface,
+      required this.panel,
       required this.raised,
       required this.border,
       required this.selection,
@@ -232,30 +402,53 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
       forBrightness(Theme.of(context).brightness);
 
   static FrostedTheme forBrightness(Brightness brightness) =>
-      brightness == Brightness.dark
-          ? const FrostedTheme(
-              surface: Color(0xB323272D),
-              raised: Color(0xC031363D),
-              border: Color(0x19EBF0F7),
-              selection: Color(0xFFCFD5DD),
-              onSelection: Color(0xFF2B313A),
-              field: Color(0x75101216),
-              rail: Color(0xD0181C22),
-              stage: Color(0x8C0A0D11))
-          : const FrostedTheme(
-              surface: Color(0xB3FFFFFF),
-              raised: Color(0xC2F9FBFF),
-              border: Color(0x1F485770),
-              selection: Color(0xFFD2D8E1),
-              onSelection: Color(0xFF303845),
-              field: Color(0x99EFF2F7),
-              rail: Color(0xD0FAFCFF),
-              stage: Color(0x73CFD5DF));
+      forAppearance(brightness == Brightness.dark
+          ? AppearanceMode.dark
+          : AppearanceMode.light);
+
+  static FrostedTheme forAppearance(AppearanceMode appearanceMode) =>
+      switch (appearanceMode) {
+        AppearanceMode.dark => const FrostedTheme(
+            appearanceMode: AppearanceMode.dark,
+            surface: Color(0xD9242424),
+            panel: _darkSurface,
+            raised: Color(0xEB3B3B3B),
+            border: Color(0x24FFFFFF),
+            selection: _darkPrimary,
+            onSelection: _darkBackground,
+            field: Color(0xDB202020),
+            rail: Color(0xDB262626),
+            stage: Color(0xFF161616)),
+        AppearanceMode.light => const FrostedTheme(
+            appearanceMode: AppearanceMode.light,
+            surface: Color(0xB3FFFFFF),
+            panel: Colors.white,
+            raised: Color(0xC2F9FBFF),
+            border: Color(0x1F485770),
+            selection: Color(0xFFD2D8E1),
+            onSelection: Color(0xFF303845),
+            field: Color(0x99EFF2F7),
+            rail: Color(0xD0FAFCFF),
+            stage: Color(0x73CFD5DF)),
+        AppearanceMode.coffeePaper => FrostedTheme(
+            appearanceMode: appearanceMode,
+            surface: _coffeePaperColors.surface.withValues(alpha: 0.93),
+            panel: _coffeePaperColors.surface,
+            raised: _coffeePaperColors.surfaceContainerLowest
+                .withValues(alpha: 0.96),
+            border: _coffeePaperColors.outlineVariant,
+            selection: _coffeePaperColors.primaryContainer,
+            onSelection: _coffeePaperColors.onPrimaryContainer,
+            field: _coffeePaperColors.surfaceContainerHigh,
+            rail: _coffeePaperColors.surfaceContainer.withValues(alpha: 0.92),
+            stage: _coffeePaperColors.surfaceDim),
+      };
 
   @override
   FrostedTheme copyWith(
           {bool? blurEnabled,
           Color? surface,
+          Color? panel,
           Color? raised,
           Color? border,
           Color? selection,
@@ -264,8 +457,10 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
           Color? rail,
           Color? stage}) =>
       FrostedTheme(
+          appearanceMode: appearanceMode,
           blurEnabled: blurEnabled ?? this.blurEnabled,
           surface: surface ?? this.surface,
+          panel: panel ?? this.panel,
           raised: raised ?? this.raised,
           border: border ?? this.border,
           selection: selection ?? this.selection,
@@ -278,9 +473,11 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
   FrostedTheme lerp(covariant FrostedTheme? other, double t) {
     if (other == null) return this;
     return FrostedTheme(
+        appearanceMode: other.appearanceMode,
         // Apply the effect switch immediately, even during a theme transition.
         blurEnabled: other.blurEnabled,
         surface: Color.lerp(surface, other.surface, t)!,
+        panel: Color.lerp(panel, other.panel, t)!,
         raised: Color.lerp(raised, other.raised, t)!,
         border: Color.lerp(border, other.border, t)!,
         selection: Color.lerp(selection, other.selection, t)!,

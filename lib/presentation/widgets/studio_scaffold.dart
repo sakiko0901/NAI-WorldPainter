@@ -25,7 +25,7 @@ class StudioScaffold extends StatelessWidget {
         shadowColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        systemOverlayStyle:
+        systemOverlayStyle: theme.appBarTheme.systemOverlayStyle ??
             (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
                 .copyWith(statusBarColor: Colors.transparent),
       )),

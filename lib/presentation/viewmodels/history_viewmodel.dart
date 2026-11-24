@@ -94,7 +94,7 @@ class HistoryViewModel extends ChangeNotifier {
     }
   }
 
-  /// 清空历史记录（不删除图片文件）
+  /// 清空历史记录。
   Future<void> clearHistory() async {
     try {
       await _getHistory.clearHistory();

@@ -508,7 +508,8 @@ class _EncodingApi extends OfficialNovelAiApiService {
 
   @override
   Future<GenerationTask> generateImageStream(GenerationTask task, String token,
-          {void Function(Uint8List, int?)? onFrame}) async =>
+          {void Function(Uint8List, int?)? onFrame,
+          void Function(Uint8List)? onFinalImage}) async =>
       task;
 }
 

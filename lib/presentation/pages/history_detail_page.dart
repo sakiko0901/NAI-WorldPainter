@@ -200,7 +200,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
               height: height,
               width: double.infinity,
               color: theme.brightness == Brightness.dark
-                  ? const Color(0xFF0D0F13)
+                  ? theme.colorScheme.surfaceContainerLowest
                   : const Color(0xFF202328),
               alignment: Alignment.center,
               child: imageWidget,

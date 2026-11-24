@@ -1,7 +1,7 @@
-import 'package:nai_huishi/presentation/widgets/slow_selection_scroll.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 import 'package:nai_huishi/core/services/app_update_service.dart';
@@ -9,6 +9,7 @@ import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/navigation/app_update_navigation_observer.dart';
 import 'package:nai_huishi/presentation/pages/home_page.dart';
 import 'package:nai_huishi/presentation/widgets/app_update_prompt_host.dart';
+import 'package:nai_huishi/presentation/widgets/slow_selection_scroll.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NaiHuishiApp extends StatefulWidget {
@@ -29,7 +30,11 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
   @override
   void initState() {
     super.initState();
-    _loadAppearance();
+    if (sl.isRegistered<SharedPreferences>()) {
+      _readAppearance(sl<SharedPreferences>());
+    } else {
+      unawaited(_loadAppearance());
+    }
     if (sl.isRegistered<AppUpdateService>()) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(sl<AppUpdateService>().initialize());
@@ -39,17 +44,17 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
 
   Future<void> _loadAppearance() async {
     final prefs = await SharedPreferences.getInstance();
-    final mode = AppearanceMode.parse(prefs.getString(_appearanceKey));
     if (mounted) {
-      setState(() {
-        _appearanceMode = mode;
-        _frostedGlassEnabled = prefs.getBool(_frostedGlassKey) ?? true;
-      });
+      setState(() => _readAppearance(prefs));
     }
   }
 
+  void _readAppearance(SharedPreferences prefs) {
+    _appearanceMode = AppearanceMode.parse(prefs.getString(_appearanceKey));
+    _frostedGlassEnabled = prefs.getBool(_frostedGlassKey) ?? true;
+  }
+
   Future<void> _setAppearance(AppearanceMode mode) async {
-    if (mode == AppearanceMode.coffeePaper) return;
     setState(() => _appearanceMode = mode);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_appearanceKey, mode.name);
@@ -94,17 +99,22 @@ class _NaiHuishiAppState extends State<NaiHuishiApp> {
 
   @override
   Widget build(BuildContext context) {
-    final brightness = _appearanceMode.brightness;
     return MaterialApp(
       navigatorKey: _navigatorKey,
       navigatorObservers: [_updateNavigationObserver],
       debugShowCheckedModeBanner: false,
       title: 'nai 绘世',
-      theme: buildNaiHuishiTheme(
-        brightness,
+      theme: buildNaiHuishiAppearanceTheme(
+        _appearanceMode,
         frostedGlassEnabled: _frostedGlassEnabled,
       ),
-      builder: (context, child) => SlowSelectionScroll(child: _buildAppContent(child!)),
+      builder: (context, child) {
+        final overlayStyle = Theme.of(context).appBarTheme.systemOverlayStyle;
+        return AnnotatedRegion(
+          value: overlayStyle ?? const SystemUiOverlayStyle(),
+          child: SlowSelectionScroll(child: _buildAppContent(child!)),
+        );
+      },
       home: HomePage(
         appearanceMode: _appearanceMode,
         onAppearanceChanged: _setAppearance,

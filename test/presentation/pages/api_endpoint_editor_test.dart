@@ -35,7 +35,7 @@ void main() {
   Future<void> openEditor(
     WidgetTester tester, {
     ApiEndpoint? endpoint = _endpoint,
-    Brightness brightness = Brightness.dark,
+    AppearanceMode mode = AppearanceMode.dark,
     bool blur = true,
     double keyboardHeight = 0,
   }) async {
@@ -46,7 +46,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetViewInsets);
     await tester.pumpWidget(MaterialApp(
-      theme: buildNaiHuishiTheme(brightness, frostedGlassEnabled: blur),
+      theme: buildNaiHuishiAppearanceTheme(mode, frostedGlassEnabled: blur),
       home: Scaffold(
           body: Builder(
               builder: (context) => TextButton(
@@ -71,10 +71,10 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  for (final brightness in Brightness.values) {
-    testWidgets('edits, removes and adds model rows in $brightness',
+  for (final mode in AppearanceMode.values) {
+    testWidgets('edits, removes and adds model rows in ${mode.name}',
         (tester) async {
-      await openEditor(tester, brightness: brightness);
+      await openEditor(tester, mode: mode);
       expect(find.byType(FrostedSurface), findsOneWidget);
       await enterModel(
           tester, 0, '  renamed-model-with-a-long-provider-specific-name  ');
@@ -157,7 +157,12 @@ void main() {
 
   testWidgets('keyboard leaves save reachable with blur disabled',
       (tester) async {
-    await openEditor(tester, keyboardHeight: 280, blur: false);
+    await openEditor(
+      tester,
+      mode: AppearanceMode.coffeePaper,
+      keyboardHeight: 280,
+      blur: false,
+    );
     await enterModel(tester, 1, 'keyboard-model');
     expect(tester.widget<BackdropFilter>(find.byType(BackdropFilter)).enabled,
         isFalse);

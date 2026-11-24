@@ -62,6 +62,13 @@ void main() {
     expect(_glass(tester).blurEnabled, isFalse);
     expect(_activeFilters(), findsNothing);
 
+    await tester.tap(find.text('咖啡纸'));
+    await tester.pumpAndSettle();
+    expect(prefs.getString('appearance_mode'), 'coffeePaper');
+    expect(_glass(tester).appearanceMode, AppearanceMode.coffeePaper);
+    expect(_glass(tester).blurEnabled, isFalse);
+    expect(_activeFilters(), findsNothing);
+
     await tester.tap(find.byIcon(CupertinoIcons.chevron_left));
     await tester.pumpAndSettle();
     await tester.tap(find.text('创作').last);
@@ -73,9 +80,17 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpWidget(const NaiHuishiApp());
     await tester.pumpAndSettle();
+    expect(_glass(tester).appearanceMode, AppearanceMode.coffeePaper);
     expect(_glass(tester).blurEnabled, isFalse);
     expect(_activeFilters(), findsNothing);
     await _openAppearance(tester);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(InkWell, '咖啡纸'),
+        matching: find.byIcon(CupertinoIcons.checkmark_circle_fill),
+      ),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<SwitchListTile>(
@@ -89,17 +104,24 @@ void main() {
     expect(prefs.getBool('frosted_glass_enabled'), isTrue);
     expect(_glass(tester).blurEnabled, isTrue);
     expect(_activeFilters(), findsWidgets);
+    await tester.tap(find.text('暗色'));
+    await tester.pumpAndSettle();
+    expect(prefs.getString('appearance_mode'), 'dark');
+    expect(_glass(tester).appearanceMode, AppearanceMode.dark);
+    expect(_glass(tester).blurEnabled, isTrue);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('saved disabled setting is restored on the creation page',
+  testWidgets('saved coffee paper and disabled glass apply on the first frame',
       (tester) async {
     SharedPreferences.setMockInitialValues({
       'frosted_glass_enabled': false,
-      'appearance_mode': 'dark',
+      'appearance_mode': 'coffeePaper',
     });
+    sl.registerSingleton<SharedPreferences>(
+        await SharedPreferences.getInstance());
     await tester.pumpWidget(const NaiHuishiApp());
-    await tester.pumpAndSettle();
+    expect(_glass(tester).appearanceMode, AppearanceMode.coffeePaper);
     expect(_glass(tester).blurEnabled, isFalse);
     expect(_activeFilters(), findsNothing);
     expect(find.text('生成图片'), findsOneWidget);
@@ -118,7 +140,7 @@ Finder _activeFilters() => find.byWidgetPredicate(
 Future<void> _openAppearance(WidgetTester tester) async {
   await tester.tap(find.text('工具').last);
   await tester.pumpAndSettle();
-  final entry = find.text('亮色、暗色与毛玻璃效果');
+  final entry = find.text('亮色、暗色、咖啡纸与毛玻璃效果');
   await tester.scrollUntilVisible(
     entry,
     300,

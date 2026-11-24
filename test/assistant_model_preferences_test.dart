@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
+import 'package:nai_huishi/domain/agents/tools/ask_user_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/write_prompt_tool.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
@@ -147,9 +149,222 @@ void main() {
     expect(generation.prompt, 'original tags');
     expect(h.viewModel.undoPromptMessage, isNull);
   });
+  test('one reply restores both writes and retry reads the current draft',
+      () async {
+    final generation = _UndoGenerationFake()
+      ..prompt = 'original tags'
+      ..negativePrompt = 'old negatives';
+    final h =
+        createChatMemoryHarness(generation: generation, scriptedMainResponses: [
+      write,
+      const LlmResponse(
+          content: '',
+          toolCalls: [
+            ToolCall(id: 'negative', name: 'write_prompt', arguments: {
+              'target': 'negative',
+              'content': 'new negatives',
+              'mode': 'replace',
+            })
+          ],
+          finishReason: 'tool_calls'),
+    ]);
+    addTearDown(h.dispose);
+    LlmChatViewModel.toolRegistrySingleton = ToolRegistry()
+      ..register(WritePromptTool(generation));
+    await h.viewModel.ensureInitialized();
+    await h.viewModel.sendUserMessage('replace both');
+    final source = h.viewModel.activeSessionId;
+    final message = h.viewModel.messages.last;
+    expect(message.agentTimeline?.map((e) => e.toolName),
+        ['read_current_prompts', 'write_prompt', 'write_prompt']);
+    expect(generation.prompt, 'new tags');
+    expect(generation.negativePrompt, 'new negatives');
+    await h.viewModel.undoPromptChange();
+    expect(generation.prompt, 'original tags');
+    expect(generation.negativePrompt, 'old negatives');
+    final requestCount = h.api.mainCalls.length;
+    await h.viewModel.branchFromReply(h.viewModel.messages.length - 1);
+    expect(h.viewModel.activeSession?.parentSessionId, source);
+    expect(h.viewModel.messages.last.content, message.content);
+    expect(h.viewModel.messages.last.promptDraftChange, isNull);
+    expect(h.api.mainCalls, hasLength(requestCount));
+    await h.viewModel.selectSession(source!);
+    await h.viewModel.retryFromIndex(h.viewModel.messages.length - 1);
+    expect(h.viewModel.activeSessionId, source);
+    expect(h.viewModel.sessions, hasLength(2));
+    expect(h.viewModel.messages.last.id, message.id);
+    expect(
+        h.api.mainCalls.last.messages[1]['content'], contains('original tags'));
+  });
+
+  test('retries an older reply in its original slot and keeps later turns',
+      () async {
+    final h = createChatMemoryHarness(scriptedMainResponses: const [
+      LlmResponse(content: '重试的回复', toolCalls: [], finishReason: 'stop'),
+      LlmResponse(content: '第二次重试', toolCalls: [], finishReason: 'stop'),
+    ]);
+    addTearDown(h.dispose);
+    final repo = h.chatRepository;
+    final session = await repo.createSession();
+    await repo.saveUserMessage(sessionId: session.id, userText: '原始问题');
+    final original = await repo.saveAgentRunResult(
+        sessionId: session.id, assistantText: '原始回复');
+    await repo.saveUserMessage(sessionId: session.id, userText: '后续问题');
+    await repo.saveAgentRunResult(sessionId: session.id, assistantText: '后续回复');
+    await h.viewModel.ensureInitialized();
+    final before = h.viewModel.messages;
+
+    await h.viewModel.retryFromIndex(1);
+    expect(h.viewModel.activeSessionId, session.id);
+    expect(h.viewModel.sessions, hasLength(1));
+    expect(h.viewModel.messages[1].id, original.id);
+    expect(h.viewModel.messages[1].content, '重试的回复');
+    expect(h.viewModel.messages.skip(2), before.skip(2));
+    expect(
+      h.api.mainCalls.single.messages
+          .where((m) => m['role'] == 'user')
+          .map((m) => m['content']),
+      ['原始问题'],
+    );
+
+    await h.viewModel.retryFromIndex(0);
+    final saved = await repo.listMessages(session.id);
+    expect(saved.map((m) => m.id), before.map((m) => m.id));
+    expect(saved[1].content, '第二次重试');
+    expect(h.viewModel.sessions, hasLength(1));
+
+    h.api.onMainRequest = () => throw StateError('mock retry failure');
+    await h.viewModel.retryFromIndex(1);
+    expect(h.viewModel.messages, saved);
+    expect(await repo.listMessages(session.id), saved);
+    expect(h.viewModel.errorMessage, contains('mock retry failure'));
+  });
+
+  test('places an interrupted earlier turn reply before later messages',
+      () async {
+    final h = createChatMemoryHarness();
+    addTearDown(h.dispose);
+    final repo = h.chatRepository;
+    final session = await repo.createSession();
+    final first =
+        await repo.saveUserMessage(sessionId: session.id, userText: '中断的问题');
+    final second =
+        await repo.saveUserMessage(sessionId: session.id, userText: '后续问题');
+    await h.viewModel.ensureInitialized();
+
+    await h.viewModel.retryFromIndex(0);
+
+    expect(h.viewModel.sessions, hasLength(1));
+    final messages = await repo.listMessages(session.id);
+    expect(messages, hasLength(3));
+    expect(messages.first.id, first);
+    expect(messages[1].content, '固定测试回复');
+    expect(messages.last.id, second);
+  });
+
+  test('failed retry preserves the old reply and can undo its new draft edit',
+      () async {
+    final generation = _UndoGenerationFake()..prompt = 'original tags';
+    final h = createChatMemoryHarness(
+        generation: generation, scriptedMainResponses: [write]);
+    addTearDown(h.dispose);
+    LlmChatViewModel.toolRegistrySingleton = ToolRegistry()
+      ..register(WritePromptTool(generation));
+    final repo = h.chatRepository;
+    final session = await repo.createSession();
+    await repo.saveUserMessage(sessionId: session.id, userText: '修改提示词');
+    final original = await repo.saveAgentRunResult(
+      sessionId: session.id,
+      assistantText: '先前回复',
+      interaction: LlmInteraction(
+        id: 'original-question',
+        question: '请选择',
+        options: const [LlmInteractionOption(id: 'a', label: '选项一')],
+        createdAt: DateTime(2026),
+      ),
+    );
+    await h.viewModel.ensureInitialized();
+    h.api.onMainRequest = () {
+      if (h.api.mainCalls.isNotEmpty) {
+        throw StateError('retry failed after write');
+      }
+    };
+
+    await h.viewModel.retryFromIndex(1);
+
+    final saved = (await repo.listMessages(session.id)).last;
+    expect(saved.id, original.id);
+    expect(saved.content, original.content);
+    expect(saved.interaction, original.interaction);
+    expect(saved.promptDraftChange?.after.positive, 'new tags');
+    expect(generation.prompt, 'new tags');
+    expect(h.viewModel.undoPromptMessage?.id, original.id);
+    await h.viewModel.undoPromptChange();
+    expect(generation.prompt, 'original tags');
+  });
+
+  test('a question produced by retrying a historical reply stays in that turn',
+      () async {
+    final h = createChatMemoryHarness(scriptedMainResponses: const [
+      LlmResponse(
+        content: '',
+        toolCalls: [
+          ToolCall(id: 'q', name: 'ask_user', arguments: {
+            'question': '选择景别',
+            'options': [
+              {'id': 'wide', 'label': '全景'},
+              {'id': 'close', 'label': '近景'},
+            ],
+          }),
+        ],
+        finishReason: 'tool_calls',
+      ),
+    ]);
+    addTearDown(h.dispose);
+    LlmChatViewModel.toolRegistrySingleton = ToolRegistry()
+      ..register(AskUserTool());
+    final repo = h.chatRepository;
+    final session = await repo.createSession();
+    await repo.saveUserMessage(sessionId: session.id, userText: '旧问题');
+    final old = await repo.saveAgentRunResult(
+        sessionId: session.id, assistantText: '旧回复');
+    final next =
+        await repo.saveUserMessage(sessionId: session.id, userText: '新问题');
+    await h.viewModel.ensureInitialized();
+
+    await h.viewModel.retryFromIndex(1);
+
+    final messages = await repo.listMessages(session.id);
+    expect(messages.map((m) => m.id).skip(1), [old.id, next]);
+    expect(messages[1].content, allOf(contains('选择景别'), contains('全景')));
+    expect(messages[1].interaction, isNull);
+  });
 }
 
 class _UndoGenerationFake extends FrontendGenerationFake {
+  @override
+  Future<int> writePrompt({
+    required String target,
+    required String content,
+    required bool append,
+    double? centerX,
+    double? centerY,
+  }) async {
+    if (target != 'negative') {
+      return super.writePrompt(
+          target: target,
+          content: content,
+          append: append,
+          centerX: centerX,
+          centerY: centerY);
+    }
+    negativePrompt = append && negativePrompt.isNotEmpty
+        ? '$negativePrompt, $content'
+        : content;
+    version++;
+    return version;
+  }
+
   @override
   Future<bool> restorePromptDraft(
       PromptDraftSnapshot snapshot, int expectedVersion) async {

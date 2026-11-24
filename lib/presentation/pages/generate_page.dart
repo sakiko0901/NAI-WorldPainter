@@ -17,7 +17,9 @@ import 'package:nai_huishi/presentation/widgets/emphasis_controller.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
+import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
 import 'package:nai_huishi/presentation/widgets/studio_tab_view.dart';
 import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
 import 'package:flutter/rendering.dart';
@@ -58,6 +60,7 @@ class GeneratePage extends StatefulWidget {
 }
 
 class _GeneratePageState extends State<GeneratePage> {
+  static const _toolbarHeight = 48.0;
   late final GenerationViewModel _vm;
   late final ImagePicker _imagePicker;
   late final ScrollController _scrollController;
@@ -67,6 +70,7 @@ class _GeneratePageState extends State<GeneratePage> {
   bool _isImportingWorkspaceImage = false;
   bool _isGenerationSettingsOpen = false;
   bool _hasOpenedInpaint = false;
+  Offset _swipeStart = Offset.zero;
   String? _img2ImgOriginalPath;
 
   @override
@@ -232,6 +236,7 @@ class _GeneratePageState extends State<GeneratePage> {
       children: [
         Positioned.fill(
           child: StudioBackground(
+            headerGridInset: MediaQuery.paddingOf(context).top + 12,
             image: imagePath != null && File(imagePath).existsSync()
                 ? ResizeImage(FileImage(File(imagePath)), width: 600)
                 : null,
@@ -243,15 +248,16 @@ class _GeneratePageState extends State<GeneratePage> {
           bottomNavigationBar: _isChatDrawerOpen || keyboardOpen
               ? null
               : _buildFloatingBottomBar(),
-          body: StudioScrollSurface(
+          body: _withModeSwipe(StudioScrollSurface(
               initialHeaderHeight:
-                  MediaQuery.paddingOf(context).top + kToolbarHeight,
+                  MediaQuery.paddingOf(context).top + _toolbarHeight,
               header: Padding(
                   padding:
                       EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
                   child: SizedBox(
-                      height: kToolbarHeight,
+                      height: _toolbarHeight,
                       child: AppBar(
+                        toolbarHeight: _toolbarHeight,
                         primary: false,
                         backgroundColor: Colors.transparent,
                         surfaceTintColor: Colors.transparent,
@@ -284,24 +290,27 @@ class _GeneratePageState extends State<GeneratePage> {
                       ))),
               bodyBuilder: (insets) =>
                   LayoutBuilder(builder: (context, constraints) {
+                    final contentTop = insets.top - 6;
                     final textExtra =
                         ((MediaQuery.textScalerOf(context).scale(14) - 14) * 5)
                             .clamp(0.0, 72.0);
                     final thumbnails =
                         _vm.sessionResults.length > 1 ? 48.0 : 0.0;
                     final workspaceHeight = (constraints.maxHeight -
-                            insets.top -
-                            210 -
+                            contentTop -
+                            112 -
                             textExtra -
                             thumbnails)
-                        .clamp(220.0, 536.0)
+                        .clamp(220.0, 720.0)
                         .toDouble();
                     final displayedImage =
                         _vm.selectedResult ?? _vm.lastCompletedTask;
                     final imageHeight = displayedImage != null &&
                             displayedImage.width > 0 &&
                             displayedImage.height > 0
-                        ? ((constraints.maxWidth - 48) *
+                        ? ((constraints.maxWidth -
+                                    24 -
+                                    2 * GenerationResultCard.horizontalInset) *
                                 displayedImage.height /
                                 displayedImage.width)
                             .clamp(
@@ -335,10 +344,8 @@ class _GeneratePageState extends State<GeneratePage> {
                                 ? const NeverScrollableScrollPhysics()
                                 : null,
                             padding:
-                                EdgeInsets.fromLTRB(12, insets.top, 12, 10),
+                                EdgeInsets.fromLTRB(12, contentTop, 12, 10),
                             children: [
-                              _buildModeSection(),
-                              const SizedBox(height: 12),
                               StudioTabView(
                                 key: const ValueKey('creation-mode-transition'),
                                 index: _vm.generationMode ==
@@ -358,7 +365,7 @@ class _GeneratePageState extends State<GeneratePage> {
                                     ],
                                   ),
                                   _hasOpenedInpaint
-                                      ? _buildInpaintingSection()
+                                      ? _buildInpaintingSection(workspaceHeight)
                                       : const SizedBox.shrink(),
                                 ],
                               ),
@@ -372,7 +379,7 @@ class _GeneratePageState extends State<GeneratePage> {
                               parentResizesForKeyboard: true),
                       ],
                     );
-                  })),
+                  }))),
         ),
       ],
     );
@@ -396,83 +403,57 @@ class _GeneratePageState extends State<GeneratePage> {
         ],
       );
 
-  Widget _buildModeSection() {
-    // 统一重绘工作区目前只支持 NovelAI。
-    final allowInpainting = !_vm.isNonNovelAiProvider;
+  bool get _canSwitchMode =>
+      !_vm.isNonNovelAiProvider &&
+      !_isImageOperationBusy &&
+      !_isImportingWorkspaceImage &&
+      !_isChatDrawerOpen &&
+      !_characterPositionLocked &&
+      !InpaintWorkspaceCard.gestureActive.value;
 
-    final glass = FrostedTheme.of(context);
-    return FrostedSurface(
-      radius: 12,
-      padding: const EdgeInsets.all(4),
-      child: allowInpainting
-          ? CupertinoSlidingSegmentedControl<GenerationMode>(
-              groupValue: _vm.generationMode,
-              backgroundColor: Colors.transparent,
-              thumbColor: glass.selection,
-              children: {
-                GenerationMode.textToImage: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 5,
-                    horizontal: 12,
-                  ),
-                  child: Text(
-                    '文生图',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _vm.generationMode == GenerationMode.textToImage
-                          ? glass.onSelection
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                GenerationMode.inpainting: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 5,
-                    horizontal: 12,
-                  ),
-                  child: Text(
-                    '局部重绘',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: _vm.generationMode == GenerationMode.inpainting
-                          ? glass.onSelection
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              },
-              onValueChanged: (value) {
-                if (value != null && !_isImageOperationBusy) {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                  _characterPositionLocked = false;
-                  _vm.setGenerationMode(value);
-                }
-              },
-            )
-          : Container(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-              decoration: BoxDecoration(
-                color: glass.selection,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '文生图',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                  color: glass.onSelection,
-                ),
-              ),
-            ),
+  void _switchMode(GenerationMode target) {
+    if (!_canSwitchMode || _vm.generationMode == target) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    _vm.setGenerationMode(target);
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  void _finishModeSwipe(Offset delta) {
+    if (delta.dx.abs() < 48 || delta.dx.abs() < delta.dy.abs() * 1.4) return;
+    _switchMode(
+        delta.dx > 0 ? GenerationMode.inpainting : GenerationMode.textToImage);
+  }
+
+  Widget _withModeSwipe(Widget child) {
+    final enabled = _canSwitchMode;
+    final inpaint = _vm.generationMode == GenerationMode.inpainting;
+    return Semantics(
+      customSemanticsActions: enabled
+          ? {
+              CustomSemanticsAction(label: inpaint ? '返回生成页' : '进入局部重绘'): () =>
+                  _switchMode(inpaint
+                      ? GenerationMode.textToImage
+                      : GenerationMode.inpainting),
+            }
+          : null,
+      child: GestureDetector(
+        excludeFromSemantics: true,
+        dragStartBehavior: DragStartBehavior.down,
+        onHorizontalDragStart:
+            enabled ? (details) => _swipeStart = details.globalPosition : null,
+        onHorizontalDragEnd: enabled
+            ? (details) =>
+                _finishModeSwipe(details.globalPosition - _swipeStart)
+            : null,
+        child: child,
+      ),
     );
   }
 
-  Widget _buildInpaintingSection() {
+  Widget _buildInpaintingSection(double workspaceHeight) {
     return KeyedSubtree(
       key: _inpaintSectionKey,
-      child: const InpaintWorkspaceCard(),
+      child: InpaintWorkspaceCard(workspaceHeight: workspaceHeight),
     );
   }
 
@@ -484,7 +465,7 @@ class _GeneratePageState extends State<GeneratePage> {
         color: Theme.of(context).cardTheme.color,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.08),
+          color: FrostedTheme.of(context).border,
           width: 0.5,
         ),
       ),
@@ -1313,12 +1294,12 @@ class _GeneratePageState extends State<GeneratePage> {
                 bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
               ),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
+                color: Theme.of(ctx).colorScheme.surface,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(28),
                 ),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: FrostedTheme.of(ctx).border,
                   width: 0.5,
                 ),
               ),
@@ -1431,10 +1412,10 @@ class _GeneratePageState extends State<GeneratePage> {
             bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
           ),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
+            color: Theme.of(ctx).colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08),
+              color: FrostedTheme.of(ctx).border,
               width: 0.5,
             ),
           ),
@@ -1510,6 +1491,7 @@ class _GeneratePageState extends State<GeneratePage> {
       key: _resultSectionKey,
       workspaceHeight: workspaceHeight,
       batchControl: _buildBatchControl(),
+      onImageSwipe: _finishModeSwipe,
       task: task,
       results: _vm.sessionResults,
       generating: _vm.isGenerating,
@@ -1520,6 +1502,7 @@ class _GeneratePageState extends State<GeneratePage> {
       error: _vm.errorMessage,
       streamPreviewBytes: taskStreamBytes,
       streamPreviewStep: taskStreamStep,
+      streamFinalImage: task != null && _vm.hasFinalStreamImage(task.taskId),
       effort: _vm.supportsEffortToggle && !_isImageOperationBusy
           ? _vm.effort
           : null,
@@ -1720,7 +1703,7 @@ class _GeneratePageState extends State<GeneratePage> {
               StudioEntrance(
                   role: StudioEntranceRole.detail,
                   child: Text(
-                    '$model · ${_vm.selectedResolution} · ${_vm.batchCount} 张'
+                    '$model · ${_vm.selectedResolution}'
                     '${cost == null ? ' · 预计 —' : ' · 预计 ${cost * _vm.batchCount} Anlas'}',
                     key: const ValueKey('generation-summary'),
                     textAlign: TextAlign.center,
@@ -1793,15 +1776,20 @@ class _GenerationSettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final isCoffeePaper =
+        FrostedTheme.of(context).appearanceMode == AppearanceMode.coffeePaper;
     return Material(
       key: const ValueKey('generation-settings-page'),
       color: colors.surface,
-      elevation: 24,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.only(
+      elevation: isCoffeePaper ? 0 : 24,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(20),
           bottomLeft: Radius.circular(20),
         ),
+        side: isCoffeePaper
+            ? BorderSide(color: colors.outlineVariant)
+            : BorderSide.none,
       ),
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
@@ -1985,6 +1973,9 @@ class _PremiumSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isCoffeePaper =
+        FrostedTheme.of(context).appearanceMode == AppearanceMode.coffeePaper;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1994,7 +1985,7 @@ class _PremiumSlider extends StatelessWidget {
               label,
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                color: colors.onSurfaceVariant,
               ),
             ),
             const Spacer(),
@@ -2002,7 +1993,7 @@ class _PremiumSlider extends StatelessWidget {
               value.toStringAsFixed(2),
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.primary,
+                color: colors.primary,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -2012,11 +2003,12 @@ class _PremiumSlider extends StatelessWidget {
         SliderTheme(
           data: SliderTheme.of(context).copyWith(
             trackHeight: 6,
-            activeTrackColor: Theme.of(context).colorScheme.primary,
-            inactiveTrackColor: Colors.black.withValues(alpha: 0.3),
-            thumbColor: Colors.white,
-            overlayColor:
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+            activeTrackColor: colors.primary,
+            inactiveTrackColor: isCoffeePaper
+                ? colors.primaryContainer
+                : Colors.black.withValues(alpha: 0.3),
+            thumbColor: isCoffeePaper ? colors.primary : Colors.white,
+            overlayColor: colors.primary.withValues(alpha: 0.2),
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
             showValueIndicator: ShowValueIndicator.never, // 移除丑陋气泡
@@ -2185,9 +2177,9 @@ class _CharacterReferenceSection extends StatelessWidget {
       final targetLabel = target == ReferenceMode.vibe ? '氛围转移' : '精密参照图像';
       final currentLabel =
           vm.referenceMode == ReferenceMode.vibe ? '氛围参考图' : '精密参照图像';
-      final confirmed = await showCupertinoDialog<bool>(
+      final confirmed = await showStudioAlertDialog<bool>(
         context: context,
-        builder: (dialogContext) => CupertinoAlertDialog(
+        builder: (dialogContext) => StudioAlertDialog(
           title: Text('切换为$targetLabel？'),
           content: Text('切换后会清空当前的$currentLabel。'),
           actions: [
@@ -2213,26 +2205,60 @@ class _CharacterReferenceSection extends StatelessWidget {
     BuildContext context, {
     int? replaceIndex,
   }) async {
-    final source = await showCupertinoModalPopup<String>(
-      context: context,
-      builder: (context) => CupertinoActionSheet(
-        title: const Text('选择氛围来源'),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () => Navigator.pop(context, 'image'),
-            child: const Text('选择本地图片'),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () => Navigator.pop(context, 'library'),
-            child: const Text('从 Vibe 编码库选择'),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-      ),
-    );
+    const sources = {
+      'image': '选择本地图片',
+      'library': '从 Vibe 编码库选择',
+    };
+    const title = '选择氛围来源';
+    final isCoffeePaper =
+        FrostedTheme.of(context).appearanceMode == AppearanceMode.coffeePaper;
+    final source = isCoffeePaper
+        ? await showModalBottomSheet<String>(
+            context: context,
+            builder: (ctx) => SafeArea(
+              top: false,
+              child: ListView(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                children: [
+                  Center(
+                    child:
+                        Text(title, style: Theme.of(ctx).textTheme.titleMedium),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final entry in sources.entries)
+                    ListTile(
+                      title: Text(entry.value),
+                      onTap: () => Navigator.pop(ctx, entry.key),
+                    ),
+                  const Divider(height: 1),
+                  Center(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : await showCupertinoModalPopup<String>(
+            context: context,
+            builder: (ctx) => CupertinoActionSheet(
+              title: const Text(title),
+              actions: [
+                for (final entry in sources.entries)
+                  CupertinoActionSheetAction(
+                    onPressed: () => Navigator.pop(ctx, entry.key),
+                    child: Text(entry.value),
+                  ),
+              ],
+              cancelButton: CupertinoActionSheetAction(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+            ),
+          );
     if (!context.mounted) return;
     if (source == 'image') {
       await _pickVibes(context, replaceIndex: replaceIndex);
@@ -3145,7 +3171,7 @@ class _CharacterCardState extends State<_CharacterCard> {
             firstChild: SizedBox(width: double.infinity, height: 0),
             secondChild: Column(
               children: [
-                Divider(height: 1, color: Colors.white.withValues(alpha: 0.05)),
+                const Divider(height: 1),
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
@@ -3323,7 +3349,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                   ),
                 ),
                 Container(
-                  color: Colors.black.withValues(alpha: 0.1),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.07),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 8,
@@ -3341,9 +3367,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                       IconButton(
                         onPressed: widget.onMoveUp,
                         icon: Icon(CupertinoIcons.arrow_up, size: 16),
-                        color: widget.onMoveUp == null
-                            ? Colors.white12
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: theme.colorScheme.onSurfaceVariant,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                           minWidth: 32,
@@ -3353,9 +3377,7 @@ class _CharacterCardState extends State<_CharacterCard> {
                       IconButton(
                         onPressed: widget.onMoveDown,
                         icon: Icon(CupertinoIcons.arrow_down, size: 16),
-                        color: widget.onMoveDown == null
-                            ? Colors.white12
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: theme.colorScheme.onSurfaceVariant,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                           minWidth: 32,

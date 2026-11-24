@@ -6,6 +6,8 @@ import 'package:nai_huishi/domain/repositories/history_repository.dart';
 import 'package:nai_huishi/core/errors/exceptions.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
 
+typedef GenerationFrame = ({Uint8List bytes, int? step, bool isFinal});
+
 /// 生成任务队列
 /// NovelAI Gateway 同一时间只处理 1 个图像请求
 /// 此队列保证串行执行，并提供状态流
@@ -21,9 +23,9 @@ class GenerationQueue {
   final _queueController = StreamController<QueueState>.broadcast();
   final _taskController = StreamController<GenerationTask>.broadcast();
 
-  /// 流式预览帧：(taskId, 图像字节, 当前步数)
+  /// 流式图像帧：(taskId, 图像字节, 当前步数, 是否为成品)
   final _previewController =
-      StreamController<(String, Uint8List, int?)>.broadcast();
+      StreamController<(String, Uint8List, int?, bool)>.broadcast();
 
   GenerationQueue(this._generationRepo, this._historyRepo,
       {AppUpdateInstallGuard? updateGuard})
@@ -40,7 +42,7 @@ class GenerationQueue {
 
   Stream<QueueState> get queueStream => _queueController.stream;
   Stream<GenerationTask> get taskStream => _taskController.stream;
-  Stream<(String, Uint8List, int?)> get previewStream =>
+  Stream<(String, Uint8List, int?, bool)> get previewStream =>
       _previewController.stream;
   int get length => _queue.length;
   bool get isProcessing => _isProcessing;
@@ -63,13 +65,17 @@ class GenerationQueue {
   }
 
   /// 入队内部任务并等待终态，供漫画等项目级编排安全关联候选结果。
-  Future<GenerationTask> enqueueTransientAndWait(GenerationTask task) {
+  Future<GenerationTask> enqueueTransientAndWait(
+    GenerationTask task, {
+    void Function(GenerationFrame frame)? onFrame,
+  }) {
     _checkUpdateInstall();
     final completion = Completer<GenerationTask>();
     _queue.add(_QueuedTask(
       task,
       persistHistory: false,
       completion: completion,
+      onFrame: onFrame,
     ));
     _notifyState();
     _processNext();
@@ -127,11 +133,19 @@ class GenerationQueue {
         await _historyRepo.updateTask(generatingTask);
       }
       _taskController.add(generatingTask);
+      void publishFrame(Uint8List bytes, int? step, bool isFinal) {
+        final onFrame = queuedTask.onFrame;
+        if (onFrame != null) {
+          onFrame((bytes: bytes, step: step, isFinal: isFinal));
+        } else if (!generatingTask.isInternal) {
+          _previewController.add((generatingTask.taskId, bytes, step, isFinal));
+        }
+      }
+
       _generationRepo.setStreamPreviewHandler(
         generatingTask.taskId,
-        (bytes, step) => _previewController.add(
-          (generatingTask.taskId, bytes, step),
-        ),
+        (bytes, step) => publishFrame(bytes, step, false),
+        onFinalImage: (bytes) => publishFrame(bytes, null, true),
       );
 
       final completedTask =
@@ -200,11 +214,13 @@ class _QueuedTask {
   final GenerationTask task;
   final bool persistHistory;
   final Completer<GenerationTask>? completion;
+  final void Function(GenerationFrame frame)? onFrame;
 
   const _QueuedTask(
     this.task, {
     required this.persistHistory,
     this.completion,
+    this.onFrame,
   });
 }
 

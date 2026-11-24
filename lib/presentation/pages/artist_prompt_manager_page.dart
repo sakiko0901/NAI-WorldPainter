@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:nai_huishi/core/di/injection.dart';
 import 'package:nai_huishi/core/utils/image_utils.dart';
 import 'package:nai_huishi/domain/entities/artist_prompt.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/viewmodels/artist_prompt_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart';
 
@@ -291,9 +292,9 @@ class _ArtistPromptManagerPageState extends State<ArtistPromptManagerPage> {
                 ),
                 ListTile(
                   leading:
-                      const Icon(CupertinoIcons.trash, color: Colors.redAccent),
-                  title: const Text('删除',
-                      style: TextStyle(color: Colors.redAccent)),
+                      Icon(CupertinoIcons.trash, color: theme.colorScheme.error),
+                  title: Text('删除',
+                      style: TextStyle(color: theme.colorScheme.error)),
                   onTap: () async {
                     Navigator.pop(ctx);
                     if (artist.id == null) return;
@@ -658,15 +659,15 @@ class _SelectedFloatingBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
       decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF1C1C21).withValues(alpha: 0.94)
-            : Colors.white.withValues(alpha: 0.96),
+        color: FrostedTheme.of(context).panel
+            .withValues(alpha: isDark ? 0.94 : 0.96),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
             color: theme.colorScheme.primary.withValues(alpha: 0.28)),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
+              color: theme.colorScheme.shadow
+                  .withValues(alpha: isDark ? 0.35 : 0.12),
               blurRadius: 24,
               offset: const Offset(0, 10))
         ],

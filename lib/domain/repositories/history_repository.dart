@@ -19,7 +19,7 @@ abstract class HistoryRepository {
   /// 删除任务
   Future<void> deleteTask(String taskId);
 
-  /// 清空历史记录（不删除已保存图片文件）
+  /// 清空历史记录。应用内未引用的副本由定期清理回收。
   Future<void> clearHistory();
 
   /// 获取任务数量

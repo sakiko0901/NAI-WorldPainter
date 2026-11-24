@@ -108,6 +108,9 @@ class StudioNavigationBar extends StatefulWidget {
       required this.onSelected,
       this.backgroundColor});
 
+  static double contentHeightOf(BuildContext context) =>
+      56 + (MediaQuery.textScalerOf(context).scale(11) - 11).clamp(0.0, 32.0);
+
   @override
   State<StudioNavigationBar> createState() => _StudioNavigationBarState();
 }
@@ -146,8 +149,10 @@ class _StudioNavigationBarState extends State<StudioNavigationBar> {
     final selected = widget.selected;
     final theme = Theme.of(context);
     final glass = FrostedTheme.of(context);
-    final extraHeight =
-        (MediaQuery.textScalerOf(context).scale(11) - 11).clamp(0.0, 32.0);
+    final selectedForeground =
+        glass.appearanceMode == AppearanceMode.coffeePaper
+            ? theme.colorScheme.primary
+            : theme.colorScheme.onSurface;
     final highContrast = MediaQuery.highContrastOf(context);
     return StudioBottomSurface(
       navigation: true,
@@ -155,9 +160,9 @@ class _StudioNavigationBarState extends State<StudioNavigationBar> {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 64 + extraHeight,
+          height: StudioNavigationBar.contentHeightOf(context),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 5, 12, 7),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 3),
             child: Stack(
               children: [
                 Positioned.fill(
@@ -218,7 +223,7 @@ class _StudioNavigationBarState extends State<StudioNavigationBar> {
                                               ? (_showSelection
                                                   ? glass.onSelection
                                                   : theme.colorScheme.onSurface)
-                                              : theme.colorScheme.onSurface)
+                                              : selectedForeground)
                                           : theme.colorScheme.onSurfaceVariant;
                                       return Column(
                                         mainAxisAlignment:

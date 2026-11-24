@@ -3,38 +3,69 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/services/app_update_install_guard.dart';
+import 'package:nai_huishi/domain/agents/agent_event.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 
 import 'support/chat_memory_fake.dart';
 
-/// These gates sit at repository awaits which used to happen before send's
-/// update guard, including the destructive truncation of conversation history.
+/// Hold the repository writes while checking ownership of the update guard.
 class _GatedRepository extends FakeLlmChatRepository {
-  final deleteEntered = Completer<void>();
+  final forkEntered = Completer<void>();
+  final replaceEntered = Completer<void>();
   final answerEntered = Completer<void>();
-  Completer<void>? deleteGate;
+  Completer<void>? forkGate;
+  Completer<void>? replaceGate;
   Completer<void>? answerGate;
-  int deleteCalls = 0;
+  int forkCalls = 0;
+  int replaceCalls = 0;
   int answerCalls = 0;
-  bool failDelete = false;
-  final _deletedIds = <int>{};
+  bool failReplace = false;
   final _replacements = <int, LlmMessage>{};
 
   @override
   Future<List<LlmMessage>> listMessages(String sessionId) async =>
       (await super.listMessages(sessionId))
-          .where((message) => !_deletedIds.contains(message.id))
           .map((message) => _replacements[message.id] ?? message)
           .toList();
 
   @override
-  Future<LlmSession> forkSession(String sessionId, int messageId) async {
-    deleteCalls++;
-    if (!deleteEntered.isCompleted) deleteEntered.complete();
-    await deleteGate?.future;
-    if (failDelete) throw StateError('database deletion failed');
-    return super.forkSession(sessionId, messageId);
+  Future<LlmSession> forkSession(String sessionId, int messageId,
+      {bool includeMessage = false}) async {
+    forkCalls++;
+    if (!forkEntered.isCompleted) forkEntered.complete();
+    await forkGate?.future;
+    return super
+        .forkSession(sessionId, messageId, includeMessage: includeMessage);
+  }
+
+  @override
+  Future<LlmMessage> saveAgentRunResult({
+    required String sessionId,
+    required String assistantText,
+    String? toolCallsJson,
+    List<AgentEvent>? agentTimeline,
+    LlmInteraction? interaction,
+    int? replaceReplyId,
+    DateTime? replyPosition,
+    bool keepReplyContent = false,
+  }) async {
+    if (replaceReplyId != null) {
+      replaceCalls++;
+      if (!replaceEntered.isCompleted) replaceEntered.complete();
+      await replaceGate?.future;
+      if (failReplace) throw StateError('database replacement failed');
+    }
+    return super.saveAgentRunResult(
+      sessionId: sessionId,
+      assistantText: assistantText,
+      toolCallsJson: toolCallsJson,
+      agentTimeline: agentTimeline,
+      interaction: interaction,
+      replaceReplyId: replaceReplyId,
+      replyPosition: replyPosition,
+      keepReplyContent: keepReplyContent,
+    );
   }
 
   @override
@@ -107,24 +138,33 @@ void main() {
 
   for (final edit in [false, true]) {
     final action = edit ? 'editAndResend' : 'retryFromIndex';
-    test('$action blocks installation throughout the branch creation await',
-        () async {
+    final write = edit ? 'branch creation' : 'in-place reply replacement';
+    test('$action blocks installation during $write', () async {
       final h = await start();
       final vm = h.viewModel;
-      repository.deleteGate = Completer<void>();
+      final sessionId = vm.activeSessionId!;
+      final gate = Completer<void>();
+      if (edit) {
+        repository.forkGate = gate;
+      } else {
+        repository.replaceGate = gate;
+      }
       final pending =
           edit ? vm.editAndResend(0, '修改后的问题') : vm.retryFromIndex(0);
       expect(guard.tryBeginInstall(), isFalse,
           reason: 'Protection must be acquired before the first await');
-      await repository.deleteEntered.future;
-      expect(vm.isSending, isTrue,
-          reason: 'This is the old unprotected preparation window');
+      await (edit
+          ? repository.forkEntered.future
+          : repository.replaceEntered.future);
+      expect(vm.isSending, isTrue);
       expect(guard.tryBeginInstall(), isFalse);
       expect(await repository.listMessages(vm.activeSessionId!), hasLength(2));
-      repository.deleteGate!.complete();
+      gate.complete();
       await pending;
       final saved = await repository.listMessages(vm.activeSessionId!);
-      expect(repository.deleteCalls, 1);
+      expect(repository.forkCalls, edit ? 1 : 0);
+      expect(repository.replaceCalls, edit ? 0 : 1);
+      expect(vm.activeSessionId == sessionId, !edit);
       expect(h.api.mainCalls, hasLength(1));
       expect(
           saved
@@ -138,7 +178,7 @@ void main() {
     });
 
     test(
-        '$action refuses before creating a branch when installation already owns the lock',
+        '$action refuses before $write when installation already owns the lock',
         () async {
       final h = await start();
       final vm = h.viewModel;
@@ -149,7 +189,8 @@ void main() {
       } else {
         await vm.retryFromIndex(0);
       }
-      expect(repository.deleteCalls, 0);
+      expect(repository.forkCalls, 0);
+      expect(repository.replaceCalls, 0);
       expect(await repository.listMessages(vm.activeSessionId!), before);
       expect(h.api.mainCalls, isEmpty);
       expect(vm.errorMessage, contains('安装更新'));
@@ -200,23 +241,22 @@ void main() {
     expect(h.api.mainCalls, isEmpty);
   });
 
-  test(
-      'repository preparation failure releases the activity and preserves history',
+  test('reply replacement failure releases the activity and preserves history',
       () async {
     final h = await start();
     final vm = h.viewModel;
-    repository.deleteGate = Completer<void>();
-    repository.failDelete = true;
+    repository.replaceGate = Completer<void>();
+    repository.failReplace = true;
     final before = await repository.listMessages(vm.activeSessionId!);
     final pending = vm.retryFromIndex(0);
 
-    await repository.deleteEntered.future;
+    await repository.replaceEntered.future;
     expect(guard.tryBeginInstall(), isFalse);
-    repository.deleteGate!.complete();
+    repository.replaceGate!.complete();
     await pending;
-    expect(vm.errorMessage, contains('创建分支失败'));
+    expect(vm.errorMessage, contains('重试失败'));
     expect(await repository.listMessages(vm.activeSessionId!), before);
     expect(guard.tryBeginInstall(), isTrue);
-    expect(h.api.mainCalls, isEmpty);
+    expect(h.api.mainCalls, hasLength(1));
   });
 }
