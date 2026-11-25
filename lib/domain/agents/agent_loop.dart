@@ -64,6 +64,8 @@ class AgentLoop {
     final messages = List<Map<String, dynamic>>.from(initialMessages);
     final timeline = <AgentEvent>[];
     final failCounts = <String, int>{};
+    final reply = StringBuffer();
+    final publishText = onText;
 
     try {
       for (int iter = 0; iter < maxIterations; iter++) {
@@ -87,7 +89,8 @@ class AgentLoop {
           return AgentResult.failure(
               '本轮工具结果已达到模型上下文容量，请分步处理或使用更大容量模型。', timeline);
         }
-        final request = onText == null
+        final prefix = reply.isEmpty ? '' : '$reply\n\n';
+        final request = publishText == null
             ? _api.chatCompletionsWithTools(
                 apiKey: apiKey,
                 baseUrl: baseUrl,
@@ -101,12 +104,19 @@ class AgentLoop {
                 model: model,
                 messages: requestMessages,
                 tools: _registry.toOpenAiTools(),
-                onText: onText!,
+                onText: (text) {
+                  if (text.trim().isNotEmpty) publishText('$prefix$text');
+                },
                 cancelToken: control?.cancelToken);
         final resp =
             control == null ? await request : await control!.wait(request);
         control?.check();
         onUsage?.call(resp);
+        if (resp.content.trim().isNotEmpty) {
+          if (reply.isNotEmpty) reply.write('\n\n');
+          reply.write(resp.content);
+          publishText?.call(reply.toString());
+        }
 
         // 把 assistant 消息（含可能的 tool_calls）落回 messages
         final assistantMsg = <String, dynamic>{
@@ -135,10 +145,11 @@ class AgentLoop {
 
         if (!resp.hasToolCalls) {
           // LLM 给出最终回复，结束循环
-          return AgentResult.success(resp.content, timeline);
+          return AgentResult.success(reply.toString(), timeline);
         }
 
-        // 执行所有 tool_calls
+        // 先返回同批工具的全部结果，再附上图像，兼容各供应商的工具消息顺序。
+        final toolImages = <Map<String, dynamic>>[];
         for (final call in resp.toolCalls) {
           control?.check();
           final event = AgentEvent.fromToolCall(call);
@@ -214,13 +225,14 @@ class AgentLoop {
                     : result.success
                         ? 'done'
                         : 'error',
-                result: result);
+                result: result.forTimeline);
             _replaceLast(timeline, done);
             onEvent?.call(done);
             control?.check();
 
             if (result.interaction != null) {
-              return AgentResult.awaitingUser(result.interaction!, timeline);
+              return AgentResult.awaitingUser(
+                  result.interaction!, timeline, reply.toString());
             }
 
             if (!result.success) {
@@ -237,6 +249,16 @@ class AgentLoop {
             }
 
             messages.add(_toolMessage(call, result.text));
+            final image = result.imageDataUrl;
+            if (image != null) {
+              toolImages.addAll([
+                {'type': 'text', 'text': result.text},
+                {
+                  'type': 'image_url',
+                  'image_url': {'url': image}
+                },
+              ]);
+            }
           } catch (e) {
             control?.check();
             failCounts[call.name] = (failCounts[call.name] ?? 0) + 1;
@@ -248,6 +270,9 @@ class AgentLoop {
             onEvent?.call(errEvent);
             messages.add(_toolMessage(call, '失败：$e'));
           }
+        }
+        if (toolImages.isNotEmpty) {
+          messages.add({'role': 'user', 'content': toolImages});
         }
       }
 

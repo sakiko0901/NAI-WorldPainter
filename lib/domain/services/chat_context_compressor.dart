@@ -108,9 +108,8 @@ class ChatContextCompressor {
   }
 
   String _snapshot(LlmMessage message) =>
-      '${message.id}:${message.roleString}: ${message.content}'
-      '${message.allImagePaths.isNotEmpty || message.allImageBase64s.isNotEmpty ? " [附参考图，图片细节以对话中实际识别结果为准]" : ""}'
-      '${message.interaction == null ? "" : "\n${message.interaction!.toJsonString()}"}';
+      '${message.id}:${message.roleString}: ${message.modelContextContent}'
+      '${message.allImagePaths.isNotEmpty || message.allImageBase64s.isNotEmpty ? " [附参考图，图片细节以对话中实际识别结果为准]" : ""}';
 }
 
 class _SummaryCache {

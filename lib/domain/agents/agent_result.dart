@@ -59,9 +59,10 @@ class AgentResult {
   factory AgentResult.awaitingUser(
     LlmInteraction interaction,
     List<AgentEvent> timeline,
+    String content,
   ) {
     return AgentResult(
-      finalContent: interaction.question,
+      finalContent: interaction.appendQuestionTo(content),
       timeline: List.unmodifiable(timeline),
       pendingInteraction: interaction,
     );

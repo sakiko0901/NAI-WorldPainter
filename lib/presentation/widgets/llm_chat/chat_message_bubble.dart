@@ -520,7 +520,7 @@ class _InteractionOptionsState extends State<_InteractionOptions> {
     final theme = Theme.of(context);
     if (interaction.isAnswered) {
       return Text(
-        '已选择：${interaction.answerText ?? '已回答'}',
+        '已选择：${interaction.selectedOption?.label ?? interaction.answerText ?? '已回答'}',
         style: TextStyle(
           fontSize: 12,
           color: theme.colorScheme.onSurfaceVariant,

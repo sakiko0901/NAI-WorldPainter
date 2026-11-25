@@ -400,6 +400,8 @@ Future<void> configureDependencies() async {
       memories: sl<ManagePromptMemoriesUseCase>(),
       genVm: sl<GenerationViewModel>(),
       analyzeImageTags: sl<AnalyzeImageTagsUseCase>(),
+      getHistory: sl<GetHistoryUseCase>(),
+      saveImage: sl<SaveImageUseCase>(),
       updateGuard: sl<AppUpdateInstallGuard>(),
     );
   });

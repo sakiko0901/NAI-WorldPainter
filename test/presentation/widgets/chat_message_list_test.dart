@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
 import 'package:nai_huishi/domain/entities/llm_role_config.dart';
@@ -151,6 +152,37 @@ void main() {
     await tester.pumpWidget(_host(vm, child: child, onScroll: onScroll));
     await _settle(tester);
   }
+
+  testWidgets('question options and answered card preserve visible prose',
+      (tester) async {
+    const content = '保留风衣和街景。\n\n你喜欢哪种灯光？';
+    final interaction = LlmInteraction(
+      id: 'light',
+      question: '你喜欢哪种灯光？',
+      options: const [
+        LlmInteractionOption(id: 'day', label: '白昼'),
+        LlmInteractionOption(id: 'night', label: '夜景', value: '湿路反射'),
+      ],
+      allowCustom: false,
+      createdAt: DateTime(2026),
+    );
+    final message =
+        _message(1, text: content).copyWith(interaction: interaction);
+    final vm = _ChatVm([message]);
+    await pump(tester, vm);
+
+    expect(find.text('保留风衣和街景。'), findsOneWidget);
+    expect(find.text('你喜欢哪种灯光？'), findsOneWidget);
+    expect(find.text('白昼'), findsOneWidget);
+    await tester.tap(find.text('夜景'));
+    expect(vm.answers, [message]);
+    vm.publish(
+        [message.copyWith(interaction: interaction.answerOption('night'))]);
+    await _settle(tester);
+    expect(find.text('已选择：夜景'), findsOneWidget);
+    expect(find.text('保留风衣和街景。'), findsOneWidget);
+    expect(find.text('你喜欢哪种灯光？'), findsOneWidget);
+  });
 
   testWidgets('assistant actions are inline and refresh without new messages',
       (tester) async {

@@ -15,6 +15,8 @@ class LlmInteractionOption extends Equatable {
 
   String get answer => value?.trim().isNotEmpty == true ? value!.trim() : label;
 
+  String get description => answer == label ? label : '$label（$answer）';
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'label': label,
@@ -76,6 +78,20 @@ class LlmInteraction extends Equatable {
   String? get answerText {
     if (customAnswer?.trim().isNotEmpty == true) return customAnswer!.trim();
     return selectedOption?.answer;
+  }
+
+  String? get userReply {
+    final option = selectedOption;
+    if (option != null) return '针对“$question”，我选择：${option.description}。';
+    final answer = answerText;
+    return answer == null ? null : '针对“$question”，我的回答是：$answer';
+  }
+
+  String appendQuestionTo(String content) {
+    final body = content.trimRight();
+    if (body.isEmpty) return question;
+    if (body.endsWith(question)) return body;
+    return '$body\n\n$question';
   }
 
   LlmInteraction answerOption(String optionId) {

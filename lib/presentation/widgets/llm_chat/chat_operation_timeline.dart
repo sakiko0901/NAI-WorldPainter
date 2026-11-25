@@ -330,6 +330,8 @@ String _operationTitle(String name) => switch (name) {
       'get_memories' => '读取记忆',
       'save_memory' => '保存记忆',
       'ask_user' => '询问用户',
+      'list_generation_images' => '查找生成图',
+      'view_generation_image' => '查看生成图',
       '' => '工具操作',
       _ => name,
     };

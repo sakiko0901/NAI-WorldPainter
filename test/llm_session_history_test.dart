@@ -1,18 +1,35 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/data/datasources/local/database_helper.dart';
 import 'package:nai_huishi/data/datasources/local/llm_chat_local_datasource.dart';
 import 'package:nai_huishi/data/datasources/remote/llm_api_service.dart';
+import 'package:nai_huishi/data/datasources/remote/wd_tagger_api_service.dart';
 import 'package:nai_huishi/data/repositories/llm_chat_repository_impl.dart';
+import 'package:nai_huishi/data/repositories/history_repository_impl.dart';
+import 'package:nai_huishi/domain/agents/tool_registry.dart';
+import 'package:nai_huishi/domain/agents/tools/ask_user_tool.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
+import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/llm_session.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
+import 'package:nai_huishi/domain/entities/tool_call.dart';
+import 'package:nai_huishi/domain/usecases/get_history.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
+import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
+import 'package:nai_huishi/domain/usecases/manage_settings.dart';
+import 'package:nai_huishi/domain/usecases/save_image.dart';
+import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'support/chat_memory_fake.dart';
+import 'support/frontend_generation_fake.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -81,6 +98,7 @@ void main() {
   setUp(() async {
     await db.delete('llm_messages');
     await db.delete('llm_sessions');
+    await db.delete('generation_history');
     bindDatabase();
   });
 
@@ -88,6 +106,240 @@ void main() {
     await db.close();
     await directory.delete(recursive: true);
   });
+
+  LlmChatViewModel assistant(
+    RecordingLlmApiService api,
+    FrontendGenerationFake generation,
+    ToolRegistry tools,
+  ) {
+    final history = HistoryRepositoryImpl(db);
+    LlmChatViewModel.apiServiceSingleton = api;
+    LlmChatViewModel.toolRegistrySingleton = tools;
+    final viewModel = LlmChatViewModel(
+      manageChat: chat,
+      manageSettings:
+          ManageSettingsUseCase(FakeSettingsRepository(systemPrompt: '测试助手')),
+      memories: ManagePromptMemoriesUseCase(
+          FakePromptMemoryRepository(memories: [], readFails: false)),
+      genVm: generation,
+      analyzeImageTags: FakeAnalyzeImageTagsUseCase(
+          const WdTaggerResult(generalTags: {}, characterTags: {})),
+      getHistory: GetHistoryUseCase(history),
+      saveImage: SaveImageUseCase(history),
+    );
+    addTearDown(viewModel.dispose);
+    return viewModel;
+  }
+
+  test('keeps streamed prose and resumes with the persisted choice details',
+      () async {
+    final api = RecordingLlmApiService(
+      visionDescription: '',
+      visionFails: false,
+      mainResponses: const [
+        LlmResponse(
+          content: '先保留风衣和街景。',
+          toolCalls: [
+            ToolCall(id: 'missing', name: 'unknown_tool', arguments: {}),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        LlmResponse(
+          content: '再比较这四套灯光。',
+          toolCalls: [
+            ToolCall(id: 'q', name: 'ask_user', arguments: {
+              'question': '选择哪套灯光？',
+              'options': [
+                {'id': 'a', 'label': '白昼'},
+                {'id': 'b', 'label': '阴天'},
+                {'id': 'c', 'label': '夜景', 'value': '霓虹侧逆光加湿路反射'},
+                {'id': 'd', 'label': '昏暮'},
+              ],
+            }),
+          ],
+          finishReason: 'tool_calls',
+        ),
+      ],
+    );
+    final generation = FrontendGenerationFake();
+    addTearDown(generation.dispose);
+    final vm =
+        assistant(api, generation, ToolRegistry()..register(AskUserTool()));
+    await vm.ensureInitialized();
+    await vm.sendUserMessage('给我四个灯光方案');
+    expect(api.streamRequests, 2);
+    final sessionId = vm.activeSessionId!;
+    final reply = vm.messages.last;
+    const prose = '先保留风衣和街景。\n\n再比较这四套灯光。\n\n选择哪套灯光？';
+    expect(reply.content, prose);
+    expect(reply.interaction!.options, hasLength(4));
+    await vm.createNewSession();
+    await vm.selectSession(sessionId);
+    expect(vm.messages.last.content, prose);
+
+    await vm.answerInteraction(message: vm.messages.last, optionId: 'c');
+
+    final request = api.mainCalls.last;
+    final previousReply =
+        request.messages.singleWhere((m) => m['role'] == 'assistant');
+    expect(
+        previousReply['content'],
+        allOf(
+          contains(prose),
+          contains('白昼'),
+          contains('阴天'),
+          contains('夜景（霓虹侧逆光加湿路反射）（用户已选择）'),
+          contains('昏暮'),
+        ));
+    expect(request.lastUserText, contains('我选择：夜景（霓虹侧逆光加湿路反射）'));
+    await reopen();
+    final stored = await chat.listMessages(sessionId);
+    expect(stored, hasLength(4));
+    expect(stored[1].content, prose);
+    expect(stored[1].interaction!.selectedOption!.label, '夜景');
+    expect(stored[2].content, request.lastUserText);
+  });
+
+  for (final direct in [true, false]) {
+    test('opens current, latest and matching history pixels (direct=$direct)',
+        () async {
+      Future<String> writePng(String name, int red) async {
+        final image = img.Image(width: 16, height: 12);
+        image.setPixelRgb(0, 0, red, 10, 20);
+        final file = File(p.join(directory.path, '$name.png'));
+        await file.writeAsBytes(img.encodePng(image));
+        return file.path;
+      }
+
+      final latest = frontendResult(
+          id: 'workspace-new', imagePath: await writePng('workspace-new', 200));
+      final selected = frontendResult(
+        id: 'workspace-selected',
+        imagePath: await writePng('workspace-selected', 135),
+      );
+      final historicalPath = await writePng('history-older', 80);
+      String? imageUrl;
+      if (!direct) {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          request.response.headers.contentType = ContentType('image', 'png');
+          await request.response.addStream(File(historicalPath).openRead());
+          await request.response.close();
+        });
+        imageUrl = 'http://127.0.0.1:${server.port}/result.png';
+        const channel = MethodChannel('plugins.flutter.io/path_provider');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(
+            channel, (_) async => directory.path);
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      }
+      final history = frontendResult(
+        id: 'history-older',
+        imagePath: direct ? historicalPath : null,
+      ).copyWith(prompt: 'winter, pine forest', imageUrl: imageUrl);
+      final gallery = HistoryRepositoryImpl(db);
+      await gallery.saveTask(history);
+      await gallery.toggleFavorite(history.taskId);
+      final generation = FrontendGenerationFake()
+        ..receive(selected)
+        ..receive(latest)
+        ..selectResult(selected.taskId);
+      addTearDown(generation.dispose);
+      final api = RecordingLlmApiService(
+        visionDescription: '识图模型观察到树林和白雪。',
+        visionFails: false,
+        mainResponses: const [
+          LlmResponse(
+              content: '',
+              toolCalls: [
+                ToolCall(
+                    id: 'list',
+                    name: 'list_generation_images',
+                    arguments: {
+                      'source': 'history',
+                      'query': 'winter forest',
+                    }),
+              ],
+              finishReason: 'tool_calls'),
+          LlmResponse(
+              content: '',
+              toolCalls: [
+                ToolCall(id: 'new', name: 'view_generation_image', arguments: {
+                  'source': 'latest',
+                }),
+                ToolCall(id: 'pick', name: 'view_generation_image', arguments: {
+                  'source': 'current',
+                }),
+                ToolCall(id: 'old', name: 'view_generation_image', arguments: {
+                  'source': 'history',
+                  'task_id': 'history-older',
+                  'focus': '树林',
+                }),
+              ],
+              finishReason: 'tool_calls'),
+        ],
+      );
+      final vm = assistant(api, generation, ToolRegistry());
+      await vm.ensureInitialized();
+      await vm.setMultimodal(direct);
+      await HttpOverrides.runWithHttpOverrides(
+        () => vm.sendUserMessage('比较刚生成的图、工作台选中的图和历史的冬日树林图'),
+        _RealHttpOverrides(),
+      );
+
+      expect(vm.errorMessage, isNull);
+      expect(api.mainCalls, hasLength(3));
+      expect(
+          api.mainCalls[1].messages.last['content'], contains('history-older'));
+      final finalRequest = api.mainCalls.last.messages;
+      final toolMessages = finalRequest.where((m) => m['role'] == 'tool');
+      expect(
+          toolMessages.map((m) => m['content']),
+          containsAll([
+            contains('workspace-new'),
+            contains('workspace-selected'),
+            contains('history-older'),
+          ]));
+      List<int> imageRed(CapturedLlmCall call) {
+        return call.messages
+            .where((m) => m['content'] is List)
+            .expand((m) => m['content'] as List)
+            .where((part) => part['type'] == 'image_url')
+            .map<int>((part) {
+          final url = part['image_url']['url'] as String;
+          expect(url, startsWith('data:image/png;base64,'));
+          return img
+              .decodePng(base64Decode(url.split(',').last))!
+              .getPixel(0, 0)
+              .r
+              .toInt();
+        }).toList();
+      }
+
+      if (direct) {
+        expect(finalRequest.last['role'], 'user');
+        expect(imageRed(api.mainCalls.last), [200, 135, 80]);
+        expect(api.visionCalls, isEmpty);
+      } else {
+        expect(imageRed(api.mainCalls.last), isEmpty);
+        expect(api.visionCalls.expand(imageRed), [200, 135, 80]);
+        expect(toolMessages.last['content'], contains('识图模型观察到树林和白雪。'));
+      }
+      final saved = (await chat.listMessages(vm.activeSessionId!)).last;
+      expect(saved.modelContextContent,
+          allOf(contains('workspace-new'), contains('history-older')));
+      expect(saved.toolCallsJson, isNot(contains('base64')));
+      expect((await gallery.getFavorites()).single.taskId, history.taskId);
+      expect((await gallery.getTask(history.taskId))!.imagePath,
+          history.imagePath);
+      expect(
+          directory.listSync().where(
+              (item) => p.basename(item.path).startsWith('assistant-image-')),
+          isEmpty);
+    });
+  }
 
   test('fresh database has a nullable integer pin column', () async {
     expect(db.path, p.join(directory.path, AppConstants.dbName));
@@ -259,6 +511,8 @@ void main() {
     expect(results.last.snippet!.runes.length, 43);
   });
 }
+
+class _RealHttpOverrides extends HttpOverrides {}
 
 class _RecordingDatabase implements Database {
   _RecordingDatabase(this.inner);

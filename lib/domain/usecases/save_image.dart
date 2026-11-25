@@ -41,7 +41,11 @@ class SaveImageUseCase {
     throw Exception('图片下载失败');
   }
 
-  Future<String> saveTransient(GenerationTask task) async {
+  Future<String> saveTransient(
+    GenerationTask task, {
+    Directory? downloadDirectory,
+    CancelToken? cancelToken,
+  }) async {
     if (task.imagePath != null && await File(task.imagePath!).exists()) {
       return task.imagePath!;
     }
@@ -49,9 +53,9 @@ class SaveImageUseCase {
       throw Exception('没有可保存的图片');
     }
     final filename = ImageUtils.generateFilename();
-    final dir = await ImageUtils.getImageDirectory();
+    final dir = downloadDirectory ?? await ImageUtils.getImageDirectory();
     final filePath = p.join(dir.path, filename);
-    await Dio().download(task.imageUrl!, filePath);
+    await Dio().download(task.imageUrl!, filePath, cancelToken: cancelToken);
     return filePath;
   }
 

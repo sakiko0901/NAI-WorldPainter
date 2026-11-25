@@ -1,3 +1,4 @@
+import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/repositories/history_repository.dart';
 
@@ -13,6 +14,9 @@ class GetHistoryUseCase {
   Future<GenerationTask?> getTask(String taskId) {
     return _repo.getTask(taskId);
   }
+
+  Future<List<GenerationTask>> getCompleted() =>
+      _repo.getTasksByStatus(AppConstants.taskSuccess);
 
   Future<void> deleteTask(String taskId) {
     return _repo.deleteTask(taskId);

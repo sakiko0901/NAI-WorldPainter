@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:equatable/equatable.dart';
 import 'package:nai_huishi/domain/agents/agent_event.dart';
+import 'package:nai_huishi/domain/agents/tools/generation_image_tools.dart';
 import 'package:nai_huishi/domain/entities/llm_interaction.dart';
 import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
 
@@ -67,6 +68,28 @@ class LlmMessage extends Equatable {
   });
 
   String get roleString => role == LlmMessageRole.user ? 'user' : 'assistant';
+
+  String get modelContextContent {
+    final prompt = interaction;
+    final options = prompt?.options.map((option) {
+      final selected = option.id == prompt.selectedOptionId ? '（用户已选择）' : '';
+      return '- ${option.description}$selected';
+    }).join('\n');
+    final imageReferences = (agentTimeline ?? const <AgentEvent>[])
+        .where((event) =>
+            event.toolName == ViewGenerationImageTool.toolName &&
+            event.result?.success == true)
+        .map((event) => event.result!.text)
+        .toSet();
+    return [
+      if (prompt == null)
+        content
+      else
+        '${prompt.appendQuestionTo(content)}\n\n可选项：\n$options',
+      if (imageReferences.isNotEmpty)
+        '本轮查看的生成图：\n${imageReferences.join('\n\n')}',
+    ].join('\n\n');
+  }
 
   static LlmMessageRole roleFromString(String s) =>
       s == 'user' ? LlmMessageRole.user : LlmMessageRole.assistant;

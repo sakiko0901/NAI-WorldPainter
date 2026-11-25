@@ -9,7 +9,8 @@ class AskUserTool extends AgentTool {
 
   @override
   String get description =>
-      '当缺少会实质影响结果的关键信息时，向用户提出一个单选问题。必须提供清晰、简短、互斥的选项；不要猜测用户未说明的偏好。用户选择后会自动继续当前任务。';
+      '当缺少会实质影响结果的关键信息时，向用户提出一个单选问题。必须提供清晰、简短、互斥的选项；不要猜测用户未说明的偏好。'
+      '方案说明可以作为普通回复正文输出；用户选择后会自动继续当前任务。';
 
   @override
   Map<String, dynamic> get parametersSchema => const {
@@ -24,8 +25,11 @@ class AskUserTool extends AgentTool {
               'type': 'object',
               'properties': {
                 'id': {'type': 'string'},
-                'label': {'type': 'string'},
-                'value': {'type': 'string'},
+                'label': {'type': 'string', 'description': '用户看到的选项名称'},
+                'value': {
+                  'type': 'string',
+                  'description': '可选，选中此项后需要带回的具体方案内容'
+                },
               },
               'required': ['id', 'label'],
             },

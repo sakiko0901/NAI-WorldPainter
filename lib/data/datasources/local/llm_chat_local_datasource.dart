@@ -305,8 +305,8 @@ class LlmChatLocalDatasource {
       final next = optionId != null
           ? interaction.answerOption(optionId)
           : interaction.answerCustom(customAnswer ?? '');
-      final answer = next.answerText;
-      if (!next.isAnswered || answer == null) return null;
+      final content = next.userReply;
+      if (!next.isAnswered || content == null) return null;
 
       await txn.update(
         'llm_messages',
@@ -315,7 +315,6 @@ class LlmChatLocalDatasource {
         whereArgs: [messageId],
       );
       final now = DateTime.now();
-      final content = '针对“${interaction.question}”，我选择：$answer。';
       final userId = await txn.insert('llm_messages', {
         'session_id': sessionId,
         'role': 'user',

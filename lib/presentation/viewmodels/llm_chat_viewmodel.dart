@@ -1,4 +1,5 @@
 import 'package:nai_huishi/domain/agents/tools/read_current_prompts_tool.dart';
+import 'package:nai_huishi/domain/agents/tools/generation_image_tools.dart';
 import 'package:nai_huishi/core/services/image_analysis_cache.dart';
 import 'package:nai_huishi/domain/agents/agent_run_control.dart';
 import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
@@ -18,6 +19,7 @@ import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/core/constants/prompt_agent_instructions.dart';
 import 'package:nai_huishi/core/constants/v5_composition_guide.dart';
 import 'package:nai_huishi/domain/entities/llm_message.dart';
+import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/services/llm_thinking.dart';
@@ -30,9 +32,11 @@ import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/services/chat_context_compressor.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
+import 'package:nai_huishi/domain/usecases/get_history.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
 import 'package:nai_huishi/domain/usecases/manage_prompt_memories.dart';
 import 'package:nai_huishi/domain/usecases/manage_settings.dart';
+import 'package:nai_huishi/domain/usecases/save_image.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -48,6 +52,8 @@ class LlmChatViewModel extends ChangeNotifier {
   final ManagePromptMemoriesUseCase _memories;
   final GenerationViewModel _genVm;
   final AnalyzeImageTagsUseCase _analyzeImageTags;
+  final GetHistoryUseCase? _getHistory;
+  final SaveImageUseCase? _saveImage;
   final AppUpdateInstallGuard? _updateGuard;
   final ImageAnalysisCache _imageAnalysisCache;
 
@@ -59,6 +65,8 @@ class LlmChatViewModel extends ChangeNotifier {
     required ManagePromptMemoriesUseCase memories,
     required GenerationViewModel genVm,
     required AnalyzeImageTagsUseCase analyzeImageTags,
+    GetHistoryUseCase? getHistory,
+    SaveImageUseCase? saveImage,
     AppUpdateInstallGuard? updateGuard,
     ImageAnalysisCache? imageAnalysisCache,
   })  : _manageChat = manageChat,
@@ -66,6 +74,8 @@ class LlmChatViewModel extends ChangeNotifier {
         _memories = memories,
         _genVm = genVm,
         _analyzeImageTags = analyzeImageTags,
+        _getHistory = getHistory,
+        _saveImage = saveImage,
         _updateGuard = updateGuard,
         _imageAnalysisCache = imageAnalysisCache ?? ImageAnalysisCache();
 
@@ -869,6 +879,36 @@ class LlmChatViewModel extends ChangeNotifier {
         sysContent =
             '$sysContent\n\n${AppConstants.assistantCharacterPositionPolicy}';
       }
+      final imageHistory = _getHistory;
+      final saveImage = _saveImage;
+      var registry = runRegistry ?? _agentLoopRegistry();
+      if (session.scope == 'general' &&
+          imageHistory != null &&
+          saveImage != null) {
+        List<GenerationTask> workspace() => _genVm.sessionResults;
+        registry = registry.copy()
+          ..register(ListGenerationImagesTool(imageHistory, workspace))
+          ..register(ViewGenerationImageTool(
+            history: imageHistory,
+            current: () => _genVm.selectedResult ?? _genVm.lastCompletedTask,
+            latest: () => _genVm.lastCompletedTask,
+            workspace: workspace,
+            saveImage: saveImage,
+            directImages: directImages,
+            cancelToken: control.cancelToken,
+            describe: visionConfig.isConfigured
+                ? (image, focus) => control.wait(_describeImageWithVision(
+                      visionConfig: visionConfig,
+                      imageBase64: image,
+                      userText: [
+                        trimmed,
+                        if (focus.trim().isNotEmpty) '重点观察：$focus'
+                      ].join('\n'),
+                    ))
+                : null,
+          ));
+        sysContent = '$sysContent\n\n$generationImageInstructions';
+      }
 
       // 固定集成规则也适用于自定义系统提示词；记忆每轮直接召回，不依赖模型选工具。
       final memoryQuery =
@@ -920,7 +960,6 @@ class LlmChatViewModel extends ChangeNotifier {
       }
 
       control.check();
-      final registry = runRegistry ?? _agentLoopRegistry();
       final promptBoxes = await ReadCurrentPromptsTool(_genVm).call({});
       final fixedCost = ChatTokenBudget.text(
               '${promptBoxes.text}\n${promptBoxes.followUpHint ?? ""}') +
@@ -967,11 +1006,12 @@ class LlmChatViewModel extends ChangeNotifier {
             ? await _restoreMessageImages(m)
             : const <String>[];
         if (restored == null) throw StateError('历史参考图不可用，请恢复图片后重试。');
+        final content = m.modelContextContent;
         payload.add({
           'role': m.roleString,
           'content': restored.isNotEmpty
-              ? _multimodalContent(m.content, restored)
-              : m.content
+              ? _multimodalContent(content, restored)
+              : content
         });
       }
 
@@ -1610,13 +1650,7 @@ class LlmChatViewModel extends ChangeNotifier {
         {'role': 'system', 'content': AppConstants.defaultVisionDescribePrompt},
         {
           'role': 'user',
-          'content': [
-            if (userText.isNotEmpty) {'type': 'text', 'text': userText},
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
-            },
-          ],
+          'content': _multimodalContent(userText, [imageBase64]),
         },
       ];
       final api = _apiFor(visionConfig);

@@ -21,26 +21,42 @@ class ToolResult {
   /// 需要用户回答的结构化交互。
   final LlmInteraction? interaction;
 
+  /// 图片只传给本轮模型请求。
+  final String? imageDataUrl;
+
   const ToolResult({
     required this.success,
     required this.text,
     required this.displayText,
     this.followUpHint,
     this.interaction,
+    this.imageDataUrl,
   });
 
   factory ToolResult.success(String text,
       {String? displayText,
       String? followUpHint,
-      LlmInteraction? interaction}) {
+      LlmInteraction? interaction,
+      String? imageDataUrl}) {
     return ToolResult(
       success: true,
       text: text,
       displayText: displayText ?? text,
       followUpHint: followUpHint,
       interaction: interaction,
+      imageDataUrl: imageDataUrl,
     );
   }
+
+  ToolResult get forTimeline => imageDataUrl == null
+      ? this
+      : ToolResult(
+          success: success,
+          text: text,
+          displayText: displayText,
+          followUpHint: followUpHint,
+          interaction: interaction,
+        );
 
   factory ToolResult.failure(String reason) {
     return ToolResult(
