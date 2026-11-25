@@ -284,10 +284,10 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
       height: 36,
       child: Row(
         children: [
-          if (widget.effort != null && widget.onEffortChanged != null)
+          if (widget.effort != null)
             _EffortToggle(
               effort: widget.effort!,
-              onChanged: widget.onEffortChanged!,
+              onChanged: widget.generating ? null : widget.onEffortChanged,
             ),
           const Spacer(),
           if (widget.results.isNotEmpty)
@@ -434,12 +434,36 @@ class _GenerationResultCardState extends State<GenerationResultCard> {
                   ),
                   if (!showGenerating && widget.onImport != null) ...[
                     const SizedBox(height: 14),
-                    FilledButton.tonalIcon(
-                      key: const ValueKey('result-import-button'),
-                      onPressed: widget.onImport,
-                      icon: const Icon(Icons.add_photo_alternate_outlined),
-                      label: const Text('导入图片'),
-                    ),
+                    Builder(builder: (context) {
+                      final isCoffeePaper =
+                          FrostedTheme.of(context).appearanceMode ==
+                              AppearanceMode.coffeePaper;
+                      return FilledButton.tonalIcon(
+                        key: const ValueKey('result-import-button'),
+                        style: isCoffeePaper
+                            ? FilledButton.styleFrom(
+                                backgroundColor: theme.colorScheme.onSurface,
+                                foregroundColor: theme.colorScheme.surface,
+                                elevation: 0,
+                                minimumSize: const Size(0, 42),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 10,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                textStyle: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              )
+                            : null,
+                        onPressed: widget.onImport,
+                        icon: const Icon(Icons.add_photo_alternate_outlined,
+                            size: 18),
+                        label: const Text('导入图片'),
+                      );
+                    }),
                   ],
                 ],
               ),
@@ -1048,7 +1072,7 @@ class _ResultImage extends StatelessWidget {
 /// V5 Effort 等级左右切换控件（High ⇄ Medium），点击或左右滑动切换。
 class _EffortToggle extends StatelessWidget {
   final GenerationEffort effort;
-  final ValueChanged<GenerationEffort> onChanged;
+  final ValueChanged<GenerationEffort>? onChanged;
 
   const _EffortToggle({required this.effort, required this.onChanged});
 
@@ -1057,64 +1081,74 @@ class _EffortToggle extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isHigh = effort == GenerationEffort.high;
-    final accent = switch ((effort, theme.brightness)) {
-      (GenerationEffort.high, Brightness.dark) => const Color(0xFFCDB88C),
-      (GenerationEffort.high, Brightness.light) => const Color(0xFF795F31),
-      (GenerationEffort.medium, Brightness.dark) => const Color(0xFF9ABA9F),
-      (GenerationEffort.medium, Brightness.light) => const Color(0xFF3C654B),
+    final enabled = onChanged != null;
+    final accent = switch (effort) {
+      GenerationEffort.high => const Color(0xFFCDB88C),
+      GenerationEffort.medium => const Color(0xFF9ABA9F),
     };
     return Tooltip(
-      message: isHigh
-          ? '思考等级：High（完整模型，点击切换 Medium 节约模式）'
-          : '思考等级：Medium（蒸馏版，固定 14 步，点击切换 High）',
-      child: GestureDetector(
-        onHorizontalDragEnd: (details) {
-          final velocity = details.primaryVelocity ?? 0;
-          if (velocity < -120 && isHigh) {
-            onChanged(GenerationEffort.medium);
-          } else if (velocity > 120 && !isHigh) {
-            onChanged(GenerationEffort.high);
-          }
-        },
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: () => onChanged(
-            isHigh ? GenerationEffort.medium : GenerationEffort.high,
-          ),
-          child: Container(
-            height: 28,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                width: 1,
-                color: accent.withValues(alpha: 0.32),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isHigh ? Icons.psychology : Icons.bolt,
-                  size: 14,
-                  color: accent,
+      message: !enabled
+          ? '生成或处理中，暂不可切换思考等级'
+          : isHigh
+              ? '思考等级：High（完整模型，点击切换 Medium 节约模式）'
+              : '思考等级：Medium（蒸馏版，固定 14 步，点击切换 High）',
+      child: Opacity(
+        opacity: enabled ? 1.0 : 0.65,
+        child: GestureDetector(
+          onHorizontalDragEnd: !enabled
+              ? null
+              : (details) {
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (velocity < -120 && isHigh) {
+                    onChanged!(GenerationEffort.medium);
+                  } else if (velocity > 120 && !isHigh) {
+                    onChanged!(GenerationEffort.high);
+                  }
+                },
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: !enabled
+                ? null
+                : () => onChanged!(
+                      isHigh ? GenerationEffort.medium : GenerationEffort.high,
+                    ),
+            child: Container(
+              height: 28,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: accent.withValues(
+                    alpha: theme.brightness == Brightness.dark ? 0.10 : 0.14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  width: 1,
+                  color: accent.withValues(
+                      alpha: theme.brightness == Brightness.dark ? 0.32 : 0.55),
                 ),
-                const SizedBox(width: 5),
-                Text(
-                  isHigh ? 'High' : 'Medium',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isHigh ? Icons.psychology : Icons.bolt,
+                    size: 14,
                     color: accent,
                   ),
-                ),
-                const SizedBox(width: 3),
-                Icon(
-                  isHigh ? Icons.arrow_forward_ios : Icons.arrow_back_ios,
-                  size: 10,
-                  color: colors.onSurfaceVariant,
-                ),
-              ],
+                  const SizedBox(width: 5),
+                  Text(
+                    isHigh ? 'High' : 'Medium',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  Icon(
+                    isHigh ? Icons.arrow_forward_ios : Icons.arrow_back_ios,
+                    size: 10,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

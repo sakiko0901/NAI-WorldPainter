@@ -206,6 +206,8 @@ class _GeneratePageState extends State<GeneratePage> {
 
   bool get _isImageOperationBusy => _vm.isGenerating || _vm.isProcessingImage;
   bool _isChatDrawerOpen = false;
+  int _galleryIconTrigger = 0;
+  int _settingsIconTrigger = 0;
 
   void _showToast(String message) {
     showFloatingToast(context, message);
@@ -269,10 +271,23 @@ class _GeneratePageState extends State<GeneratePage> {
                             : StudioEntrance(
                                 role: StudioEntranceRole.heading,
                                 child: TextButton.icon(
-                                  onPressed: () => widget.onNavigate!(0),
-                                  icon: const StudioAnimatedIcon(
+                                  style: FrostedTheme.of(context)
+                                              .appearanceMode ==
+                                          AppearanceMode.coffeePaper
+                                      ? TextButton.styleFrom(
+                                          foregroundColor: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface,
+                                        )
+                                      : null,
+                                  onPressed: () {
+                                    setState(() => _galleryIconTrigger++);
+                                    widget.onNavigate!(0);
+                                  },
+                                  icon: StudioAnimatedIcon(
                                       Icons.photo_library_outlined,
-                                      size: 20),
+                                      size: 20,
+                                      trigger: _galleryIconTrigger),
                                   label: const Text('画廊',
                                       style: TextStyle(fontSize: 14)),
                                 )),
@@ -281,10 +296,16 @@ class _GeneratePageState extends State<GeneratePage> {
                               role: StudioEntranceRole.icon,
                               child: IconButton(
                                 tooltip: '生成参数',
-                                icon: const StudioAnimatedIcon(Icons.tune),
+                                icon: StudioAnimatedIcon(
+                                  Icons.tune,
+                                  trigger: _settingsIconTrigger,
+                                ),
                                 onPressed: _isImageOperationBusy
                                     ? null
-                                    : _openGenerationSettings,
+                                    : () {
+                                        setState(() => _settingsIconTrigger++);
+                                        _openGenerationSettings();
+                                      },
                               )),
                         ],
                       ))),
@@ -1503,9 +1524,7 @@ class _GeneratePageState extends State<GeneratePage> {
       streamPreviewBytes: taskStreamBytes,
       streamPreviewStep: taskStreamStep,
       streamFinalImage: task != null && _vm.hasFinalStreamImage(task.taskId),
-      effort: _vm.supportsEffortToggle && !_isImageOperationBusy
-          ? _vm.effort
-          : null,
+      effort: _vm.supportsEffortToggle ? _vm.effort : null,
       onEffortChanged: _vm.supportsEffortToggle && !_isImageOperationBusy
           ? (value) => _vm.updateEffort(value)
           : null,
@@ -1652,11 +1671,27 @@ class _GeneratePageState extends State<GeneratePage> {
                   child: FilledButton.icon(
                     key: const ValueKey('generate-primary-button'),
                     style: FilledButton.styleFrom(
+                      backgroundColor: FrostedTheme.of(context)
+                                  .appearanceMode ==
+                              AppearanceMode.coffeePaper
+                          ? theme.colorScheme.onSurface
+                          : null,
+                      foregroundColor: FrostedTheme.of(context)
+                                  .appearanceMode ==
+                              AppearanceMode.coffeePaper
+                          ? theme.colorScheme.surface
+                          : null,
                       minimumSize: const Size.fromHeight(48),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 12,
                       ),
+                      shape: FrostedTheme.of(context).appearanceMode ==
+                              AppearanceMode.coffeePaper
+                          ? RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            )
+                          : null,
                     ),
                     onPressed: cancelling ||
                             _isImportingWorkspaceImage ||
@@ -1788,7 +1823,7 @@ class _GenerationSettingsPage extends StatelessWidget {
           bottomLeft: Radius.circular(20),
         ),
         side: isCoffeePaper
-            ? BorderSide(color: colors.outlineVariant)
+            ? BorderSide(color: FrostedTheme.of(context).border)
             : BorderSide.none,
       ),
       clipBehavior: Clip.antiAlias,
@@ -2005,10 +2040,11 @@ class _PremiumSlider extends StatelessWidget {
             trackHeight: 6,
             activeTrackColor: colors.primary,
             inactiveTrackColor: isCoffeePaper
-                ? colors.primaryContainer
+                ? colors.surfaceContainerHighest
                 : Colors.black.withValues(alpha: 0.3),
             thumbColor: isCoffeePaper ? colors.primary : Colors.white,
-            overlayColor: colors.primary.withValues(alpha: 0.2),
+            overlayColor:
+                colors.primary.withValues(alpha: isCoffeePaper ? 0.14 : 0.2),
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
             showValueIndicator: ShowValueIndicator.never, // 移除丑陋气泡
@@ -2103,7 +2139,7 @@ class _CharacterReferenceSection extends StatelessWidget {
           icon: CupertinoIcons.person_crop_rectangle,
           children: [
             if (!vm.supportsPreciseReferences)
-              _unavailableHint(colors, '当前模型或渠道不支持精确参考，官方线路需使用 V4.5。'),
+              _unavailableHint(colors, '当前模型或渠道不支持精确参考，官方线路需使用 V4.5 或 V5 模型。'),
             const Text('按参考图锁定角色外观、画风或两者。与氛围转移互斥，官方额外费用从每张生成图 5 Anlas 起。'),
             const SizedBox(height: 12),
             OutlinedButton.icon(

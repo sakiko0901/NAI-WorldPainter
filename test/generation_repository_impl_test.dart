@@ -101,6 +101,55 @@ void main() {
         'style');
   });
 
+  test('official V5 models support precise character reference payloads',
+      () async {
+    for (final model in const [
+      'nai-diffusion-5-full',
+      'nai-diffusion-5-curated',
+      'nai-diffusion-5-full-medium',
+      'nai-diffusion-5-full-inpainting',
+    ]) {
+      expect(OfficialNovelAiApiService.supportsPreciseReference(model), isTrue);
+    }
+    expect(
+      OfficialNovelAiApiService.supportsPreciseReference('nai-diffusion-4-full'),
+      isFalse,
+    );
+
+    final dir = await Directory.systemTemp.createTemp('v5-precise-payload');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = await File('${dir.path}/ref.png')
+        .writeAsBytes(img.encodePng(img.Image(width: 4, height: 4)));
+    final payload = await OfficialNovelAiApiService(Dio()).buildPayload(
+      _task().copyWith(
+        model: 'nai-diffusion-5-full',
+        preciseReferences: [
+          PreciseReferenceImage(
+            path: file.path,
+            strength: 0.85,
+            fidelity: 0.8,
+            referenceType: 'character',
+          ),
+        ],
+      ),
+    );
+    final params = payload['parameters'] as Map;
+    expect(payload['model'], 'nai-diffusion-5-full');
+    expect(params['params_version'], 3);
+    expect(params['noise_schedule'], 'karras');
+    expect((params['director_reference_images'] as List), hasLength(1));
+    expect(params['director_reference_strength_values'], [0.85]);
+    expect(
+      (params['director_reference_secondary_strength_values'] as List).single,
+      closeTo(0.2, .00001),
+    );
+    expect(
+      (params['director_reference_descriptions'] as List).single['caption']
+          ['base_caption'],
+      'character',
+    );
+  });
+
   for (final custom in [false, true]) {
     for (final enabled in <bool?>[null, false, true]) {
       test(

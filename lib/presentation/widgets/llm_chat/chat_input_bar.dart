@@ -393,12 +393,15 @@ class _ChatInputBarState extends State<ChatInputBar>
       {required Widget previews, required Widget editor}) {
     final theme = Theme.of(context);
     final glass = FrostedTheme.of(context);
-    final surface = FrostedSurface(
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final frosted = FrostedSurface(
       key: const ValueKey('chat-composer-surface'),
-      radius: 28,
-      blur: 16,
-      color: glass.blurEnabled ? glass.surface : theme.colorScheme.surface,
-      padding: const EdgeInsets.all(4),
+      radius: isCoffeePaper ? 26 : 28,
+      blur: isCoffeePaper ? 0 : 16,
+      color: isCoffeePaper
+          ? theme.colorScheme.surface
+          : (glass.blurEnabled ? glass.surface : theme.colorScheme.surface),
+      padding: EdgeInsets.all(isCoffeePaper ? 5 : 4),
       child: LayoutBuilder(builder: (context, composer) {
         return Column(mainAxisSize: MainAxisSize.min, children: [
           ConstrainedBox(
@@ -410,6 +413,26 @@ class _ChatInputBarState extends State<ChatInputBar>
         ]);
       }),
     );
+    final surface = isCoffeePaper
+        ? DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x0D141413),
+                  blurRadius: 20,
+                  offset: Offset(0, 6),
+                ),
+                BoxShadow(
+                  color: Color(0x07141413),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+            child: frosted,
+          )
+        : frosted;
     final anchor = widget.modelMenuAnchor;
     return anchor == null
         ? surface
@@ -432,6 +455,9 @@ class _ChatInputBarState extends State<ChatInputBar>
   }
 
   Widget _buildModelButton({required bool expanded}) {
+    final theme = Theme.of(context);
+    final isCoffeePaper =
+        FrostedTheme.of(context).appearanceMode == AppearanceMode.coffeePaper;
     final label = widget.modelName.isEmpty ? '选择模型' : widget.modelName;
     final button = Tooltip(
       message: '主模型：$label',
@@ -439,24 +465,36 @@ class _ChatInputBarState extends State<ChatInputBar>
         key: const ValueKey('chat-composer-model'),
         onPressed: widget.isSending || _selectingModel ? null : _selectModel,
         style: TextButton.styleFrom(
-          foregroundColor: Theme.of(context).colorScheme.onSurface,
-          minimumSize: const Size(0, 48),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          foregroundColor: theme.colorScheme.onSurface,
+          backgroundColor:
+              isCoffeePaper ? theme.colorScheme.surfaceContainerHigh : null,
+          minimumSize: Size(0, isCoffeePaper ? 36 : 48),
+          padding: EdgeInsets.symmetric(
+            horizontal: isCoffeePaper ? 12 : 8,
+            vertical: isCoffeePaper ? 6 : 0,
+          ),
+          shape: isCoffeePaper
+              ? RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                )
+              : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Flexible(
               child: Text(label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600))),
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          isCoffeePaper ? FontWeight.w500 : FontWeight.w600))),
           const SizedBox(width: 4),
           if (widget.thinkingLabel case final String level) ...[
             Text(level,
                 style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary)),
+                    color: theme.colorScheme.primary)),
             const SizedBox(width: 4),
           ],
           const Icon(CupertinoIcons.chevron_down, size: 12),
@@ -517,28 +555,40 @@ class _ChatInputBarState extends State<ChatInputBar>
             _pendingTextAttachment != null) &&
         !widget.isSending &&
         !_pickingImages;
-    return AnimatedContainer(
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final sendBg = isCoffeePaper ? theme.colorScheme.primary : glass.selection;
+    final sendFg =
+        isCoffeePaper ? theme.colorScheme.onPrimary : glass.onSelection;
+    final circle = AnimatedContainer(
       duration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 200),
-      width: 48,
-      height: 48,
+      width: isCoffeePaper ? 40 : 48,
+      height: isCoffeePaper ? 40 : 48,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: canSend
             ? LinearGradient(
-                colors: [glass.selection, glass.selection],
+                colors: [sendBg, sendBg],
               )
-            : LinearGradient(
-                colors: [
-                  theme.colorScheme.onSurface.withValues(alpha: 0.14),
-                  theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                ],
-              ),
+            : isCoffeePaper
+                ? LinearGradient(
+                    colors: [
+                      theme.colorScheme.primaryContainer,
+                      theme.colorScheme.primaryContainer,
+                    ],
+                  )
+                : LinearGradient(
+                    colors: [
+                      theme.colorScheme.onSurface.withValues(alpha: 0.14),
+                      theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                    ],
+                  ),
         boxShadow: canSend
             ? [
                 BoxShadow(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  color: theme.colorScheme.primary
+                      .withValues(alpha: isCoffeePaper ? 0.18 : 0.12),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -572,16 +622,19 @@ class _ChatInputBarState extends State<ChatInputBar>
                     )
                   : Icon(
                       CupertinoIcons.arrow_up,
-                      size: 20,
+                      size: isCoffeePaper ? 18 : 20,
                       color: canSend
-                          ? glass.onSelection
-                          : theme.colorScheme.onSurfaceVariant,
+                          ? sendFg
+                          : theme.colorScheme.onSurfaceVariant
+                              .withValues(alpha: isCoffeePaper ? 0.65 : 1),
                     ),
             ),
           ),
         ),
       ),
     );
+    if (!isCoffeePaper) return circle;
+    return SizedBox(width: 48, height: 48, child: Center(child: circle));
   }
 
   Widget _buildAttachmentMenu({bool compact = false}) {

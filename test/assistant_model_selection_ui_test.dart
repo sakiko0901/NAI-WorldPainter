@@ -88,7 +88,9 @@ void main() {
       final glass = theme.extension<FrostedTheme>()!;
       expect(
         DefaultTextStyle.of(tester.element(find.text('全部'))).style.color,
-        glass.onSelection,
+        mode == AppearanceMode.coffeePaper
+            ? theme.colorScheme.surface
+            : glass.onSelection,
       );
       await capture('picker');
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);

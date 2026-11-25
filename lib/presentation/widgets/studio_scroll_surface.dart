@@ -86,7 +86,11 @@ class _StudioScrollSurfaceState extends State<StudioScrollSurface> {
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: _headerHeight + 48,
+                    height: _headerHeight +
+                        (FrostedTheme.of(context).appearanceMode ==
+                                AppearanceMode.coffeePaper
+                            ? 16
+                            : 48),
                     child: const _EdgeBlur(),
                   ),
                   if (widget.footer != null)
@@ -142,9 +146,13 @@ class _EdgeBlur extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = Theme.of(context).colorScheme.surface;
+    final theme = Theme.of(context);
+    final glass = FrostedTheme.of(context);
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final background =
+        isCoffeePaper ? theme.scaffoldBackgroundColor : theme.colorScheme.surface;
     final highContrast = MediaQuery.highContrastOf(context);
-    final blur = FrostedTheme.of(context).blurEnabled && !highContrast;
+    final blur = glass.blurEnabled && !highContrast && !isCoffeePaper;
     return IgnorePointer(
       child: ExcludeSemantics(
         child: ClipRect(
@@ -164,13 +172,22 @@ class _EdgeBlur extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  stops: const [0, .3, .65, 1],
-                  colors: [
-                    background.withValues(alpha: highContrast ? 1 : .12),
-                    background.withValues(alpha: highContrast ? 1 : .06),
-                    background.withValues(alpha: highContrast ? .7 : .015),
-                    background.withValues(alpha: 0),
-                  ],
+                  stops: isCoffeePaper
+                      ? const [0, .74, .9, 1]
+                      : const [0, .3, .65, 1],
+                  colors: isCoffeePaper
+                      ? [
+                          background,
+                          background,
+                          background.withValues(alpha: .55),
+                          background.withValues(alpha: 0),
+                        ]
+                      : [
+                          background.withValues(alpha: highContrast ? 1 : .12),
+                          background.withValues(alpha: highContrast ? 1 : .06),
+                          background.withValues(alpha: highContrast ? .7 : .015),
+                          background.withValues(alpha: 0),
+                        ],
                 ),
               ),
             ),

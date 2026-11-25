@@ -34,8 +34,9 @@ enum StudioIconKind {
 /// Original 24-unit vectors, with motion applied to individual components.
 class StudioAnimatedIcon extends StatefulWidget {
   const StudioAnimatedIcon(this.icon,
-      {super.key, this.size, this.color, this.selected});
+      {super.key, this.size, this.color, this.selected, this.trigger});
   final bool? selected;
+  final int? trigger;
   final IconData icon;
   final double? size;
   final Color? color;
@@ -108,6 +109,15 @@ class _StudioAnimatedIconState extends State<StudioAnimatedIcon>
     super.didUpdateWidget(old);
     if (widget.selected != old.selected) {
       if (widget.selected == true && _enabled) {
+        _delay = 0;
+        _clock.forward(from: 0);
+      } else {
+        _clock.value = 1;
+      }
+    }
+    if (widget.trigger != null && widget.trigger != old.trigger) {
+      if (_enabled) {
+        _delay = 0;
         _clock.forward(from: 0);
       } else {
         _clock.value = 1;

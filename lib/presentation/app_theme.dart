@@ -55,42 +55,42 @@ final _darkColors = ColorScheme.fromSeed(
   outlineVariant: const Color(0xFF414141),
 );
 
-const _coffeePaperBackground = Color(0xFFF3EDE2);
+const _coffeePaperBackground = Color(0xFFFAF9F5);
 const _coffeePaperColors = ColorScheme(
   brightness: Brightness.light,
-  primary: Color(0xFFA24E37),
-  onPrimary: Color(0xFFFFFBF5),
-  primaryContainer: Color(0xFFF2D7C9),
-  onPrimaryContainer: Color(0xFF622F21),
-  secondary: Color(0xFF755846),
-  onSecondary: Color(0xFFFFFBF5),
-  secondaryContainer: Color(0xFFEDE0D1),
-  onSecondaryContainer: Color(0xFF4E382B),
-  tertiary: Color(0xFF566448),
-  onTertiary: Color(0xFFFFFBF5),
-  tertiaryContainer: Color(0xFFE2E8D6),
-  onTertiaryContainer: Color(0xFF38452C),
-  error: Color(0xFFA3342A),
-  onError: Color(0xFFFFFBF5),
-  errorContainer: Color(0xFFF8DED7),
-  onErrorContainer: Color(0xFF702720),
-  surface: Color(0xFFFCF8F0),
-  onSurface: Color(0xFF362820),
-  onSurfaceVariant: Color(0xFF6D584A),
-  surfaceDim: Color(0xFFE8DACA),
-  surfaceBright: Color(0xFFFFFBF5),
-  surfaceContainerLowest: Color(0xFFFFFBF5),
-  surfaceContainerLow: Color(0xFFFAF4EA),
-  surfaceContainer: Color(0xFFF7EFE4),
-  surfaceContainerHigh: Color(0xFFF2E8DC),
-  surfaceContainerHighest: Color(0xFFEEE0D1),
-  outline: Color(0xFF87705D),
-  outlineVariant: Color(0xFFD9C8B6),
-  inverseSurface: Color(0xFF47352B),
-  onInverseSurface: Color(0xFFFFF6E9),
-  inversePrimary: Color(0xFFF3B89F),
-  shadow: Color(0xFF493326),
-  scrim: Color(0xFF362820),
+  primary: Color(0xFFBA5432),
+  onPrimary: Color(0xFFFFFFFF),
+  primaryContainer: Color(0xFFF1F0E9),
+  onPrimaryContainer: Color(0xFF141413),
+  secondary: Color(0xFF66645E),
+  onSecondary: Color(0xFFFFFFFF),
+  secondaryContainer: Color(0xFFF5F4EF),
+  onSecondaryContainer: Color(0xFF141413),
+  tertiary: Color(0xFF4B6854),
+  onTertiary: Color(0xFFFFFFFF),
+  tertiaryContainer: Color(0xFFE9F0EA),
+  onTertiaryContainer: Color(0xFF1D3324),
+  error: Color(0xFFB3392E),
+  onError: Color(0xFFFFFFFF),
+  errorContainer: Color(0xFFFBEAE7),
+  onErrorContainer: Color(0xFF6B1E17),
+  surface: Color(0xFFFFFFFF),
+  onSurface: Color(0xFF141413),
+  onSurfaceVariant: Color(0xFF6B6963),
+  surfaceDim: Color(0xFFF6F5F0),
+  surfaceBright: Color(0xFFFFFFFF),
+  surfaceContainerLowest: Color(0xFFFFFFFF),
+  surfaceContainerLow: Color(0xFFFCFBF8),
+  surfaceContainer: Color(0xFFFAF9F5),
+  surfaceContainerHigh: Color(0xFFF4F3EE),
+  surfaceContainerHighest: Color(0xFFEEEDE7),
+  outline: Color(0xFF96938B),
+  outlineVariant: Color(0xFFEAE8E0),
+  inverseSurface: Color(0xFF1F1E1D),
+  onInverseSurface: Color(0xFFFAF9F5),
+  inversePrimary: Color(0xFFE08766),
+  shadow: Color(0xFF141413),
+  scrim: Color(0xFF141413),
   surfaceTint: Colors.transparent,
 );
 
@@ -111,6 +111,15 @@ const zhFallback = <String>[
   'Noto Sans CJK SC',
   'Microsoft YaHei',
   'sans-serif',
+];
+
+const zhSerifFallback = <String>[
+  'Noto Serif CJK SC',
+  'Noto Serif SC',
+  'Source Han Serif CN',
+  'Songti SC',
+  'Georgia',
+  'serif',
 ];
 
 TextTheme _appleishBold(TextTheme base, Color color) {
@@ -140,6 +149,42 @@ TextTheme _appleishBold(TextTheme base, Color color) {
         labelLarge: bump(base.labelLarge, FontWeight.w700),
         labelMedium: bump(base.labelMedium, FontWeight.w600),
         labelSmall: bump(base.labelSmall, FontWeight.w600),
+      )
+      .apply(bodyColor: color, displayColor: color);
+}
+
+TextTheme _editorialPaper(TextTheme base, Color color) {
+  TextStyle? tune(TextStyle? s, FontWeight target, {double spacingDelta = 0}) {
+    if (s == null) return null;
+    return s.copyWith(
+      fontWeight: target,
+      fontFamilyFallback: zhFallback,
+      letterSpacing: (s.letterSpacing ?? 0) + spacingDelta,
+    );
+  }
+
+  return base
+      .copyWith(
+        displayLarge: tune(base.displayLarge, FontWeight.w600, spacingDelta: -0.2),
+        displayMedium:
+            tune(base.displayMedium, FontWeight.w600, spacingDelta: -0.15),
+        displaySmall:
+            tune(base.displaySmall, FontWeight.w600, spacingDelta: -0.1),
+        headlineLarge:
+            tune(base.headlineLarge, FontWeight.w600, spacingDelta: -0.15),
+        headlineMedium:
+            tune(base.headlineMedium, FontWeight.w600, spacingDelta: -0.1),
+        headlineSmall:
+            tune(base.headlineSmall, FontWeight.w600, spacingDelta: -0.05),
+        titleLarge: tune(base.titleLarge, FontWeight.w600, spacingDelta: -0.1),
+        titleMedium: tune(base.titleMedium, FontWeight.w600),
+        titleSmall: tune(base.titleSmall, FontWeight.w500),
+        bodyLarge: tune(base.bodyLarge, FontWeight.w400, spacingDelta: 0.05),
+        bodyMedium: tune(base.bodyMedium, FontWeight.w400, spacingDelta: 0.05),
+        bodySmall: tune(base.bodySmall, FontWeight.w400, spacingDelta: 0.05),
+        labelLarge: tune(base.labelLarge, FontWeight.w500, spacingDelta: 0.05),
+        labelMedium: tune(base.labelMedium, FontWeight.w500, spacingDelta: 0.1),
+        labelSmall: tune(base.labelSmall, FontWeight.w500, spacingDelta: 0.1),
       )
       .apply(bodyColor: color, displayColor: color);
 }
@@ -177,12 +222,14 @@ ThemeData buildNaiHuishiAppearanceTheme(
   };
   final useThemedSurfaces = isDark || isCoffeePaper;
   final textColor = colors.onSurface;
-  final textTheme = _appleishBold(interTheme, textColor);
+  final textTheme = isCoffeePaper
+      ? _editorialPaper(interTheme, textColor)
+      : _appleishBold(interTheme, textColor);
   final primary = colors.primary;
   final popupSurface =
       isDark ? colors.surfaceContainerHigh : colors.surfaceContainerLowest;
   final modalBarrier =
-      isCoffeePaper ? colors.scrim.withValues(alpha: 0.42) : null;
+      isCoffeePaper ? colors.scrim.withValues(alpha: 0.30) : null;
   final popupOutline =
       isCoffeePaper ? BorderSide(color: glass.border) : BorderSide.none;
 
@@ -286,7 +333,8 @@ ThemeData buildNaiHuishiAppearanceTheme(
             backgroundColor: popupSurface,
             barrierColor: modalBarrier,
             surfaceTintColor: Colors.transparent,
-            shadowColor: colors.shadow.withValues(alpha: 0.24),
+            shadowColor: colors.shadow
+                .withValues(alpha: isCoffeePaper ? 0.14 : 0.24),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
               side: popupOutline,
@@ -298,7 +346,7 @@ ThemeData buildNaiHuishiAppearanceTheme(
       modalBackgroundColor: isCoffeePaper ? popupSurface : glass.raised,
       modalBarrierColor: modalBarrier,
       surfaceTintColor: useThemedSurfaces ? Colors.transparent : null,
-      dragHandleColor: isCoffeePaper ? colors.outline : null,
+      dragHandleColor: isCoffeePaper ? colors.outline.withValues(alpha: 0.45) : null,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -308,41 +356,77 @@ ThemeData buildNaiHuishiAppearanceTheme(
         ? PopupMenuThemeData(
             color: popupSurface,
             surfaceTintColor: Colors.transparent,
-            shadowColor: colors.shadow.withValues(alpha: 0.20),
-            elevation: 4,
+            shadowColor: colors.shadow
+                .withValues(alpha: isCoffeePaper ? 0.12 : 0.20),
+            elevation: isCoffeePaper ? 3 : 4,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
               side: popupOutline,
             ),
           )
         : null,
+    switchTheme: isCoffeePaper
+        ? SwitchThemeData(
+            thumbColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return colors.surface.withValues(alpha: 0.72);
+              }
+              return colors.surface;
+            }),
+            trackColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) {
+                return primary;
+              }
+              return const Color(0xFFE3E1D9);
+            }),
+            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+            trackOutlineWidth: WidgetStateProperty.all(0),
+          )
+        : null,
+    sliderTheme: isCoffeePaper
+        ? SliderThemeData(
+            activeTrackColor: primary,
+            inactiveTrackColor: colors.surfaceContainerHighest,
+            thumbColor: primary,
+            overlayColor: primary.withValues(alpha: 0.12),
+            activeTickMarkColor: colors.onPrimary.withValues(alpha: 0.45),
+            inactiveTickMarkColor: colors.outline.withValues(alpha: 0.32),
+          )
+        : null,
     chipTheme: ChipThemeData(
-      backgroundColor: glass.field,
-      selectedColor: glass.selection,
-      secondarySelectedColor: glass.selection,
+      backgroundColor: isCoffeePaper ? colors.surface : glass.field,
+      selectedColor: isCoffeePaper ? colors.onSurface : glass.selection,
+      secondarySelectedColor:
+          isCoffeePaper ? colors.onSurface : glass.selection,
       labelStyle: textTheme.labelSmall?.copyWith(
         fontSize: 12,
         color: WidgetStateColor.resolveWith((states) {
           if (states.contains(WidgetState.disabled)) {
             return textColor.withValues(alpha: 0.38);
           }
-          return states.contains(WidgetState.selected)
-              ? glass.onSelection
-              : textColor;
+          if (states.contains(WidgetState.selected)) {
+            return isCoffeePaper ? colors.surface : glass.onSelection;
+          }
+          return textColor;
         }),
       ),
-      side: BorderSide(color: glass.border),
+      side: WidgetStateBorderSide.resolveWith((states) {
+        if (isCoffeePaper && states.contains(WidgetState.selected)) {
+          return BorderSide(color: colors.onSurface);
+        }
+        return BorderSide(color: glass.border);
+      }),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
         backgroundColor: WidgetStateProperty.resolveWith((states) =>
             states.contains(WidgetState.selected)
-                ? glass.selection
+                ? (isCoffeePaper ? colors.onSurface : glass.selection)
                 : glass.field),
         foregroundColor: WidgetStateProperty.resolveWith((states) =>
             states.contains(WidgetState.selected)
-                ? glass.onSelection
+                ? (isCoffeePaper ? colors.surface : glass.onSelection)
                 : textColor),
       ),
     ),
@@ -432,15 +516,14 @@ class FrostedTheme extends ThemeExtension<FrostedTheme> {
             stage: Color(0x73CFD5DF)),
         AppearanceMode.coffeePaper => FrostedTheme(
             appearanceMode: appearanceMode,
-            surface: _coffeePaperColors.surface.withValues(alpha: 0.93),
+            surface: _coffeePaperColors.surface,
             panel: _coffeePaperColors.surface,
-            raised: _coffeePaperColors.surfaceContainerLowest
-                .withValues(alpha: 0.96),
-            border: _coffeePaperColors.outlineVariant,
+            raised: _coffeePaperColors.surfaceContainerLowest,
+            border: const Color(0x12141413),
             selection: _coffeePaperColors.primaryContainer,
             onSelection: _coffeePaperColors.onPrimaryContainer,
             field: _coffeePaperColors.surfaceContainerHigh,
-            rail: _coffeePaperColors.surfaceContainer.withValues(alpha: 0.92),
+            rail: _coffeePaperBackground.withValues(alpha: 0.96),
             stage: _coffeePaperColors.surfaceDim),
       };
 

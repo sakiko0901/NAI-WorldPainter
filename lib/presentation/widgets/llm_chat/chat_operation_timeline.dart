@@ -18,71 +18,62 @@ class ToolExecutionTimeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final muted = theme.colorScheme.onSurfaceVariant;
+    final muted = theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.85);
     final events = _latestEvents(timeline);
-    final visibleEvents =
-        events.skip((events.length - 3).clamp(0, events.length));
+    if (events.isEmpty) return const SizedBox.shrink();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextButton.icon(
-          style: TextButton.styleFrom(
-            foregroundColor: muted,
-            padding: const EdgeInsets.symmetric(horizontal: 5),
-            minimumSize: const Size(0, 40),
-          ),
-          onPressed: () => _showDetails(context),
-          icon: const Icon(Icons.timeline_rounded, size: 17),
-          label: Wrap(
-            spacing: 7,
-            crossAxisAlignment: WrapCrossAlignment.center,
+    AgentEvent? running;
+    for (final event in events.reversed) {
+      if (event.status == 'running') {
+        running = event;
+        break;
+      }
+    }
+    final latest = running ?? events.last;
+    final latestTitle = _operationTitle(latest.toolName);
+    final summary = running != null
+        ? '正在$latestTitle…（共 ${events.length} 项）'
+        : '操作过程 · ${events.length} 项 · $latestTitle';
+
+    return InkWell(
+      key: const ValueKey('chat-operations-summary'),
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _showDetails(context, selected: latest),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 34),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text('操作过程 · ${events.length} 项'),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('查看详情', style: theme.textTheme.labelSmall),
-                  const Icon(Icons.chevron_right_rounded, size: 17),
-                ],
+              if (running != null)
+                SizedBox.square(
+                  dimension: 13,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    color: muted,
+                  ),
+                )
+              else
+                Icon(Icons.schedule_rounded, size: 15, color: muted),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 13,
+                    color: muted,
+                  ),
+                ),
               ),
+              const SizedBox(width: 2),
+              Icon(Icons.chevron_right_rounded, size: 16, color: muted),
             ],
           ),
         ),
-        for (final event in visibleEvents)
-          Padding(
-            padding: const EdgeInsetsDirectional.only(start: 6),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _showDetails(context, selected: event),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 40),
-                child: Row(
-                  children: [
-                    Icon(_operationIcon(event.toolName),
-                        color: muted, size: 16),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        _operationTitle(event.toolName),
-                        style:
-                            theme.textTheme.bodySmall?.copyWith(color: muted),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _statusLabel(event.status),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: _statusColor(event.status, theme.colorScheme),
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
+      ),
     );
   }
 
@@ -341,21 +332,6 @@ String _operationTitle(String name) => switch (name) {
       'ask_user' => '询问用户',
       '' => '工具操作',
       _ => name,
-    };
-
-IconData _operationIcon(String name) => switch (name) {
-      'read_current_prompts' ||
-      'read_comic_panel_prompt' =>
-        Icons.subject_rounded,
-      'write_prompt' || 'write_comic_panel_prompt' => Icons.edit_outlined,
-      'search_danbooru' => Icons.search_rounded,
-      'remove_character' || 'clear_characters' => Icons.person_remove_outlined,
-      'generate_image' ||
-      'upscale_image' ||
-      'save_image' =>
-        Icons.image_outlined,
-      'ask_user' => Icons.question_answer_outlined,
-      _ => Icons.build_outlined,
     };
 
 String _statusLabel(String status) => switch (status) {

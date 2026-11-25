@@ -52,53 +52,61 @@ class _ThemeAppearancePageState extends State<ThemeAppearancePage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: Material(
-              color: glass.panel,
-              child: Column(
-                children: [
-                  _AppearanceOption(
-                    icon: CupertinoIcons.sun_max_fill,
-                    title: '亮色',
-                    selected: _selectedMode == AppearanceMode.light,
-                    onTap: () => _select(AppearanceMode.light),
-                  ),
-                  const Divider(height: 1, indent: 58),
-                  _AppearanceOption(
-                    icon: CupertinoIcons.moon_stars_fill,
-                    title: '暗色',
-                    selected: _selectedMode == AppearanceMode.dark,
-                    onTap: () => _select(AppearanceMode.dark),
-                  ),
-                  const Divider(height: 1, indent: 58),
-                  _AppearanceOption(
-                    icon: CupertinoIcons.doc_text_fill,
-                    title: '咖啡纸',
-                    selected: _selectedMode == AppearanceMode.coffeePaper,
-                    onTap: () => _select(AppearanceMode.coffeePaper),
-                  ),
-                ],
-              ),
+          Material(
+            color: glass.panel,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: glass.appearanceMode == AppearanceMode.coffeePaper
+                  ? BorderSide(color: glass.border)
+                  : BorderSide.none,
+            ),
+            child: Column(
+              children: [
+                _AppearanceOption(
+                  icon: CupertinoIcons.sun_max_fill,
+                  title: '亮色',
+                  selected: _selectedMode == AppearanceMode.light,
+                  onTap: () => _select(AppearanceMode.light),
+                ),
+                const Divider(height: 1, indent: 58),
+                _AppearanceOption(
+                  icon: CupertinoIcons.moon_stars_fill,
+                  title: '暗色',
+                  selected: _selectedMode == AppearanceMode.dark,
+                  onTap: () => _select(AppearanceMode.dark),
+                ),
+                const Divider(height: 1, indent: 58),
+                _AppearanceOption(
+                  icon: CupertinoIcons.doc_text_fill,
+                  title: '咖啡纸',
+                  selected: _selectedMode == AppearanceMode.coffeePaper,
+                  onTap: () => _select(AppearanceMode.coffeePaper),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 20),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: Material(
-              color: glass.panel,
-              child: SwitchListTile.adaptive(
-                key: const ValueKey('frosted-glass-switch'),
-                title: const Text('毛玻璃效果'),
-                subtitle: const Text('关闭后停用界面模糊与图片氛围背景，保留配色和布局'),
-                value: _frostedGlassEnabled,
-                onChanged: widget.onFrostedGlassChanged == null
-                    ? null
-                    : (enabled) {
-                        setState(() => _frostedGlassEnabled = enabled);
-                        widget.onFrostedGlassChanged!(enabled);
-                      },
-              ),
+          Material(
+            color: glass.panel,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: glass.appearanceMode == AppearanceMode.coffeePaper
+                  ? BorderSide(color: glass.border)
+                  : BorderSide.none,
+            ),
+            child: SwitchListTile.adaptive(
+              key: const ValueKey('frosted-glass-switch'),
+              title: const Text('毛玻璃效果'),
+              subtitle: const Text('关闭后停用界面模糊与图片氛围背景，保留配色和布局'),
+              value: _frostedGlassEnabled,
+              onChanged: widget.onFrostedGlassChanged == null
+                  ? null
+                  : (enabled) {
+                      setState(() => _frostedGlassEnabled = enabled);
+                      widget.onFrostedGlassChanged!(enabled);
+                    },
             ),
           ),
         ],
@@ -124,12 +132,12 @@ class _AppearanceOption extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final glass = FrostedTheme.of(context);
-    final highlight =
-        selected && glass.appearanceMode == AppearanceMode.coffeePaper;
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final highlight = selected && isCoffeePaper;
     return Semantics(
       selected: selected,
       child: Ink(
-        color: highlight ? glass.selection.withValues(alpha: 0.45) : null,
+        color: highlight ? glass.selection.withValues(alpha: 0.72) : null,
         child: InkWell(
           onTap: onTap,
           child: Padding(
@@ -145,8 +153,12 @@ class _AppearanceOption extends StatelessWidget {
                     title,
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: selected ? colors.primary : colors.onSurface,
+                      fontWeight: isCoffeePaper
+                          ? (selected ? FontWeight.w600 : FontWeight.w500)
+                          : FontWeight.w700,
+                      color: isCoffeePaper
+                          ? colors.onSurface
+                          : (selected ? colors.primary : colors.onSurface),
                     ),
                   ),
                 ),

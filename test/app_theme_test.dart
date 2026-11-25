@@ -62,8 +62,10 @@ void main() {
     final colors = theme.colorScheme;
     final glass = theme.extension<FrostedTheme>()!;
     expect(theme.brightness, Brightness.light);
-    expect(theme.scaffoldBackgroundColor, const Color(0xFFF3EDE2));
-    expect(colors.primary, const Color(0xFFA24E37));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFFFAF9F5));
+    expect(colors.surface, const Color(0xFFFFFFFF));
+    expect(colors.onSurface, const Color(0xFF141413));
+    expect(colors.primary, const Color(0xFFBA5432));
     expect(glass.appearanceMode, AppearanceMode.coffeePaper);
     expect(glass.panel, colors.surface);
     expect(glass.selection, colors.primaryContainer);
@@ -142,7 +144,7 @@ void main() {
     final paperSurface = find.byWidgetPredicate((widget) =>
         widget is Material &&
         widget.color == theme.colorScheme.surfaceContainerLowest);
-    final barrierColor = theme.colorScheme.scrim.withValues(alpha: 0.42);
+    final barrierColor = theme.colorScheme.scrim.withValues(alpha: 0.30);
     await tester.tap(find.text('打开对话框'));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);

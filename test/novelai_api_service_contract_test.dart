@@ -217,10 +217,10 @@ void main() {
         img.decodePng(await File(result.imagePath!).readAsBytes()), isNotNull);
   });
 
-  test('official V4 and V5 reject precise references before sending', () async {
+  test('official V3 and V4 reject precise references before sending', () async {
     final service = OfficialNovelAiApiService(
         Dio(BaseOptions(baseUrl: baseUri.toString())));
-    for (final model in ['nai-diffusion-4-full', 'nai-diffusion-5-full']) {
+    for (final model in ['nai-diffusion-3', 'nai-diffusion-4-full']) {
       await expectLater(
         service.generateImage(
           _task(model: model, preciseReferences: const [
@@ -231,11 +231,47 @@ void main() {
         throwsA(isA<ApiException>().having(
           (error) => error.message,
           'message',
-          contains('仅支持 V4.5'),
+          contains('仅支持 V4.5 与 V5'),
         )),
       );
     }
     expect(requests, isEmpty);
+  });
+
+  test('official V5 sends precise reference padded PNG in synchronous JSON request',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('v5_precise_contract_');
+    addTearDown(() => dir.delete(recursive: true));
+    final ref = File('${dir.path}/ref.png');
+    await ref.writeAsBytes(img.encodePng(img.Image(width: 8, height: 8)));
+    final service = OfficialNovelAiApiService(
+        Dio(BaseOptions(baseUrl: baseUri.toString())));
+    final result = await service.generateImage(
+      _task(model: 'nai-diffusion-5-full', preciseReferences: [
+        PreciseReferenceImage(
+          path: ref.path,
+          strength: 0.75,
+          fidelity: 0.8,
+          referenceType: 'character',
+        ),
+      ]),
+      'key',
+    );
+    expect(requests, hasLength(1));
+    final body = _body(requests.single);
+    expect(body['model'], 'nai-diffusion-5-full');
+    final params = body['parameters'] as Map<String, dynamic>;
+    expect(params['params_version'], 3);
+    expect(params['noise_schedule'], 'karras');
+    expect(params['director_reference_strength_values'], [0.75]);
+    expect(
+      (params['director_reference_secondary_strength_values'] as List).single,
+      closeTo(0.2, 0.00001),
+    );
+    expect(
+      img.decodePng(await File(result.imagePath!).readAsBytes()),
+      isNotNull,
+    );
   });
 
   for (final model in ['nai-diffusion-4-5-full', 'nai-diffusion-5-full']) {

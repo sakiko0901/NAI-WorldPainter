@@ -113,6 +113,70 @@ void main() {
   });
 
   testWidgets(
+      'coffeePaper uses unified gold/green effort colors, keeps effort visible but locked while generating, and uses black import button',
+      (tester) async {
+    final changes = <GenerationEffort>[];
+    final theme = buildNaiHuishiAppearanceTheme(AppearanceMode.coffeePaper);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: GenerationResultCard(
+            task: null,
+            generating: false,
+            workspaceHeight: 260,
+            effort: GenerationEffort.high,
+            onEffortChanged: changes.add,
+            onImport: () {},
+            onSelect: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<Text>(find.text('High')).style?.color,
+      const Color(0xFFCDB88C),
+    );
+    final importButton = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('result-import-button')),
+    );
+    expect(importButton.style?.backgroundColor?.resolve({}),
+        theme.colorScheme.onSurface);
+    expect(importButton.style?.foregroundColor?.resolve({}),
+        theme.colorScheme.surface);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: GenerationResultCard(
+            task: null,
+            generating: true,
+            workspaceHeight: 260,
+            effort: GenerationEffort.medium,
+            onEffortChanged: null,
+            onImport: null,
+            onSelect: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Medium'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text('Medium')).style?.color,
+      const Color(0xFF9ABA9F),
+    );
+    await tester.tap(find.text('Medium'));
+    await tester.pump();
+    expect(changes, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'historical selection stays visible during stream updates and actions stay scoped',
       (tester) async {
     tester.view.devicePixelRatio = 1;

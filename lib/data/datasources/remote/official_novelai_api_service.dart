@@ -647,8 +647,13 @@ class OfficialNovelAiApiService {
           RegExp(r'-inpainting$'),
           '',
         );
-    return const {'nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated'}
-        .contains(baseModel);
+    return const {
+      'nai-diffusion-4-5-full',
+      'nai-diffusion-4-5-curated',
+      'nai-diffusion-5-full',
+      'nai-diffusion-5-curated',
+      'nai-diffusion-5-full-medium',
+    }.contains(baseModel);
   }
 
   Future<Map<String, dynamic>> buildPayload(GenerationTask task) async {
@@ -659,7 +664,7 @@ class OfficialNovelAiApiService {
             : 'generate';
     final hasPrecise = task.preciseReferences.isNotEmpty;
     if (hasPrecise && !supportsPreciseReference(task.model)) {
-      throw ApiException(message: 'NovelAI 官方精确参考仅支持 V4.5 Full / Curated');
+      throw ApiException(message: 'NovelAI 官方精确参考仅支持 V4.5 与 V5 模型');
     }
     if (hasPrecise && task.vibeReferences.isNotEmpty) {
       throw ApiException(message: '精确参考与氛围转移不能同时使用');

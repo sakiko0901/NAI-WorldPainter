@@ -12,6 +12,7 @@ import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
     show showFloatingToast;
 import 'package:nai_huishi/presentation/widgets/fullscreen_image_preview.dart';
+import 'package:nai_huishi/presentation/widgets/llm_chat/chat_markdown_text.dart';
 import 'package:nai_huishi/presentation/widgets/llm_chat/chat_operation_timeline.dart';
 
 class ChatMessageBubble extends StatefulWidget {
@@ -111,21 +112,26 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               ),
               child: Container(
                 padding: EdgeInsets.symmetric(
-                    horizontal: isUser ? 12 : 0, vertical: 10),
+                    horizontal: isUser ? (isCoffeePaper ? 15 : 12) : 0,
+                    vertical: 10),
                 decoration: !isUser
                     ? null
                     : BoxDecoration(
                         color: userBubble,
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(18),
-                          topRight: const Radius.circular(18),
-                          bottomLeft: const Radius.circular(18),
-                          bottomRight: const Radius.circular(4),
-                        ),
-                        border: Border.all(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.08),
-                        ),
+                        borderRadius: isCoffeePaper
+                            ? BorderRadius.circular(20)
+                            : const BorderRadius.only(
+                                topLeft: Radius.circular(18),
+                                topRight: Radius.circular(18),
+                                bottomLeft: Radius.circular(18),
+                                bottomRight: Radius.circular(4),
+                              ),
+                        border: isCoffeePaper
+                            ? null
+                            : Border.all(
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.08),
+                              ),
                       ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -198,24 +204,36 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                         ),
                       ),
                     if (hasText)
-                      _TapDetector(
-                        onTap: isUser
-                            ? () => setState(() => _menuVisible = !_menuVisible)
-                            : null,
-                        child: SelectableText(
-                          message.content.trim(),
-                          style: TextStyle(
-                            fontSize: isUser ? 14 : 15,
-                            height: isUser ? 1.5 : 1.65,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                          contextMenuBuilder: (context, editableTextState) {
-                            return AdaptiveTextSelectionToolbar.editableText(
-                              editableTextState: editableTextState,
-                            );
-                          },
-                        ),
-                      ),
+                      isUser
+                          ? _TapDetector(
+                              onTap: () =>
+                                  setState(() => _menuVisible = !_menuVisible),
+                              child: SelectableText(
+                                message.content.trim(),
+                                style: TextStyle(
+                                  fontSize: isCoffeePaper ? 14.5 : 14,
+                                  height: 1.5,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                                contextMenuBuilder:
+                                    (context, editableTextState) {
+                                  return AdaptiveTextSelectionToolbar
+                                      .editableText(
+                                    editableTextState: editableTextState,
+                                  );
+                                },
+                              ),
+                            )
+                          : ChatMarkdownText(
+                              text: message.content.trim(),
+                              editorialSerif: isCoffeePaper,
+                              baseStyle: TextStyle(
+                                fontSize: isCoffeePaper ? 15.5 : 15,
+                                height: isCoffeePaper ? 1.68 : 1.65,
+                                letterSpacing: isCoffeePaper ? 0.1 : 0,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
                     if (!isUser && message.interaction != null)
                       Padding(
                         padding: EdgeInsets.only(top: hasText ? 10 : 0),
@@ -323,47 +341,66 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   Widget _buildMenuButtons(BuildContext context) {
     final theme = Theme.of(context);
     if (!isUser) {
-      final color = theme.colorScheme.onSurfaceVariant;
+      final color = theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.78);
+      Widget action({
+        required String tooltip,
+        required IconData icon,
+        required VoidCallback onPressed,
+      }) =>
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: IconButton(
+              tooltip: tooltip,
+              onPressed: onPressed,
+              icon: Icon(icon, size: 17),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(38, 38),
+                maximumSize: const Size(38, 38),
+                padding: EdgeInsets.zero,
+                foregroundColor: color,
+              ),
+            ),
+          );
+
       return Wrap(
         spacing: 2,
         children: [
           if (_textForCopy.trim().isNotEmpty)
-            IconButton(
+            action(
               tooltip: '整段复制',
-              color: color,
-              icon: const Icon(CupertinoIcons.doc_on_doc, size: 19),
+              icon: CupertinoIcons.doc_on_doc,
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: _textForCopy));
                 showFloatingToast(context, '已复制');
               },
             ),
           if (widget.onBranch != null)
-            IconButton(
+            action(
               tooltip: '从这里创建分支',
-              color: color,
-              icon: const Icon(Icons.call_split, size: 20),
-              onPressed: widget.onBranch,
+              icon: Icons.call_split,
+              onPressed: widget.onBranch!,
             ),
           if (widget.onRetry != null)
-            IconButton(
+            action(
               tooltip: '重试',
-              color: color,
-              icon: const Icon(CupertinoIcons.arrow_clockwise, size: 20),
-              onPressed: widget.onRetry,
+              icon: CupertinoIcons.arrow_clockwise,
+              onPressed: widget.onRetry!,
             ),
           if (widget.onUndoPrompt != null)
-            IconButton(
+            action(
               tooltip: '恢复上一版提示词',
-              color: color,
-              icon: const Icon(Icons.undo, size: 21),
-              onPressed: widget.onUndoPrompt,
+              icon: Icons.undo,
+              onPressed: widget.onUndoPrompt!,
             ),
           if (widget.onReturnToParent != null)
-            IconButton(
+            action(
               tooltip: '返回原会话',
-              color: color,
-              icon: const Icon(Icons.reply, size: 20),
-              onPressed: widget.onReturnToParent,
+              icon: Icons.reply,
+              onPressed: widget.onReturnToParent!,
             ),
         ],
       );

@@ -142,24 +142,22 @@ void main() {
         expect(reveal, findsNothing);
         final undo = find.byTooltip('恢复上一版提示词');
         expect(undo.hitTestable(), findsOneWidget);
-        final operations = find.text('操作过程 · 2 项');
+        final operations = find.byKey(const ValueKey('chat-operations-summary'));
         final read = find.text('读取提示词框');
         final write = find.text('写入提示词');
         final readResult = find.text('已读取当前提示词框');
         final writeResult = find.text('提示词已写入');
         final details = find.byKey(const ValueKey('chat-operations-sheet'));
-        expect(read, findsOneWidget);
-        expect(write, findsOneWidget);
+        expect(operations, findsOneWidget);
+        expect(find.text('操作过程 · 2 项 · 写入提示词'), findsOneWidget);
+        expect(read, findsNothing);
+        expect(write, findsNothing);
         expect(readResult, findsNothing);
         expect(writeResult, findsNothing);
         expect(tester.getTopLeft(operations).dy,
-            lessThan(tester.getTopLeft(read).dy));
-        expect(
-            tester.getTopLeft(read).dy, lessThan(tester.getTopLeft(write).dy));
-        expect(tester.getTopLeft(write).dy,
             lessThan(tester.getTopLeft(message).dy));
         await capture(tester, key, 'message-actions-assistant');
-        await tester.tap(find.text('查看详情'));
+        await tester.tap(operations);
         await tester.pumpAndSettle();
         expect(details, findsOneWidget);
         expect(find.descendant(of: details, matching: find.text('操作过程')),
@@ -179,14 +177,6 @@ void main() {
         await tester.tap(close);
         await tester.pumpAndSettle();
         expect(details, findsNothing);
-        await tester.tap(write);
-        await tester.pumpAndSettle();
-        expect(details, findsOneWidget);
-        expect(
-            find.descendant(of: details, matching: writeResult).hitTestable(),
-            findsOneWidget);
-        await tester.tap(close);
-        await tester.pumpAndSettle();
         expect(readResult, findsNothing);
         expect(writeResult, findsNothing);
         await tester.tap(undo);
@@ -250,7 +240,8 @@ void main() {
     ));
 
     expect(find.text('步骤 1'), findsNothing);
-    await tester.tap(find.text('步骤 20'));
+    expect(find.text('操作过程 · 20 项 · 步骤 20'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chat-operations-summary')));
     await tester.pumpAndSettle();
     final sheet = find.byKey(const ValueKey('chat-operations-sheet'));
     final first = find.descendant(of: sheet, matching: find.text('步骤 1'));

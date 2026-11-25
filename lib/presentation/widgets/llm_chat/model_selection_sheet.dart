@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_role_binding.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 
 Future<LlmRoleBinding?> showModelSelectionSheet(
   BuildContext context, {
@@ -257,6 +258,11 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
   Widget _model(LlmProvider provider, String model, {bool inline = false}) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final glass = FrostedTheme.of(context);
+    final isCoffeePaper = glass.appearanceMode == AppearanceMode.coffeePaper;
+    final selectedFill = isCoffeePaper
+        ? glass.selection
+        : colors.primary.withValues(alpha: inline ? .13 : 0.12);
     final selected = widget.selected.providerId == provider.id &&
         widget.selected.model == model;
     if (inline) {
@@ -264,9 +270,7 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
         selected: selected,
         child: Material(
           borderRadius: BorderRadius.circular(13),
-          color: selected
-              ? colors.primary.withValues(alpha: .13)
-              : Colors.transparent,
+          color: selected ? selectedFill : Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(13),
             onTap: () =>
@@ -283,7 +287,9 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
                               fontWeight: selected
-                                  ? FontWeight.w700
+                                  ? (isCoffeePaper
+                                      ? FontWeight.w600
+                                      : FontWeight.w700)
                                   : FontWeight.w500))),
                   if (selected)
                     Icon(Icons.check_rounded, size: 19, color: colors.primary),
@@ -297,9 +303,7 @@ class _ModelSelectionSheetState extends State<ModelSelectionSheet> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Material(
-        color: selected
-            ? colors.primary.withValues(alpha: 0.12)
-            : Colors.transparent,
+        color: selected ? selectedFill : Colors.transparent,
         borderRadius: BorderRadius.circular(18),
         child: ListTile(
           shape:

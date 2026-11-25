@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:nai_huishi/core/constants/app_constants.dart';
 import 'package:nai_huishi/domain/entities/llm_profile_role.dart';
 import 'package:nai_huishi/domain/entities/llm_provider.dart';
+import 'package:nai_huishi/presentation/app_theme.dart';
 import 'package:nai_huishi/presentation/pages/llm_provider_manage_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/floating_toast.dart'
@@ -121,28 +122,42 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                 Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    child: DecoratedBox(
-                        decoration: BoxDecoration(
-                            color: theme.colorScheme.onSurface
-                                .withValues(alpha: 0.04),
-                            borderRadius: BorderRadius.circular(16)),
-                        child: TabBar(
-                          controller: _tabController,
-                          dividerColor: Colors.transparent,
-                          indicatorSize: TabBarIndicatorSize.tab,
-                          indicatorPadding: const EdgeInsets.all(4),
-                          indicator: BoxDecoration(
-                              color: theme.colorScheme.primary
-                                  .withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(12)),
-                          tabs: const [
-                            Tab(text: '模型'),
-                            Tab(text: '通用'),
-                          ],
-                          labelColor: theme.colorScheme.primary,
-                          unselectedLabelColor:
-                              theme.colorScheme.onSurfaceVariant,
-                        ))),
+                    child: Builder(builder: (context) {
+                      final glass = FrostedTheme.of(context);
+                      final isCoffeePaper =
+                          glass.appearanceMode == AppearanceMode.coffeePaper;
+                      return DecoratedBox(
+                          decoration: BoxDecoration(
+                              color: isCoffeePaper
+                                  ? theme.colorScheme.surfaceContainerHighest
+                                  : theme.colorScheme.onSurface
+                                      .withValues(alpha: 0.04),
+                              borderRadius: BorderRadius.circular(16)),
+                          child: TabBar(
+                            controller: _tabController,
+                            dividerColor: Colors.transparent,
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            indicatorPadding: const EdgeInsets.all(4),
+                            indicator: BoxDecoration(
+                                color: isCoffeePaper
+                                    ? theme.colorScheme.surface
+                                    : theme.colorScheme.primary
+                                        .withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(12),
+                                border: isCoffeePaper
+                                    ? Border.all(color: glass.border)
+                                    : null),
+                            tabs: const [
+                              Tab(text: '模型'),
+                              Tab(text: '通用'),
+                            ],
+                            labelColor: isCoffeePaper
+                                ? theme.colorScheme.onSurface
+                                : theme.colorScheme.primary,
+                            unselectedLabelColor:
+                                theme.colorScheme.onSurfaceVariant,
+                          ));
+                    })),
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
@@ -251,8 +266,11 @@ class _ChatSettingsSheetState extends State<_ChatSettingsSheet>
                               ?.copyWith(fontSize: 21, height: 1.25)),
                       const SizedBox(height: 6),
                       Text(provider?.name ?? '点击选择供应商与模型',
-                          style: theme.textTheme.bodySmall
-                              ?.copyWith(color: colors.primary)),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: FrostedTheme.of(context).appearanceMode ==
+                                      AppearanceMode.coffeePaper
+                                  ? colors.onSurfaceVariant
+                                  : colors.primary)),
                     ])),
                 const SizedBox(width: 12),
                 Icon(Icons.unfold_more_rounded, color: colors.onSurfaceVariant),

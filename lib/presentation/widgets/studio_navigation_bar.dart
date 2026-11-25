@@ -182,7 +182,10 @@ class _StudioNavigationBarState extends State<StudioNavigationBar> {
                                 ? 1
                                 : theme.brightness == Brightness.dark
                                     ? .12
-                                    : .45),
+                                    : glass.appearanceMode ==
+                                            AppearanceMode.coffeePaper
+                                        ? .85
+                                        : .45),
                         borderRadius: BorderRadius.circular(26),
                         border: highContrast
                             ? Border.all(color: glass.border)
