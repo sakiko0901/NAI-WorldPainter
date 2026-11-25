@@ -238,7 +238,7 @@ void main() {
     expect(requests, isEmpty);
   });
 
-  test('official V5 sends precise reference padded PNG in synchronous JSON request',
+  test('official V5 sends precise reference center-cropped PNG with V5 schema',
       () async {
     final dir = await Directory.systemTemp.createTemp('v5_precise_contract_');
     addTearDown(() => dir.delete(recursive: true));
@@ -250,9 +250,9 @@ void main() {
       _task(model: 'nai-diffusion-5-full', preciseReferences: [
         PreciseReferenceImage(
           path: ref.path,
-          strength: 0.75,
-          fidelity: 0.8,
-          referenceType: 'character',
+          strength: 2.5,
+          fidelity: 0.2,
+          referenceType: 'costume',
         ),
       ]),
       'key',
@@ -261,12 +261,14 @@ void main() {
     final body = _body(requests.single);
     expect(body['model'], 'nai-diffusion-5-full');
     final params = body['parameters'] as Map<String, dynamic>;
-    expect(params['params_version'], 3);
+    expect(params['params_version'], 4);
     expect(params['noise_schedule'], 'karras');
-    expect(params['director_reference_strength_values'], [0.75]);
+    expect(params['director_reference_strength_values'], [2.5]);
+    expect(params['director_reference_secondary_strength_values'], [0]);
     expect(
-      (params['director_reference_secondary_strength_values'] as List).single,
-      closeTo(0.2, 0.00001),
+      (params['director_reference_descriptions'] as List).single['caption']
+          ['base_caption'],
+      'costume',
     );
     expect(
       img.decodePng(await File(result.imagePath!).readAsBytes()),

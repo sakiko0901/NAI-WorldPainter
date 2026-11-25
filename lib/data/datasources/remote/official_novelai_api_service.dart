@@ -643,17 +643,14 @@ class OfficialNovelAiApiService {
   }
 
   static bool supportsPreciseReference(String model) {
-    final baseModel = model.trim().toLowerCase().replaceFirst(
-          RegExp(r'-inpainting$'),
-          '',
-        );
-    return const {
-      'nai-diffusion-4-5-full',
-      'nai-diffusion-4-5-curated',
-      'nai-diffusion-5-full',
-      'nai-diffusion-5-curated',
-      'nai-diffusion-5-full-medium',
-    }.contains(baseModel);
+    final normalized = model.trim().toLowerCase();
+    if (normalized == 'nai-diffusion-5-full' ||
+        normalized == 'nai-diffusion-5-curated') {
+      return true;
+    }
+    final baseModel = normalized.replaceFirst(RegExp(r'-inpainting$'), '');
+    return const {'nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated'}
+        .contains(baseModel);
   }
 
   Future<Map<String, dynamic>> buildPayload(GenerationTask task) async {
@@ -662,9 +659,14 @@ class OfficialNovelAiApiService {
         : task.img2imgSourceImagePath != null
             ? 'img2img'
             : 'generate';
+    final isV5 = _isV5(task.model);
     final hasPrecise = task.preciseReferences.isNotEmpty;
+    if (hasPrecise && isV5 && action == 'infill') {
+      throw ApiException(message: 'NovelAI V5 局部重绘暂不支持精确参考');
+    }
     if (hasPrecise && !supportsPreciseReference(task.model)) {
-      throw ApiException(message: 'NovelAI 官方精确参考仅支持 V4.5 与 V5 模型');
+      throw ApiException(
+          message: 'NovelAI 官方精确参考仅支持 V4.5 与 V5 Full / Curated 模型');
     }
     if (hasPrecise && task.vibeReferences.isNotEmpty) {
       throw ApiException(message: '精确参考与氛围转移不能同时使用');
@@ -695,7 +697,7 @@ class OfficialNovelAiApiService {
             })
         .toList();
     final parameters = <String, dynamic>{
-      'params_version': hasPrecise ? 3 : 4,
+      'params_version': hasPrecise && !isV5 ? 3 : 4,
       'width': task.width,
       'height': task.height,
       'steps': task.steps,
@@ -765,8 +767,8 @@ class OfficialNovelAiApiService {
           .toList();
     }
     if (hasPrecise) {
-      parameters
-          .addAll(await _preciseReferenceParameters(task.preciseReferences));
+      parameters.addAll(
+          await _preciseReferenceParameters(task.preciseReferences, isV5: isV5));
     }
     final model = action == 'infill' && !task.model.endsWith('-inpainting')
         ? '${task.model}-inpainting'
@@ -780,11 +782,24 @@ class OfficialNovelAiApiService {
   }
 
   Future<Map<String, dynamic>> _preciseReferenceParameters(
-      List<PreciseReferenceImage> references) async {
+    List<PreciseReferenceImage> references, {
+    required bool isV5,
+  }) async {
+    final active = <(PreciseReferenceImage ref, String caption)>[];
+    for (final reference in references) {
+      final caption = reference.wireCaption(supportsOutfit: isV5);
+      if (caption != null) active.add((reference, caption));
+    }
+    if (active.isEmpty) {
+      throw ApiException(message: '当前模型不支持衣装参考，请切换 V5 模型');
+    }
     final encoded = <String>[];
-    for (final (index, reference) in references.indexed) {
+    for (final (index, entry) in active.indexed) {
       try {
-        encoded.add(await compute(_encodePreciseReference, reference.path));
+        encoded.add(await compute(
+          _encodePreciseReferenceForModel,
+          (path: entry.$1.path, isV5: isV5),
+        ));
       } on FileSystemException {
         throw ApiException(message: '精确参考图 ${index + 1} 不可用，请重新选择');
       } on FormatException {
@@ -794,23 +809,27 @@ class OfficialNovelAiApiService {
     return {
       'director_reference_images': encoded,
       'director_reference_descriptions': [
-        for (final reference in references)
+        for (final entry in active)
           {
             'caption': {
-              'base_caption': reference.referenceType,
+              'base_caption': entry.$2,
               'char_captions': []
             },
             'legacy_uc': false
           },
       ],
-      'director_reference_strength_values': references
-          .map((reference) => reference.strength.clamp(0, 1))
+      'director_reference_strength_values': active
+          .map((entry) => isV5
+              ? entry.$1.strength.clamp(-5.0, 5.0)
+              : entry.$1.strength.clamp(0.0, 1.0))
           .toList(),
-      'director_reference_secondary_strength_values': references
-          .map((reference) => 1.0 - reference.fidelity.clamp(0.0, 1.0))
-          .toList(),
+      'director_reference_secondary_strength_values': isV5
+          ? List<num>.filled(active.length, 0)
+          : active
+              .map((entry) => 1.0 - entry.$1.fidelity.clamp(0.0, 1.0))
+              .toList(),
       'director_reference_information_extracted':
-          List.filled(references.length, 1),
+          List.filled(active.length, 1),
       'normalize_reference_strength_multiple': true,
     };
   }
@@ -906,12 +925,54 @@ class OfficialNovelAiApiService {
       model.toLowerCase().contains('diffusion-4') || _isV5(model);
 }
 
-Future<String> _encodePreciseReference(String path) async {
-  final bytes = await File(path).readAsBytes();
+final List<(int, int)> _v5ReferenceBuckets = () {
+  final buckets = <(int, int)>[(1024, 1024)];
+  for (var longSide = 1088; longSide <= 4096; longSide += 64) {
+    final shortSide = ((1048576 ~/ longSide) ~/ 64) * 64;
+    buckets.insert(0, (shortSide, longSide));
+    buckets.add((longSide, shortSide));
+  }
+  return buckets;
+}();
+
+Future<String> _encodePreciseReferenceForModel(
+  ({String path, bool isV5}) args,
+) async {
+  final bytes = await File(args.path).readAsBytes();
   final decoded = img.decodeImage(bytes);
   if (decoded == null) throw const FormatException('Invalid reference image');
   final image = img.bakeOrientation(decoded);
   final ratio = image.width / image.height;
+  if (args.isV5) {
+    final logRatio = math.log(ratio);
+    var best = _v5ReferenceBuckets.first;
+    var bestDiff = double.infinity;
+    for (final candidate in _v5ReferenceBuckets) {
+      final diff = (logRatio - math.log(candidate.$1 / candidate.$2)).abs();
+      if (diff < bestDiff) {
+        best = candidate;
+        bestDiff = diff;
+      }
+    }
+    final (width, height) = best;
+    final scale = math.max(width / image.width, height / image.height);
+    final resizeWidth = math.max(width, (image.width * scale).round());
+    final resizeHeight = math.max(height, (image.height * scale).round());
+    final resized = img.copyResize(
+      image,
+      width: resizeWidth,
+      height: resizeHeight,
+      interpolation: img.Interpolation.linear,
+    );
+    final cropped = img.copyCrop(
+      resized,
+      x: (resizeWidth - width) ~/ 2,
+      y: (resizeHeight - height) ~/ 2,
+      width: width,
+      height: height,
+    );
+    return base64Encode(img.encodePng(cropped));
+  }
   const sizes = [(1024, 1536), (1536, 1024), (1472, 1472)];
   final (width, height) = sizes.reduce((best, candidate) =>
       (ratio - candidate.$1 / candidate.$2).abs() <

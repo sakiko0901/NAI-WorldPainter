@@ -298,7 +298,7 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
       : AppConstants.maxVibeReferences;
 
   bool get supportsPreciseReferences {
-    if (_isGatewayMediumEffort) return false;
+    if (isMediumEffort) return false;
     if (!isIkunEndpoint && !isOfficialEndpoint) return false;
     final model =
         currentModelOption?.actualModel ?? _resolveActualModelId(selectedModel);

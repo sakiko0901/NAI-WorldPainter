@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -101,52 +102,67 @@ void main() {
         'style');
   });
 
-  test('official V5 models support precise character reference payloads',
+  test('official V5 models support precise character, outfit, same-outfit, and -5..5 strength payloads',
       () async {
     for (final model in const [
       'nai-diffusion-5-full',
       'nai-diffusion-5-curated',
-      'nai-diffusion-5-full-medium',
-      'nai-diffusion-5-full-inpainting',
     ]) {
       expect(OfficialNovelAiApiService.supportsPreciseReference(model), isTrue);
     }
-    expect(
-      OfficialNovelAiApiService.supportsPreciseReference('nai-diffusion-4-full'),
-      isFalse,
-    );
+    for (final model in const [
+      'nai-diffusion-4-full',
+      'nai-diffusion-5-full-medium',
+      'nai-diffusion-5-full-inpainting',
+    ]) {
+      expect(
+          OfficialNovelAiApiService.supportsPreciseReference(model), isFalse);
+    }
 
     final dir = await Directory.systemTemp.createTemp('v5-precise-payload');
     addTearDown(() => dir.delete(recursive: true));
     final file = await File('${dir.path}/ref.png')
-        .writeAsBytes(img.encodePng(img.Image(width: 4, height: 4)));
+        .writeAsBytes(img.encodePng(img.Image(width: 20, height: 20)));
     final payload = await OfficialNovelAiApiService(Dio()).buildPayload(
       _task().copyWith(
         model: 'nai-diffusion-5-full',
         preciseReferences: [
           PreciseReferenceImage(
             path: file.path,
-            strength: 0.85,
-            fidelity: 0.8,
+            strength: -2.5,
+            fidelity: 0.3,
             referenceType: 'character',
+            preferSameOutfit: true,
+          ),
+          PreciseReferenceImage(
+            path: file.path,
+            strength: 3.5,
+            referenceType: 'character&style',
+            preferSameOutfit: false,
+          ),
+          PreciseReferenceImage(
+            path: file.path,
+            strength: 1.5,
+            referenceType: 'costume',
           ),
         ],
       ),
     );
     final params = payload['parameters'] as Map;
     expect(payload['model'], 'nai-diffusion-5-full');
-    expect(params['params_version'], 3);
+    expect(params['params_version'], 4);
     expect(params['noise_schedule'], 'karras');
-    expect((params['director_reference_images'] as List), hasLength(1));
-    expect(params['director_reference_strength_values'], [0.85]);
+    final images = params['director_reference_images'] as List;
+    expect(images, hasLength(3));
+    final decoded = img.decodePng(base64Decode(images.first as String))!;
+    expect((decoded.width, decoded.height), (1024, 1024));
+    expect(params['director_reference_strength_values'], [-2.5, 3.5, 1.5]);
+    expect(params['director_reference_secondary_strength_values'], [0, 0, 0]);
     expect(
-      (params['director_reference_secondary_strength_values'] as List).single,
-      closeTo(0.2, .00001),
-    );
-    expect(
-      (params['director_reference_descriptions'] as List).single['caption']
-          ['base_caption'],
-      'character',
+      (params['director_reference_descriptions'] as List)
+          .map((e) => e['caption']['base_caption'])
+          .toList(),
+      ['character_mainoutfit', 'character&style_anyoutfit', 'costume'],
     );
   });
 

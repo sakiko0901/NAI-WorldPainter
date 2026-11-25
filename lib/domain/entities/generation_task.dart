@@ -211,31 +211,66 @@ class GenerationTask extends Equatable {
 }
 
 class PreciseReferenceImage extends Equatable {
-  static const types = {'character', 'style', 'character&style'};
+  static const types = {'character', 'style', 'character&style', 'costume'};
 
   final String path;
   final String referenceType;
   final double strength;
   final double fidelity;
 
+  /// V5 「尽量保持同款服装 / Prefer same outfit」开关：
+  /// 为 null 时采用各类型默认值（character 默认 false，character&style 默认 true）。
+  final bool? preferSameOutfit;
+
   const PreciseReferenceImage({
     required this.path,
     this.referenceType = 'character&style',
     this.strength = 1.0,
     this.fidelity = 1.0,
+    this.preferSameOutfit,
   });
+
+  /// 当前参考类型是否支持「Prefer same outfit」开关（V5 仅角色 / 角色与画风）。
+  bool get supportsPreferSameOutfit =>
+      referenceType == 'character' || referenceType == 'character&style';
+
+  /// 生效后的「Prefer same outfit」开关状态。
+  bool get effectivePreferSameOutfit =>
+      preferSameOutfit ?? (referenceType == 'character&style');
+
+  /// 映射为官方 `director_reference_descriptions[i].caption.base_caption`。
+  /// 若模型不支持衣装参考且当前为 `costume`，返回 null 表示跳过该项。
+  String? wireCaption({required bool supportsOutfit}) {
+    if (!supportsOutfit) {
+      return referenceType == 'costume' ? null : referenceType;
+    }
+    if (referenceType == 'character') {
+      return effectivePreferSameOutfit ? 'character_mainoutfit' : 'character';
+    }
+    if (referenceType == 'character&style') {
+      return effectivePreferSameOutfit
+          ? 'character&style'
+          : 'character&style_anyoutfit';
+    }
+    return referenceType;
+  }
 
   PreciseReferenceImage copyWith({
     String? path,
     String? referenceType,
     double? strength,
     double? fidelity,
+    bool? preferSameOutfit,
+    bool clearPreferSameOutfit = false,
   }) =>
       PreciseReferenceImage(
         path: path ?? this.path,
         referenceType: referenceType ?? this.referenceType,
         strength: strength ?? this.strength,
         fidelity: fidelity ?? this.fidelity,
+        preferSameOutfit: clearPreferSameOutfit
+            ? null
+            : (preferSameOutfit ?? this.preferSameOutfit),
       );
 
   Map<String, dynamic> toJson() => {
@@ -243,21 +278,38 @@ class PreciseReferenceImage extends Equatable {
         'reference_type': referenceType,
         'strength': strength,
         'fidelity': fidelity,
+        if (preferSameOutfit != null) 'prefer_same_outfit': preferSameOutfit,
       };
 
   factory PreciseReferenceImage.fromJson(Map<String, dynamic> json) {
-    final referenceType = json['reference_type'] as String?;
+    final rawType = json['reference_type'] as String?;
+    String normalizedType;
+    bool? parsedPrefer = json['prefer_same_outfit'] is bool
+        ? json['prefer_same_outfit'] as bool
+        : null;
+    if (rawType == 'character_mainoutfit') {
+      normalizedType = 'character';
+      parsedPrefer ??= true;
+    } else if (rawType == 'character&style_anyoutfit') {
+      normalizedType = 'character&style';
+      parsedPrefer ??= false;
+    } else if (types.contains(rawType)) {
+      normalizedType = rawType!;
+    } else {
+      normalizedType = 'character&style';
+    }
     return PreciseReferenceImage(
       path: json['path'] as String? ?? '',
-      referenceType:
-          types.contains(referenceType) ? referenceType! : 'character&style',
+      referenceType: normalizedType,
       strength: (json['strength'] as num?)?.toDouble() ?? 1.0,
       fidelity: ((json['fidelity'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
+      preferSameOutfit: parsedPrefer,
     );
   }
 
   @override
-  List<Object?> get props => [path, referenceType, strength, fidelity];
+  List<Object?> get props =>
+      [path, referenceType, strength, fidelity, preferSameOutfit];
 }
 
 class CharacterReferenceImage extends Equatable {

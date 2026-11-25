@@ -2139,8 +2139,9 @@ class _CharacterReferenceSection extends StatelessWidget {
           icon: CupertinoIcons.person_crop_rectangle,
           children: [
             if (!vm.supportsPreciseReferences)
-              _unavailableHint(colors, '当前模型或渠道不支持精确参考，官方线路需使用 V4.5 或 V5 模型。'),
-            const Text('按参考图锁定角色外观、画风或两者。与氛围转移互斥，官方额外费用从每张生成图 5 Anlas 起。'),
+              _unavailableHint(
+                  colors, '当前模型或渠道不支持精确参考，官方线路需使用 V4.5 或 V5 High 模型。'),
+            const Text('按参考图锁定角色外观、画风或衣装（V5 新增）。与氛围转移互斥，官方额外费用从每张生成图 5 Anlas 起。'),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: vm.supportsPreciseReferences &&
@@ -2155,6 +2156,7 @@ class _CharacterReferenceSection extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 12),
                 child: _PreciseReferenceCard(
                   image: entry.value,
+                  isV5: vm.isV5Model,
                   onReplace: () => _replacePreciseReference(entry.key),
                   onUpdate: (reference) =>
                       vm.updatePreciseReference(entry.key, reference),
@@ -2606,16 +2608,24 @@ class _ReferencePreview extends StatelessWidget {
 
 class _PreciseReferenceCard extends StatelessWidget {
   final PreciseReferenceImage image;
+  final bool isV5;
   final VoidCallback onReplace;
   final ValueChanged<PreciseReferenceImage> onUpdate;
   final VoidCallback onDelete;
-  const _PreciseReferenceCard(
-      {required this.image,
-      required this.onReplace,
-      required this.onUpdate,
-      required this.onDelete});
+  const _PreciseReferenceCard({
+    required this.image,
+    required this.isV5,
+    required this.onReplace,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
   @override
-  Widget build(BuildContext context) => FrostedSurface(
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final showCostumeOption = isV5 || image.referenceType == 'costume';
+    final unsupportedCostume = !isV5 && image.referenceType == 'costume';
+    return FrostedSurface(
       radius: 18,
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -2624,22 +2634,51 @@ class _PreciseReferenceCard extends StatelessWidget {
           _ReferencePreview(path: image.path),
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
-            key: ValueKey(image.referenceType),
+            key: ValueKey('${image.referenceType}-$isV5'),
             initialValue: image.referenceType,
             isExpanded: true,
             decoration: const InputDecoration(labelText: '参考类型'),
-            items: const [
-              DropdownMenuItem(
+            items: [
+              const DropdownMenuItem(
                   value: 'character', child: Text('角色 · Character')),
-              DropdownMenuItem(value: 'style', child: Text('画风 · Style')),
-              DropdownMenuItem(
+              const DropdownMenuItem(
+                  value: 'style', child: Text('画风 · Style')),
+              const DropdownMenuItem(
                   value: 'character&style',
                   child: Text('角色与画风 · Character & Style')),
+              if (showCostumeOption)
+                const DropdownMenuItem(
+                    value: 'costume', child: Text('衣装 · Outfit')),
             ],
             onChanged: (value) {
-              if (value != null) onUpdate(image.copyWith(referenceType: value));
+              if (value != null) {
+                onUpdate(image.copyWith(
+                  referenceType: value,
+                  clearPreferSameOutfit: true,
+                ));
+              }
             },
           ),
+          if (unsupportedCostume) ...[
+            const SizedBox(height: 8),
+            Text(
+              '当前模型不支持衣装参考，生成时将自动忽略，请切换 V5 模型。',
+              style: TextStyle(fontSize: 12, color: colors.error),
+            ),
+          ],
+          if (isV5 && image.supportsPreferSameOutfit)
+            SwitchListTile.adaptive(
+              key: const ValueKey('precise-prefer-same-outfit'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text(
+                '尽量保持同款服装 · Prefer same outfit',
+                style: TextStyle(fontSize: 13),
+              ),
+              value: image.effectivePreferSameOutfit,
+              onChanged: (checked) =>
+                  onUpdate(image.copyWith(preferSameOutfit: checked)),
+            ),
           Wrap(alignment: WrapAlignment.end, children: [
             TextButton.icon(
                 onPressed: onReplace,
@@ -2651,44 +2690,73 @@ class _PreciseReferenceCard extends StatelessWidget {
                 icon: const Icon(Icons.delete_outline_rounded)),
           ]),
           _PreciseReferenceSlider(
-              label: 'Strength · 强度',
-              value: image.strength,
-              onChanged: (value) => onUpdate(image.copyWith(strength: value))),
-          _PreciseReferenceSlider(
+            label: 'Strength · 强度',
+            value: image.strength,
+            min: isV5 ? -5.0 : 0.0,
+            max: isV5 ? 5.0 : 1.0,
+            divisions: isV5 ? 200 : 20,
+            fractionDigits: isV5 ? 2 : 1,
+            onChanged: (value) => onUpdate(image.copyWith(
+              strength: double.parse(value.toStringAsFixed(2)),
+            )),
+          ),
+          if (!isV5)
+            _PreciseReferenceSlider(
               label: 'Fidelity · 保真度',
               value: image.fidelity,
-              onChanged: (value) => onUpdate(image.copyWith(fidelity: value))),
+              min: 0.0,
+              max: 1.0,
+              divisions: 20,
+              fractionDigits: 1,
+              onChanged: (value) => onUpdate(image.copyWith(
+                fidelity: double.parse(value.toStringAsFixed(2)),
+              )),
+            ),
         ],
-      ));
+      ),
+    );
+  }
 }
 
 class _PreciseReferenceSlider extends StatelessWidget {
   final String label;
   final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final int fractionDigits;
   final ValueChanged<double> onChanged;
 
   const _PreciseReferenceSlider({
     required this.label,
     required this.value,
+    this.min = 0.0,
+    this.max = 1.0,
+    this.divisions = 20,
+    this.fractionDigits = 1,
     required this.onChanged,
   });
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '$label: ${value.toStringAsFixed(1)}',
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          Slider(
-            value: value.clamp(0.0, 1.0),
-            min: 0,
-            max: 1,
-            onChanged: onChanged,
-          ),
-        ],
-      );
+  Widget build(BuildContext context) {
+    final clamped = value.clamp(min, max);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '$label: ${clamped.toStringAsFixed(fractionDigits)}',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        Slider(
+          value: clamped,
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
 }
 
 class _ReferenceSlider extends StatelessWidget {

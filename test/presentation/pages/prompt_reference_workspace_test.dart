@@ -115,4 +115,89 @@ void main() {
     expect(vm.prompt, 'soft light, blue sky');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'V5 precise reference card exposes Outfit, Prefer same outfit, -5..5 strength and hides Fidelity',
+      (tester) async {
+    final vm = _V5ReferenceFake()
+      ..referenceMode = ReferenceMode.precise
+      ..preciseReferences = const [
+        PreciseReferenceImage(
+          path: 'missing-v5.png',
+          referenceType: 'character',
+          strength: -1.5,
+        ),
+      ];
+    sl.registerSingleton<GenerationViewModel>(vm);
+    addTearDown(() async {
+      await sl.reset();
+      vm.dispose();
+    });
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildNaiHuishiAppearanceTheme(AppearanceMode.coffeePaper),
+      home: const GeneratePage(),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('生成参数'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('角色精确参考 · 1/4'));
+    await tester.tap(find.text('角色精确参考 · 1/4'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('precise-prefer-same-outfit')),
+        findsOneWidget);
+    expect(find.textContaining('Fidelity'), findsNothing);
+    expect(find.text('Strength · 强度: -1.50'), findsOneWidget);
+    final strengthColumn = find
+        .ancestor(
+          of: find.text('Strength · 强度: -1.50'),
+          matching: find.byType(Column),
+        )
+        .first;
+    final slider = tester.widget<Slider>(
+      find.descendant(of: strengthColumn, matching: find.byType(Slider)),
+    );
+    expect(slider.min, -5.0);
+    expect(slider.max, 5.0);
+
+    await tester.ensureVisible(
+        find.byKey(const ValueKey('precise-prefer-same-outfit')));
+    await tester.tap(find.byKey(const ValueKey('precise-prefer-same-outfit')));
+    await tester.pumpAndSettle();
+    expect(vm.preciseReferences.single.preferSameOutfit, isTrue);
+    expect(
+      vm.preciseReferences.single.wireCaption(supportsOutfit: true),
+      'character_mainoutfit',
+    );
+
+    await tester.ensureVisible(find.text('角色 · Character'));
+    await tester.tap(find.text('角色 · Character'));
+    await tester.pumpAndSettle();
+    expect(find.text('衣装 · Outfit'), findsOneWidget);
+    await tester.tap(find.text('衣装 · Outfit').last);
+    await tester.pumpAndSettle();
+    expect(vm.preciseReferences.single.referenceType, 'costume');
+    expect(find.byKey(const ValueKey('precise-prefer-same-outfit')),
+        findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _V5ReferenceFake extends _ReferenceFake {
+  @override
+  bool get isV5Model => true;
+
+  @override
+  Future<void> updatePreciseReference(
+    int index,
+    PreciseReferenceImage reference,
+  ) async {
+    final next = [...preciseReferences];
+    next[index] = reference;
+    preciseReferences = next;
+    notifyListeners();
+  }
 }

@@ -322,18 +322,23 @@ class NovelAiApiService {
   Future<Map<String, dynamic>> _buildPreciseReferenceBody(
     GenerationTask task,
   ) async {
+    final isV5 = _isV5Model(task.model);
     final references = <Map<String, dynamic>>[];
     for (var index = 0; index < task.preciseReferences.length; index++) {
       final reference = task.preciseReferences[index];
+      final caption = reference.wireCaption(supportsOutfit: isV5);
+      if (caption == null) continue;
       final referenceImage = await _readPreciseReferenceIfAvailable(reference);
       if (referenceImage == null) {
         throw ApiException(message: '精密参照图像 ${index + 1} 不可用，请重新选择');
       }
       references.add({
         'reference_image': referenceImage,
-        'reference_type': reference.referenceType,
-        'strength': reference.strength,
-        'fidelity': reference.fidelity.clamp(0.0, 1.0),
+        'reference_type': caption,
+        'strength': isV5
+            ? reference.strength.clamp(-5.0, 5.0)
+            : reference.strength.clamp(0.0, 1.0),
+        'fidelity': isV5 ? 1.0 : reference.fidelity.clamp(0.0, 1.0),
       });
     }
 
