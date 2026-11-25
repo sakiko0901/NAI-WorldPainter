@@ -13,6 +13,7 @@ import 'package:nai_huishi/domain/entities/generation_task.dart';
 import 'package:nai_huishi/domain/entities/app_update.dart';
 import 'package:nai_huishi/domain/entities/novelai_connection.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:nai_huishi/presentation/navigation/character_reference_library_route.dart';
 import 'package:nai_huishi/presentation/pages/api_config_page.dart';
 import 'package:nai_huishi/presentation/pages/app_update_page.dart';
 import 'package:nai_huishi/presentation/pages/artist_prompt_manager_page.dart';
@@ -25,6 +26,7 @@ import 'package:nai_huishi/presentation/pages/online_gallery_page.dart';
 import 'package:nai_huishi/presentation/pages/theme_appearance_page.dart';
 import 'package:nai_huishi/presentation/pages/tag_completion_settings_page.dart';
 import 'package:nai_huishi/presentation/pages/vibe_encoding_library_page.dart';
+import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/viewmodels/settings_viewmodel.dart';
 import 'package:nai_huishi/presentation/widgets/tools/tools_quota_card.dart';
 import 'package:nai_huishi/presentation/widgets/frosted_surface.dart';
@@ -255,6 +257,18 @@ class _SettingsPageState extends State<SettingsPage> {
                       builder: (_) => const ArtistPromptManagerPage(),
                     ),
                   ),
+                ),
+                _SettingsTile(
+                  icon: CupertinoIcons.collections,
+                  title: '参考预设',
+                  subtitle: '按作品查找、保存并复用角色参考图',
+                  onTap: () async {
+                    final applied = await openCharacterReferenceLibrary(
+                        context, sl<GenerationViewModel>());
+                    if (applied && mounted) {
+                      widget.onNavigateToGenerate?.call();
+                    }
+                  },
                 ),
                 _SettingsTile(
                   icon: CupertinoIcons.waveform,

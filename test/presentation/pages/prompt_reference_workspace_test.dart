@@ -1,10 +1,18 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image;
 import 'package:nai_huishi/core/di/injection.dart';
+import 'package:nai_huishi/data/repositories/character_reference_catalog_repository.dart';
+import 'package:nai_huishi/domain/entities/character_reference_asset.dart';
 import 'package:nai_huishi/domain/entities/generation_task.dart';
+import 'package:nai_huishi/presentation/pages/character_reference_library_page.dart';
 import 'package:nai_huishi/presentation/pages/generate_page.dart';
 import 'package:nai_huishi/presentation/viewmodels/generation_viewmodel.dart';
 import 'package:nai_huishi/presentation/app_theme.dart';
+import 'package:path/path.dart' as p;
 import '../../support/frontend_generation_fake.dart';
 
 class _ReferenceFake extends FrontendGenerationFake {
@@ -14,9 +22,107 @@ class _ReferenceFake extends FrontendGenerationFake {
   bool get supportsPreciseReferences => true;
   @override
   int get maxVibeReferences => 16;
+
+  @override
+  Future<void> addPreciseReference(String path,
+      {String referenceType = 'character&style'}) async {
+    referenceMode = ReferenceMode.precise;
+    vibeReferences = const [];
+    preciseReferences = [
+      ...preciseReferences,
+      PreciseReferenceImage(path: path, referenceType: referenceType),
+    ];
+    notifyListeners();
+  }
+}
+
+class _EmptyReferenceCatalog extends CharacterReferenceCatalogRepository {
+  @override
+  Future<List<CharacterReferenceAsset>> load({bool refresh = false}) async =>
+      const [];
+
+  @override
+  Future<List<SavedCharacterReference>> listSaved() async => const [];
 }
 
 void main() {
+  testWidgets('reference presets open from the workspace and respect switching',
+      (tester) async {
+    const vibe = CharacterReferenceImage(path: 'current-vibe.png');
+    const asset = CharacterReferenceAsset(
+      id: 'reference',
+      game: '作品',
+      category: '角色',
+      name: '测试角色',
+      variant: '',
+      width: 2,
+      height: 2,
+      bytes: 0,
+      thumbnailUrls: [],
+      downloadUrls: [],
+    );
+    final vm = _ReferenceFake()..vibeReferences = [vibe];
+    sl.registerSingleton<GenerationViewModel>(vm);
+    sl.registerSingleton<CharacterReferenceCatalogRepository>(
+        _EmptyReferenceCatalog());
+    addTearDown(() async {
+      await sl.reset();
+      vm.dispose();
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildNaiHuishiTheme(Brightness.dark),
+      home: const GeneratePage(),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('生成参数'));
+    await tester.pumpAndSettle();
+    const entry = ValueKey('workspace-reference-presets');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+
+    final pageFinder = find.byType(CharacterReferenceLibraryPage);
+    expect(pageFinder, findsOneWidget);
+    final page = tester.widget<CharacterReferenceLibraryPage>(pageFinder);
+    expect(page.onApplyVibe, isNotNull);
+    final application = page.onApplyPrecise!(
+        const SavedCharacterReference(asset: asset, path: 'saved.png'));
+    await tester.pumpAndSettle();
+    expect(find.text('切换为角色精确参考？'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(await application, isFalse);
+    expect(vm.vibeReferences, [vibe]);
+    expect(vm.preciseReferences, isEmpty);
+    expect(pageFinder, findsOneWidget);
+
+    vm.vibeReferences = const [];
+    final root = Directory.systemTemp.createTempSync('reference-workspace-');
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => root.path);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+      root.deleteSync(recursive: true);
+    });
+    final bytes = image.encodePng(image.Image(width: 2, height: 2));
+    final saved = File(p.join(root.path, 'saved.png'))..writeAsBytesSync(bytes);
+    expect(
+      await tester.runAsync(() => page.onApplyPrecise!(
+          SavedCharacterReference(asset: asset, path: saved.path))),
+      isTrue,
+    );
+    expect(vm.referenceMode, ReferenceMode.precise);
+    expect(vm.preciseReferences.single.referenceType, 'character');
+    expect(vm.preciseReferences.single.path, isNot(saved.path));
+    saved.deleteSync();
+    expect(File(vm.preciseReferences.single.path).readAsBytesSync(), bytes);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('coffee paper themes the Vibe replace-options sheet',
       (tester) async {
     const reference = CharacterReferenceImage(path: 'missing-vibe.png');
@@ -180,8 +286,8 @@ void main() {
     await tester.tap(find.text('衣装 · Outfit').last);
     await tester.pumpAndSettle();
     expect(vm.preciseReferences.single.referenceType, 'costume');
-    expect(find.byKey(const ValueKey('precise-prefer-same-outfit')),
-        findsNothing);
+    expect(
+        find.byKey(const ValueKey('precise-prefer-same-outfit')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

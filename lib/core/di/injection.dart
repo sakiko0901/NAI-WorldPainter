@@ -25,6 +25,7 @@ import 'package:nai_huishi/data/datasources/remote/danbooru_api_service.dart';
 import 'package:nai_huishi/data/datasources/remote/wd_tagger_api_service.dart';
 import 'package:nai_huishi/core/services/comic_asset_store.dart';
 import 'package:nai_huishi/data/repositories/artist_prompt_repository_impl.dart';
+import 'package:nai_huishi/data/repositories/character_reference_catalog_repository.dart';
 import 'package:nai_huishi/data/repositories/comic_project_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/generation_repository_impl.dart';
 import 'package:nai_huishi/data/repositories/history_repository_impl.dart';
@@ -239,6 +240,8 @@ Future<void> configureDependencies() async {
       ManageSettingsUseCase(sl<SettingsRepository>()));
   sl.registerSingleton<ManageStylePresetsUseCase>(
       ManageStylePresetsUseCase(sl<StylePresetRepository>()));
+  sl.registerLazySingleton<CharacterReferenceCatalogRepository>(
+      CharacterReferenceCatalogRepository.new);
   sl.registerLazySingleton<GalleryHttp>(
       () => GalleryHttp(GalleryHttp.createDio()),
       dispose: (client) => client.dio.close(force: true));

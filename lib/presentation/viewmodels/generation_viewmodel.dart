@@ -1749,12 +1749,13 @@ class GenerationViewModel extends ChangeNotifier implements PromptBoxAccessor {
     );
   }
 
-  Future<void> addPreciseReference(String path) async {
+  Future<void> addPreciseReference(String path,
+      {String referenceType = 'character&style'}) async {
     if (!supportsPreciseReferences || preciseReferences.length >= 4) return;
     referenceMode = ReferenceMode.precise;
     preciseReferences = [
       ...preciseReferences,
-      PreciseReferenceImage(path: path),
+      PreciseReferenceImage(path: path, referenceType: referenceType),
     ];
     vibeReferences = const [];
     await Future.wait([

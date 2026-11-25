@@ -19,7 +19,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
-import 'package:nai_huishi/presentation/widgets/studio_alert_dialog.dart';
+import 'package:nai_huishi/presentation/navigation/character_reference_library_route.dart';
 import 'package:nai_huishi/presentation/widgets/studio_tab_view.dart';
 import 'package:nai_huishi/presentation/widgets/studio_navigation_bar.dart';
 import 'package:flutter/rendering.dart';
@@ -1112,7 +1112,20 @@ class _GeneratePageState extends State<GeneratePage> {
         const SizedBox(height: 24),
         const Divider(height: 1),
         const SizedBox(height: 24),
-        Text('参考图像', style: Theme.of(context).textTheme.titleMedium),
+        Row(
+          children: [
+            Expanded(
+              child: Text('参考图像',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            TextButton.icon(
+              key: const ValueKey('workspace-reference-presets'),
+              onPressed: () => openCharacterReferenceLibrary(context, _vm),
+              icon: const Icon(Icons.collections_bookmark_outlined),
+              label: const Text('参考预设'),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         if (!_vm.isNonNovelAiProvider) ...[
           _buildImg2ImgSection(),
@@ -2208,32 +2221,9 @@ class _CharacterReferenceSection extends StatelessWidget {
 
   Future<bool> _switchMode(BuildContext context, ReferenceMode target) async {
     if (vm.referenceMode == target) return true;
-    final hasCurrentReferences = vm.referenceMode == ReferenceMode.vibe
-        ? vm.vibeReferences.isNotEmpty
-        : vm.preciseReferences.isNotEmpty;
-    if (hasCurrentReferences) {
-      final targetLabel = target == ReferenceMode.vibe ? '氛围转移' : '精密参照图像';
-      final currentLabel =
-          vm.referenceMode == ReferenceMode.vibe ? '氛围参考图' : '精密参照图像';
-      final confirmed = await showStudioAlertDialog<bool>(
-        context: context,
-        builder: (dialogContext) => StudioAlertDialog(
-          title: Text('切换为$targetLabel？'),
-          content: Text('切换后会清空当前的$currentLabel。'),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
-            ),
-            CupertinoDialogAction(
-              isDestructiveAction: true,
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('清空并切换'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !context.mounted) return false;
+    if (!await confirmReferenceModeSwitch(context, vm, target) ||
+        !context.mounted) {
+      return false;
     }
     await vm.switchReferenceMode(target);
     return context.mounted;
