@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "version": "2026-11-01.1",
-  "tags": 400348,
+  "version": "2026-11-25.1",
+  "tags": 745309,
   "aliases": 71504,
-  "translations": 316443,
-  "size": 106962944,
-  "compressedSize": 42489472,
-  "sha256": "71f962b0c2ea7db1f5db88afd161cf739b2e3f7b6adf28382e94677c34cafecb",
-  "compressedSha256": "3527cd461c68853a5eee16178a9265f25653e78cf00fdfc445c063da55f6a578",
+  "translations": 328293,
+  "size": 155226112,
+  "compressedSize": 63707478,
+  "sha256": "2a9014de8db2303b1248d3e3ac060dac05cb55074a351ead959791d82e0db654",
+  "compressedSha256": "f09f61c5650474d988f97ad74c30ffaebfac2167b61f12e16f35d119baef14c2",
   "sources": [
     {
       "url": "https://github.com/Aaalice233/Aaalice_NAI_Launcher",
@@ -20,6 +20,37 @@
       "url": "https://github.com/ffdkj/ffdkj-Danbooru_Tag-Chinese-English-Translation-Table",
       "commit": "3049e201002a64702873d7f9f3cc7cb8c45ea325",
       "sha256": "cd7aa3fa9a2b6153b04a1bce88f98ab3381c20bdabb6348b5fbf1005dad00870"
+    },
+    {
+      "url": "https://github.com/2786886095/novelai-image-desktop/releases/tag/tag-packs-2026-11-16",
+      "commit": "1aebb6fd66c289df710be985469ec174d3cf5da9",
+      "file": "tags-2026-11-16-zh-CN.sqlite.gz",
+      "sha256": "6de4da29a6447a994c86fe6038b2404f2fa0005edaa135abe74399ef6476f86d",
+      "tags": 510084,
+      "addedTags": 337941,
+      "fields": [
+        "tag",
+        "category",
+        "count"
+      ]
+    },
+    {
+      "url": "https://danbooru.donmai.us/tags.json",
+      "file": "scripts/tag_catalog_sources/danbooru-2026-11-16-to-2026-11-25.json.gz",
+      "sha256": "4b5716e251a84b9a5a2065f7c83a7dead69a663c66c43ebf2641f7a37b9d71e8",
+      "createdFrom": "2026-11-16T00:00:00Z",
+      "createdThrough": "2026-11-25T12:30:00Z",
+      "maximumTagId": 2785880,
+      "capturedTags": 7145,
+      "tags": 7081,
+      "addedTags": 7020,
+      "excludedActiveAliases": 64
+    },
+    {
+      "url": "https://github.com/ffdkj/ffdkj-Danbooru_Tag-Chinese-English-Translation-Table",
+      "commit": "4418592b1eeafabdbd3ea882a69af71d1c1e2c4e",
+      "sha256": "6d8c4e5bf8d1fa00c5400da7cb5530e317ad7ac80a4fccc0fda7df99d5733e3a",
+      "translationsAdded": 11850
     }
   ]
 }

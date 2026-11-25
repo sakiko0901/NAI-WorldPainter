@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_huishi/domain/agents/agent_tool.dart';
 import 'package:nai_huishi/domain/agents/tool_registry.dart';
 import 'package:nai_huishi/domain/agents/tools/ask_user_tool.dart';
 import 'package:nai_huishi/domain/agents/tools/write_prompt_tool.dart';
@@ -10,6 +11,7 @@ import 'package:nai_huishi/domain/entities/llm_provider.dart';
 import 'package:nai_huishi/domain/entities/llm_response.dart';
 import 'package:nai_huishi/domain/entities/tool_call.dart';
 import 'package:nai_huishi/domain/entities/prompt_draft_snapshot.dart';
+import 'package:nai_huishi/domain/services/explicit_online_tag_query.dart';
 import 'package:nai_huishi/presentation/viewmodels/llm_chat_viewmodel.dart';
 import 'support/chat_memory_fake.dart';
 import 'support/frontend_generation_fake.dart';
@@ -24,6 +26,63 @@ void main() {
   tearDownAll(() => TestDefaultBinaryMessengerBinding
       .instance.defaultBinaryMessenger
       .setMockMethodCallHandler(channel, null));
+
+  test('extracts one explicitly requested online tag without sending prose',
+      () {
+    const requests = {
+      '帮我在线查一下「绯英」的规范角色 Tag。': '绯英',
+      '在线查这个 Tag：shunling_(blue_archive)': 'shunling_(blue_archive)',
+      '联网查 shunling_(blue_archive)': 'shunling_(blue_archive)',
+      '请在 Danbooru 官网查 绯英': '绯英',
+      'Please search Danbooru for shunling_(blue_archive).':
+          'shunling_(blue_archive)',
+      'look up tag shunling_(blue_archive) online': 'shunling_(blue_archive)',
+      '请在线查一下天气': null,
+      '在线查一下「天气」': null,
+      'search flights online': null,
+      '在线查这个 Tag': null,
+      '在线查这张图里的标签': null,
+      '在线查绯英的 Tag，然后按之前的方案出图': null,
+      '在线查 Tag：绯英\n我的整套提示词': null,
+      '用绯英画一张图': null,
+    };
+    for (final request in requests.entries) {
+      expect(explicitOnlineTagQuery(request.key), request.value,
+          reason: request.key);
+    }
+  });
+
+  for (final found in [true, false]) {
+    test('explicit lookup runs before the first model request (found=$found)',
+        () async {
+      final h = createChatMemoryHarness();
+      addTearDown(h.dispose);
+      final tagTool = _TagLookupSpy(found);
+      LlmChatViewModel.toolRegistrySingleton = ToolRegistry()
+        ..register(tagTool);
+      await h.viewModel.ensureInitialized();
+      h.api.onMainRequest = () => expect(tagTool.calls, hasLength(1));
+
+      const request = '在线查这个 Tag：shunling_(blue_archive)';
+      await h.viewModel.sendUserMessage(request);
+
+      expect(h.api.mainCalls.single.lastUserText, request);
+      expect(tagTool.calls.single,
+          {'query': 'shunling_(blue_archive)', 'source': 'online'});
+      final context = h.api.mainCalls.single.messages
+          .singleWhere((m) => m['content'].toString().contains('客户端已执行'));
+      expect(context['role'], 'system');
+      expect(
+          context['content'], contains(found ? 'Danbooru 官网已核实' : '在线端点不可用'));
+      final reply =
+          (await h.chatRepository.listMessages(h.viewModel.activeSessionId!))
+              .last;
+      final events = reply.agentTimeline!;
+      expect(events.map((e) => e.toolName),
+          ['search_danbooru', 'read_current_prompts']);
+      expect(events.first.status, found ? 'done' : 'error');
+    });
+  }
 
   test('per-model output modes persist independently and legacy values migrate',
       () {
@@ -339,6 +398,30 @@ void main() {
     expect(messages[1].content, allOf(contains('选择景别'), contains('全景')));
     expect(messages[1].interaction, isNull);
   });
+}
+
+class _TagLookupSpy extends AgentTool {
+  _TagLookupSpy(this.found);
+
+  final bool found;
+  final calls = <Map<String, dynamic>>[];
+
+  @override
+  String get name => 'search_danbooru';
+
+  @override
+  String get description => '查找标签';
+
+  @override
+  Map<String, dynamic> get parametersSchema => const {'type': 'object'};
+
+  @override
+  Future<ToolResult> call(Map<String, dynamic> arguments) async {
+    calls.add(arguments);
+    return found
+        ? ToolResult.success('Danbooru 官网已核实 shunling_(blue_archive)')
+        : ToolResult.failure('在线端点不可用');
+  }
 }
 
 class _UndoGenerationFake extends FrontendGenerationFake {

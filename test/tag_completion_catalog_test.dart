@@ -84,6 +84,23 @@ void main() {
     // A generous ceiling catches accidental full catalog loading/quadratic scans.
     expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
   });
+  test('finds recent character tags and distinguishes 绯英 from 翡翠', () async {
+    for (final tag in [
+      'dan_heng_(express_travel)_(honkai:_star_rail)',
+      'shunling_(blue_archive)',
+    ]) {
+      final matches = await catalog.searchFuzzy(tag);
+      expect(matches.first.tag.tag, tag);
+      expect(matches.first.kind, 'exact');
+    }
+    const evanescia = 'evanescia_(honkai:_star_rail)';
+    final scarlet = await catalog.searchFuzzy('绯英');
+    expect(scarlet.any((match) => match.tag.tag == evanescia), isTrue);
+    final jade = await catalog.searchFuzzy('翡翠');
+    expect(jade.any((match) => match.tag.tag == evanescia), isFalse);
+    expect(jade.any((match) => match.tag.tag == 'jade_(honkai:_star_rail)'),
+        isTrue);
+  });
   test('assistant fuzzy lookup recovers typos and returns only catalog tags',
       () async {
     final watch = Stopwatch()..start();
@@ -127,7 +144,7 @@ void main() {
         isTrue);
     expect(await catalog.searchFuzzy('zzzzzzzzzzzzzzzz'), isEmpty);
     expect(await catalog.searchFuzzy("' OR 1=1 --"), isEmpty);
-    // Bounded indexed queries on the real 400k-record database.
+    // Bounded indexed queries on the shipped database.
     expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
     print('Fuzzy catalog batch: ${watch.elapsedMilliseconds} ms');
   });

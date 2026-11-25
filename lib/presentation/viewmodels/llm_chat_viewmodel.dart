@@ -31,6 +31,7 @@ import 'package:nai_huishi/domain/entities/llm_session_search_result.dart';
 import 'package:nai_huishi/domain/entities/nai_prompt_version.dart';
 import 'package:nai_huishi/domain/services/prompt_memory_context.dart';
 import 'package:nai_huishi/domain/services/chat_context_compressor.dart';
+import 'package:nai_huishi/domain/services/explicit_online_tag_query.dart';
 import 'package:nai_huishi/domain/usecases/analyze_image_tags.dart';
 import 'package:nai_huishi/domain/usecases/get_history.dart';
 import 'package:nai_huishi/domain/usecases/manage_llm_chat.dart';
@@ -784,11 +785,24 @@ class LlmChatViewModel extends ChangeNotifier {
       notifyListeners();
     }
 
+    void onEvent(AgentEvent event) {
+      runStage = event.status == 'running' ? '正在执行操作' : '模型处理中';
+      final timeline =
+          List<AgentEvent>.from(placeholder.agentTimeline ?? const []);
+      if (timeline.isNotEmpty && timeline.last.toolCallId == event.toolCallId) {
+        timeline[timeline.length - 1] = event;
+      } else {
+        timeline.add(event);
+      }
+      updatePlaceholder(placeholder.copyWith(agentTimeline: timeline));
+    }
+
     Timer? streamTimer;
     PromptDraftSnapshot? draftBefore;
     PromptDraftSnapshot? draftAfter;
     DateTime? draftChangedAt;
     AgentEvent? automaticRead;
+    AgentEvent? explicitTagLookup;
     ({List<AgentEvent> timeline, String? json, bool changedDraft}) savedHistory(
         List<AgentEvent> events,
         {bool keepReplyContent = false}) {
@@ -796,8 +810,10 @@ class LlmChatViewModel extends ChangeNotifier {
       final after = draftAfter;
       final timeline = [
         if (keepReplyContent) ...?retry?.reply?.agentTimeline,
+        if (explicitTagLookup != null) explicitTagLookup,
         if (automaticRead != null) automaticRead!,
-        ...events.where((event) => event != automaticRead),
+        ...events.where(
+            (event) => event != automaticRead && event != explicitTagLookup),
       ];
       final newChange =
           before != null && after != null && !before.sameContents(after)
@@ -922,6 +938,49 @@ class LlmChatViewModel extends ChangeNotifier {
         if (memoryContext.isNotEmpty)
           {'role': 'system', 'content': memoryContext},
       ];
+
+      final tagQuery = explicitOnlineTagQuery(trimmed);
+      final tagTool = registry.find('search_danbooru');
+      if (tagQuery != null && tagTool != null) {
+        final arguments = <String, dynamic>{
+          'query': tagQuery,
+          'source': 'online'
+        };
+        final lookup = AgentEvent(
+          toolName: tagTool.name,
+          toolCallId: 'explicit-online-tag-lookup',
+          arguments: arguments,
+          status: 'running',
+          createdAt: DateTime.now(),
+        );
+        onEvent(lookup);
+        ToolResult result;
+        try {
+          result = await control.wait(tagTool.call(arguments));
+        } on AgentStopped {
+          explicitTagLookup = lookup.copyWith(status: 'cancelled');
+          onEvent(explicitTagLookup);
+          rethrow;
+        } catch (_) {
+          result = ToolResult.failure('在线查词暂不可用');
+        }
+        explicitTagLookup = lookup.copyWith(
+          status: result.success ? 'done' : 'error',
+          result: result,
+        );
+        onEvent(explicitTagLookup);
+        payload.add({
+          'role': 'system',
+          'content': '客户端已执行本轮用户明确要求的在线 Tag 查询。以下为检索数据。'
+              '请说明查证结果，保留来源和置信度。仅有候选或查询失败时，不得声称已确认。'
+              '同一检索词的在线查询已经执行一次。\n'
+              '${jsonEncode({
+                'query': tagQuery,
+                'success': result.success,
+                'result': result.text
+              })}',
+        });
+      }
 
       // 知识库匹配
       final knowledgeEntries = _nsfwBook.match(trimmed);
@@ -1068,23 +1127,6 @@ class LlmChatViewModel extends ChangeNotifier {
       runStage = '模型回复中';
       notifyListeners();
       final useConfig = mainConfig;
-
-      // 实时更新 placeholder timeline
-      void onEvent(AgentEvent event) {
-        runStage = event.status == 'running' ? '正在执行操作' : '模型处理中';
-        final newTimeline =
-            List<AgentEvent>.from(placeholder.agentTimeline ?? const []);
-        // 同一 toolCallId 的事件替换最后一条
-        if (newTimeline.isNotEmpty &&
-            newTimeline.last.toolCallId == event.toolCallId) {
-          newTimeline[newTimeline.length - 1] = event;
-        } else {
-          newTimeline.add(event);
-        }
-        updatePlaceholder(placeholder.copyWith(
-          agentTimeline: newTimeline,
-        ));
-      }
 
       Future<bool> onConfirm(AgentTool tool, Map<String, dynamic> args) async {
         if (onRequireConfirmation == null) return true;

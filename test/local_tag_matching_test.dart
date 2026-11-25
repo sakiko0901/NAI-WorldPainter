@@ -1,5 +1,6 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
-import 'package:dio/dio.dart';
 import 'package:nai_huishi/data/datasources/local/tag_completion_catalog.dart';
 import 'package:nai_huishi/data/datasources/remote/danbooru_api_service.dart';
 import 'package:nai_huishi/domain/agents/tools/search_danbooru_tool.dart';
@@ -22,19 +23,20 @@ class _Catalog extends TagCompletionCatalog {
 }
 
 class _Api extends DanbooruApiService {
+  List<VerifiedDanbooruTag> result = const [
+    VerifiedDanbooruTag(DanbooruTag(tag: 'blue_hair', count: 20),
+        VerifiedDanbooruMatch.semantic)
+  ];
+  bool fails = false;
   int calls = 0;
   bool? nsfw;
   @override
-  Future<List<DanbooruTag>> search(
-      {required String query,
-      int topK = 5,
-      int limit = 30,
-      bool showNsfw = false,
-      String? customBaseUrl,
-      CancelToken? cancelToken}) async {
+  Future<List<VerifiedDanbooruTag>> searchVerified(
+      {required String query, int limit = 15, bool showNsfw = true}) async {
     calls++;
     nsfw = showNsfw;
-    return [const DanbooruTag(tag: 'blue_hair')];
+    if (fails) throw StateError('offline');
+    return result;
   }
 }
 
@@ -73,7 +75,7 @@ void main() {
     expect(matches.map((m) => m.kind), ['exact', 'alias', 'prefix']);
     expect(matches.map((m) => m.tag.tag).toSet().length, matches.length);
   });
-  test('local candidates are labeled and do not trigger remote requests',
+  test('explicit local labels spelling candidates and never connects',
       () async {
     final local = _Catalog()
       ..result = [
@@ -82,11 +84,113 @@ void main() {
       ];
     final api = _Api();
     final result = await SearchDanbooruTool(api, catalog: local)
-        .call({'query': 'bule hair'});
+        .call({'query': 'bule hair', 'source': 'local'});
     expect(result.success, isTrue);
     expect(result.text, contains('拼写近似'));
     expect(result.text, contains('blue_hair'));
     expect(api.calls, 0);
+  });
+  test('auto uses a local exact name, matching alias or full translation',
+      () async {
+    final local = _Catalog();
+    final api = _Api();
+    final tool = SearchDanbooruTool(api, catalog: local);
+    final cases = [
+      (
+        'blue hair',
+        const TagSearchMatch(TagCompletion(tag: 'blue_hair'), 'exact')
+      ),
+      (
+        'aqua hair',
+        const TagSearchMatch(
+            TagCompletion(tag: 'blue_hair', alias: 'aqua_hair'), 'alias')
+      ),
+      (
+        '纳西妲（原神）',
+        const TagSearchMatch(
+            TagCompletion(
+                tag: 'nahida_(genshin_impact)', translation: '纳西妲 (原神)'),
+            'translation')
+      ),
+    ];
+    for (final (query, match) in cases) {
+      local.result = [match];
+      final toolResult = await tool.call({'query': query});
+      expect(toolResult.success, isTrue);
+      expect(toolResult.text, contains(match.tag.tag));
+      final hit = (jsonDecode(toolResult.followUpHint!) as List).single;
+      expect(hit, containsPair('source', 'local'));
+      expect(hit, containsPair('candidate', false));
+    }
+    expect(api.calls, 0);
+  });
+  test(
+      'auto verifies only weak local matches and preserves candidates on failure',
+      () async {
+    final local = _Catalog()
+      ..result = const [
+        TagSearchMatch(TagCompletion(tag: 'shun_(blue_archive)'), 'fuzzy',
+            distance: 2),
+      ];
+    final api = _Api()
+      ..result = const [
+        VerifiedDanbooruTag(
+            DanbooruTag(tag: 'shunling_(blue_archive)', count: 2488),
+            VerifiedDanbooruMatch.exact)
+      ];
+    final tool = SearchDanbooruTool(api, catalog: local);
+    final arguments = {'query': 'shunling_(blue_archive)'};
+    final verified = await tool.call(arguments);
+    expect(verified.text, contains('官方准确匹配'));
+    expect(verified.text, contains('shunling_(blue_archive)'));
+    expect(api.calls, 1);
+
+    api.fails = true;
+    final fallback = await tool.call(arguments);
+    expect(fallback.success, isTrue);
+    expect(
+        fallback.text, contains('在线 Danbooru 核验「shunling_(blue_archive)」失败'));
+    expect(fallback.text, contains('shun_(blue_archive)'));
+    expect(fallback.text, contains('拼写近似（候选）'));
+    expect(
+        (jsonDecode(fallback.followUpHint!) as List).single,
+        allOf(
+            containsPair('source', 'local'), containsPair('candidate', true)));
+
+    api.fails = false;
+    api.result = [];
+    final empty = await tool.call(arguments);
+    expect(empty.text, contains('未核验到匹配标签'));
+    expect(empty.text, contains('shun_(blue_archive)'));
+    expect(api.calls, 3);
+  });
+  test('partial translation and ambiguous exact names trigger online lookup',
+      () async {
+    final local = _Catalog();
+    final api = _Api();
+    final tool = SearchDanbooruTool(api, catalog: local);
+    local.result = const [
+      TagSearchMatch(
+          TagCompletion(tag: 'shun_(blue_archive)', translation: '春原瞬 (蔚蓝档案)'),
+          'translation'),
+    ];
+    expect((await tool.call({'query': '春原瞬'})).text, contains('在线'));
+    local.result = const [
+      TagSearchMatch(
+          TagCompletion(tag: 'red_eyes', translation: '红瞳'), 'translation'),
+      TagSearchMatch(
+          TagCompletion(tag: 'red_pupils', translation: '红瞳'), 'translation'),
+    ];
+    expect((await tool.call({'query': '红瞳', 'limit': 1})).text, contains('在线'));
+    local.result = const [
+      TagSearchMatch(
+          TagCompletion(tag: 'alice_(series_a)', alias: 'alice'), 'alias'),
+      TagSearchMatch(
+          TagCompletion(tag: 'alice_(series_b)', alias: 'alice'), 'alias'),
+    ];
+    expect(
+        (await tool.call({'query': 'alice', 'limit': 1})).text, contains('在线'));
+    expect(api.calls, 3);
   });
   test(
       'auto falls back for missing or broken catalog; explicit local never connects',
